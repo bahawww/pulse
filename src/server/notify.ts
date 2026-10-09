@@ -1,4 +1,5 @@
 import type { AlertEvent } from '../shared/contract.js';
+import { formatClock, formatDay, TZ_LABEL } from '../shared/time.js';
 
 /**
  * Telegram delivery for alerts.
@@ -72,12 +73,12 @@ function format(event: AlertEvent): string {
     ].join('\n');
   }
 
-  const stamp = new Date(event.since).toLocaleString('en-GB', { timeZone: 'Asia/Jakarta' });
+  const stamp = `${formatDay(event.since)} ${formatClock(event.since)}`;
   return [
     `${icon} <b>${title}</b> — ${escapeHtml(event.metric)}`,
     escapeHtml(event.message),
     '',
-    `<i>vps-dashboard · since ${escapeHtml(stamp)} WIB · rule ${escapeHtml(event.ruleId)}</i>`,
+    `<i>vps-dashboard · since ${escapeHtml(stamp)} ${TZ_LABEL} · rule ${escapeHtml(event.ruleId)}</i>`,
   ].join('\n');
 }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SpendByModel, SpendPoint, SpendReport } from '../shared/contract.js';
+import { dayStart, formatDay } from '../shared/time.js';
 
 /**
  * LLM spend, read straight out of 9router's SQLite database.
@@ -87,8 +88,9 @@ async function openDatabase(): Promise<SqliteDatabase | { readonly error: string
   }
 }
 
+/** Days are cut at midnight UTC+7, the zone every date in the UI is shown in. */
 function dayKey(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
+  return formatDay(ms);
 }
 
 function hourKey(ms: number): number {
@@ -156,7 +158,7 @@ async function buildReport(): Promise<SpendReport> {
         dayPoint.requests += 1;
         dayPoint.tokens += tokens;
       } else {
-        daily.set(d, { t: Date.parse(`${d}T00:00:00Z`), requests: 1, costUsd: cost, tokens });
+        daily.set(d, { t: dayStart(d), requests: 1, costUsd: cost, tokens });
       }
 
       // Hourly detail only for the last day; older hours are noise here.

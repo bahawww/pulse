@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { usePolled } from '../hooks/usePolled';
 import type { ActionLogEntry, ActionResult, ActionTarget } from '../shared/contract';
 import { formatClock } from '../lib/format';
+import { TZ_LABEL } from '../shared/time';
 
 /**
  * Service control. Two deliberate friction points, because this panel can take
@@ -185,7 +186,7 @@ export function ActionsPanel({
       {log.data && log.data.entries.length > 0 && (
         <div>
           <p className="card-sub" style={{ marginBottom: 8 }}>
-            Recent actions
+            Recent actions · {TZ_LABEL}
           </p>
           <ul className="action-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {log.data.entries.slice(0, 5).map((e) => (

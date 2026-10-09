@@ -3,6 +3,7 @@ import type { LogEntry } from '../shared/contract';
 import { formatClock } from '../lib/format';
 import { SelectMenu } from './SelectMenu';
 import { BoneLines, Loading } from './Skeleton';
+import { TZ_LABEL } from '../shared/time';
 
 /**
  * Read-only journal tail.
@@ -104,7 +105,7 @@ export function LogPanel() {
           <h3 id="logs-h" className="card-title">
             Logs
           </h3>
-          <p className="card-sub">journalctl, read only{loading ? ' · refreshing…' : ''}</p>
+          <p className="card-sub">journalctl, read only · times in {TZ_LABEL}{loading ? ' · refreshing…' : ''}</p>
         </div>
       </div>
 

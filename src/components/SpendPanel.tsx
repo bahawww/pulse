@@ -3,6 +3,7 @@ import { usePolled } from '../hooks/usePolled';
 import { formatTokens, formatUsd } from '../lib/format';
 import type { SpendPoint, SpendReport } from '../shared/contract';
 import { Bone, Loading } from './Skeleton';
+import { formatDay } from '../shared/time';
 
 /**
  * LLM spend through 9router.
@@ -93,7 +94,7 @@ export function SpendPanel() {
                   <span
                     className="spend-bar"
                     style={{ height: `${height}%` }}
-                    title={`${new Date(d.t).toISOString().slice(0, 10)}: ${formatUsd(d.costUsd)} · ${d.requests} req`}
+                    title={`${formatDay(d.t)}: ${formatUsd(d.costUsd)} · ${d.requests} req`}
                   />
                 </div>
               );
@@ -101,7 +102,7 @@ export function SpendPanel() {
           </div>
           {peak && (
             <p className="card-foot" style={{ marginTop: 8 }}>
-              peak {formatUsd(peak.costUsd)} on {new Date(peak.t).toISOString().slice(0, 10)}
+              peak {formatUsd(peak.costUsd)} on {formatDay(peak.t)}
             </p>
           )}
         </div>

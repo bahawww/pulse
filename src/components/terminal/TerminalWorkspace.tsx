@@ -38,6 +38,7 @@ import { Icon, KeyButton, Popover, ShortcutSheet, SnippetsPanel, ThemePanel } fr
 import { LINK_LABEL, TerminalView, type Port, type SearchResult, type WinStatus } from './TerminalView';
 import '@xterm/xterm/css/xterm.css';
 import '../../terminal.css';
+import { formatClock, formatDay } from '../../shared/time';
 
 type Panel = 'none' | 'themes' | 'snippets' | 'more' | 'tabs';
 
@@ -307,7 +308,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   const saveAll = () => {
     setPanel('none');
     const text = ports.current.get(active)?.text() ?? '';
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const now = Date.now();
+    const stamp = `${formatDay(now)}-${formatClock(now).replace(/:/g, '')}`;
     const name = (activeWin ? tabLabel(activeWin) : 'shell').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'shell';
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
     const a = document.createElement('a');

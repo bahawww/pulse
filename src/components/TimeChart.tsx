@@ -1,6 +1,7 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
+import { formatClock, TZ_LABEL } from '../shared/time';
 
 /**
  * Interactive terminal chart, built on uPlot.
@@ -297,7 +298,7 @@ export function TimeChart({
             // Built with DOM nodes, not innerHTML: labels can be process names.
             const head = document.createElement('div');
             head.className = 'chart-tip-time';
-            head.textContent = typeof x === 'number' ? (modelRef.current.aligned ? clock(x * 1000) : String(Math.round(x))) : '';
+            head.textContent = typeof x === 'number' ? (modelRef.current.aligned ? `${clock(x * 1000)} ${TZ_LABEL}` : String(Math.round(x))) : '';
             const rows = series.map((s, i) => {
               const v = u.data[i + 1]?.[idx];
               const row = document.createElement('div');
@@ -841,7 +842,7 @@ export function TimeChart({
         {sel && selStats && (
           <div className="spark-sel" role="group" aria-label="Selected range">
             <span className="spark-sel-range">
-              {model.aligned ? `${clock(sel.a * 1000)} – ${clock(sel.b * 1000)}` : `${Math.round(sel.a)} – ${Math.round(sel.b)}`}
+              {model.aligned ? `${clock(sel.a * 1000)} – ${clock(sel.b * 1000)} ${TZ_LABEL}` : `${Math.round(sel.a)} – ${Math.round(sel.b)}`}
               {model.aligned && ` · ${duration(sel.b - sel.a)}`}
             </span>
             {selStats.map((r) => (
@@ -937,14 +938,9 @@ function duration(seconds: number): string {
   return `${sec}s`;
 }
 
-/** hh:mm:ss for an epoch-ms tick. */
+/** hh:mm:ss in UTC+7 for an epoch-ms tick. */
 function clock(ms: number): string {
-  const d = new Date(ms);
-  return (
-    `${String(d.getHours()).padStart(2, '0')}:` +
-    `${String(d.getMinutes()).padStart(2, '0')}:` +
-    `${String(d.getSeconds()).padStart(2, '0')}`
-  );
+  return formatClock(ms);
 }
 
 /** #rgb/#rrggbb + alpha -> rgba(), so a series colour can fill without a token. */

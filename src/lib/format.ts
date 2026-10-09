@@ -1,3 +1,4 @@
+import { formatClock, TZ_LABEL, zoned } from '../shared/time';
 /**
  * Byte and rate formatting shared by the telemetry panels.
  *
@@ -87,7 +88,7 @@ export function formatMs(value: number): string {
 }
 
 /**
- * Wall-clock label for a history axis.
+ * Wall-clock label for a history axis, in UTC+7 (src/shared/time.ts).
  *
  * The range decides the format, because a 5-minute window only needs
  * hh:mm:ss while a 12-hour view needs the date too — showing seconds on a
@@ -95,39 +96,23 @@ export function formatMs(value: number): string {
  * yesterday look like today.
  */
 export function formatAxisTime(t: number, spanMs: number): string {
-  const d = new Date(t);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  if (spanMs <= 6 * 3_600_000) {
-    return `${hh}:${mm}:${String(d.getSeconds()).padStart(2, '0')}`;
-  }
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  return `${day}/${month} ${hh}:${mm}`;
+  if (spanMs <= 6 * 3_600_000) return formatClock(t);
+  const d = zoned(t);
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${day}/${month} ${formatClock(t, false)}`;
 }
 
 /**
- * Wall-clock time of day, always 24-hour, in the viewer's zone: "14:02:11".
- * One formatter for every timestamp in the UI, so the footer, logs and the
- * action log can never disagree on 12h vs 24h.
+ * Wall-clock time of day, always 24-hour, in UTC+7: "14:02:11". One formatter
+ * for every timestamp in the UI, so the footer, logs, charts and the action log
+ * show the same clock whatever zone the viewer's browser is in.
  */
-export function formatClock(t: number, seconds = true): string {
-  const d = new Date(t);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return seconds ? `${hh}:${mm}:${String(d.getSeconds()).padStart(2, '0')}` : `${hh}:${mm}`;
-}
+export { formatClock };
 
-/** Short name of the viewer's time zone, "GMT+7" or "WIB" depending on the browser. */
+/** The display zone's name, shown next to clock times. */
 export function zoneLabel(): string {
-  try {
-    const part = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
-      .formatToParts(new Date())
-      .find((p) => p.type === 'timeZoneName');
-    return part?.value ?? '';
-  } catch {
-    return '';
-  }
+  return TZ_LABEL;
 }
 
 /** "3m ago", "2h ago" — used by the alert feed. */
