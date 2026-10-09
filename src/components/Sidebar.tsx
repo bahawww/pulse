@@ -113,8 +113,9 @@ interface RailProps {
 
 /**
  * Narrow strip shown on desktop while the sidebar is collapsed. The logo heads
- * it like the sidebar's brand; the button under it opens the sidebar; each icon
- * jumps to a view. Labels show as tooltips.
+ * it and doubles as the expand button: hovering (or focusing) it swaps the logo
+ * for the expand icon, a click opens the sidebar. Each icon below jumps to a
+ * view; labels show as tooltips.
  */
 export function Rail({ active, onExpand }: RailProps): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
@@ -123,16 +124,18 @@ export function Rail({ active, onExpand }: RailProps): JSX.Element {
   return (
     <nav className="rail" aria-label="Dashboard views">
       <div className="rail-head">
-        <a href="#overview" className="brand rail-brand" aria-label="Pulse home" title="Pulse">
-          <BrandMark />
-        </a>
+        <button type="button" className="rail-brand" onClick={onExpand} aria-expanded={false} aria-label="Expand sidebar" title="Expand sidebar ([)">
+          <span className="rail-brand-logo">
+            <BrandMark />
+          </span>
+          <span className="rail-brand-expand" aria-hidden="true">
+            <PanelLeftIcon size={18} />
+          </span>
+        </button>
       </div>
 
       <div className="rail-scroll" ref={listRef}>
         {pill && <span className="rail-pill" style={pillStyle(pill)} aria-hidden="true" />}
-        <button type="button" className="rail-link rail-toggle" onClick={onExpand} aria-expanded={false} aria-label="Expand sidebar" title="Expand sidebar ([)">
-          <PanelLeftIcon size={16} />
-        </button>
 
         {VIEWS.map((view, i) => {
           const current = view.id === active;

@@ -3926,10 +3926,52 @@ html[data-go] .side-kbd {
     justify-content: center;
   }
 
-  /* .brand pushes the top bar's actions right with margin-right: auto; in the
-     rail that margin shoves the logo against the left edge. Centre it instead. */
+  /* The rail's logo is also its expand button: logo at rest, expand icon on
+     hover or keyboard focus, both stacked in the same 40px square. */
   .rail-brand {
-    margin: 0;
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: none;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  }
+
+  .rail-brand > span {
+    grid-area: 1 / 1;
+    display: grid;
+    place-items: center;
+    transition: opacity var(--dur-fast) ease, transform var(--dur, 240ms) var(--spring-snappy, ease);
+  }
+
+  .rail-brand-expand {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+
+  .rail-brand:hover,
+  .rail-brand:focus-visible {
+    border-color: var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .rail-brand:hover .rail-brand-logo,
+  .rail-brand:focus-visible .rail-brand-logo {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+
+  .rail-brand:hover .rail-brand-expand,
+  .rail-brand:focus-visible .rail-brand-expand {
+    opacity: 1;
+    transform: scale(1);
   }
 
   .side-brand {
@@ -3986,10 +4028,6 @@ html[data-go] .side-kbd {
     align-items: center;
     gap: 6px;
     padding: 12px 0;
-  }
-
-  .rail-toggle {
-    margin-bottom: 10px;
   }
 
   .rail-link {
