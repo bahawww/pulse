@@ -66,6 +66,8 @@ export interface Port {
   readonly text: () => string;
   readonly clear: () => void;
   readonly restart: () => void;
+  /** A full-screen program (vim, less, htop, tmux) has the alternate screen. */
+  readonly altScreen: () => boolean;
 }
 
 interface ViewProps {
@@ -285,6 +287,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
           t.clear();
           input('\x0c');
         },
+        altScreen: () => t.buffer.active.type === 'alternate',
         restart: () => {
           restarting = true;
           if (connected) send({ type: 'kill' });
@@ -308,9 +311,12 @@ export function TerminalView(props: ViewProps): JSX.Element {
       };
 
       // Keys the workspace owns. Returning false stops xterm from sending them to the shell.
-      // Escape is NOT one of them: vim, less and every TUI need it.
       t.attachCustomKeyEventHandler((e) => {
         if (e.type !== 'keydown') return true;
+        // Esc at the normal screen goes back to the dashboard (the workspace handles it).
+        // In a full-screen program (alternate screen: vim, less, htop) it stays the program's.
+        // Ctrl+[ is not caught here and always sends Esc to the shell.
+        if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && t.buffer.active.type === 'normal') return false;
         if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Backquote') return false;
         if (e.key === 'F1') return false;
         if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^(n|w|s|ArrowLeft|ArrowRight|[1-9])$/i.test(e.key)) return false;

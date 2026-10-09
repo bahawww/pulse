@@ -17,7 +17,7 @@ Built with React 19, TypeScript and Vite on the frontend, and an Express 5 API o
   - Saved command snippets, and broadcast typing to every window.
   - Copy or save all output, restart a shell, and a confirmation before a multi-line paste runs.
   - OSC 52 clipboard and clickable links.
-  - Colour schemes and a shortcut sheet (`F1`). Phones get a key bar with sticky Ctrl and Alt.
+  - Colour schemes and a shortcut sheet (`F1`). Esc returns to the dashboard at the prompt and stays with the program inside vim, less or htop. Phones get a key bar with sticky Ctrl and Alt.
 - **Reachability.** Checks from outside whether the box can actually be reached. Useful behind NAT, where a port bound to `0.0.0.0` can still be unreachable from the internet.
 - **LLM spend.** Optional panel that reads usage from a local 9router database.
 - **Keyboard first.** `Ctrl+K` opens the command palette. `G` then a letter opens a view. `[` toggles the sidebar. `` Ctrl+` `` opens and hides the terminal.

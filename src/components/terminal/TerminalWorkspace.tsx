@@ -48,7 +48,7 @@ interface WorkspaceProps {
 }
 
 /** Footer hints, least important first: narrow screens drop them from the left (terminal.css). */
-const FOOTER_ORDER = ['Alt+W', 'Alt+1…9', 'Alt+N', 'Alt+S', 'Ctrl+Shift+F', 'Ctrl+`', 'F1'];
+const FOOTER_ORDER = ['Alt+W', 'Alt+1…9', 'Alt+N', 'Alt+S', 'Ctrl+Shift+F', 'Esc', 'F1'];
 const FOOTER_KEYS = SHORTCUTS.flatMap((g) => g.items.filter((s) => s.footer)).sort(
   (a, b) => FOOTER_ORDER.indexOf(a.keys) - FOOTER_ORDER.indexOf(b.keys),
 );
@@ -396,10 +396,15 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
     if (el && !el.contains(document.activeElement)) el.focus({ preventScroll: true });
   }, [open]);
 
-  // Returning focus to the shell when a panel closes.
+  // Closing a panel hands focus back to the shell, or keys would land nowhere
+  // (the panel's own input is gone) and the next shortcut would be lost.
   const closePanel = useCallback(() => {
     setPanel('none');
-  }, []);
+    requestAnimationFrame(() => {
+      const el = root.current;
+      if (el && (!el.contains(document.activeElement) || document.activeElement === el)) focusActive();
+    });
+  }, [focusActive]);
 
   const togglePanel = (p: Panel) => setPanel((cur) => (cur === p ? 'none' : p));
 
@@ -452,12 +457,18 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
             return;
           }
         }
-        // Escape belongs to the shell (vim, less). It only closes the workspace's own layers.
-        if (e.key === 'Escape') {
+        // Escape first closes the workspace's own layers. Then, at the normal screen, it goes
+        // back to the dashboard. In a full-screen program (vim, less) it belongs to the program,
+        // and TerminalView lets it through to the shell instead.
+        if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey) {
           if (sheet) setSheet(false);
           else if (panel !== 'none') setPanel('none');
           else if (pasteAsk) setPasteAsk(null);
-          else return;
+          else if (!e.shiftKey && !ports.current.get(active)?.altScreen()) {
+            e.preventDefault();
+            hide();
+            return;
+          } else return;
           e.preventDefault();
           focusActive();
           return;
@@ -716,7 +727,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
               </Popover>
             )}
           </div>
-          <button type="button" className="tw-hide" onClick={hide} title="Back to dashboard (Ctrl+`). Shells keep running." aria-label="Hide terminal">
+          <button type="button" className="tw-hide" onClick={hide} title="Back to dashboard (Esc or Ctrl+`). Shells keep running." aria-label="Hide terminal">
             <Icon.down />
             {!compact && <span>Hide</span>}
           </button>

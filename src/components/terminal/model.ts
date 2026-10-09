@@ -188,7 +188,8 @@ export const SHORTCUTS: readonly { readonly group: string; readonly items: reado
       { keys: 'Alt+W', does: 'Close window', footer: true },
       { keys: 'Alt+1…9', does: 'Go to window', footer: true },
       { keys: 'Alt+← / Alt+→', does: 'Previous / next window' },
-      { keys: 'Ctrl+`', does: 'Back to dashboard (shells keep running)', footer: true },
+      { keys: 'Esc', does: 'Back to dashboard (shells keep running)', footer: true },
+      { keys: 'Ctrl+`', does: 'Back to dashboard, also inside vim or less' },
     ],
   },
   {
@@ -208,6 +209,7 @@ export const SHORTCUTS: readonly { readonly group: string; readonly items: reado
       { keys: 'Ctrl+A', does: 'Select the command being typed' },
       { keys: 'Alt+A', does: 'Start of line (the shell’s own Ctrl+A)' },
       { keys: 'Ctrl+Backspace', does: 'Delete word' },
+      { keys: 'Ctrl+[', does: 'Send Esc to the shell (Esc itself goes to the program inside vim, less, htop)' },
       { keys: 'Shift+right click', does: 'Browser menu instead of the terminal menu' },
     ],
   },
