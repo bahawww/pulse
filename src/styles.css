@@ -58,13 +58,16 @@
 
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
   /* Liquid glass, for things that float over content (see the Glass section). */
-  --glass-fill: rgba(30, 30, 34, 0.58);
-  --glass-edge: rgba(255, 255, 255, 0.09);
-  --glass-hi: rgba(255, 255, 255, 0.1);
-  --glass-rim-a: rgba(255, 255, 255, 0.26);
-  --glass-rim-b: rgba(255, 255, 255, 0.05);
+  /* Dark mode runs calmer glass: mostly opaque, lighter blur, a faint rim. */
+  --glass-fill: rgba(26, 26, 30, 0.84);
+  --glass-edge: rgba(255, 255, 255, 0.08);
+  --glass-hi: rgba(255, 255, 255, 0.06);
+  --glass-rim-a: rgba(255, 255, 255, 0.13);
+  --glass-rim-b: rgba(255, 255, 255, 0.03);
+  --glass-filter: blur(14px) saturate(130%);
+  --glass-bar-filter: blur(16px) saturate(120%);
   --glass-drop: 0 18px 50px -18px rgba(0, 0, 0, 0.7);
-  --glass-bar: rgba(5, 5, 5, 0.72);
+  --glass-bar: rgba(5, 5, 5, 0.86);
   /* Menu selection: a raised chip, lighter than the sidebar it sits on. */
   --sel-bg: #1c1c1e;
   --sel-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 16px -10px rgba(0, 0, 0, 0.8);
@@ -126,6 +129,8 @@
 
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 2px rgba(0, 0, 0, 0.05);
   --glass-fill: rgba(255, 255, 255, 0.6);
+  --glass-filter: blur(22px) saturate(180%);
+  --glass-bar-filter: blur(20px) saturate(170%);
   --glass-edge: rgba(0, 0, 0, 0.08);
   --glass-hi: rgba(255, 255, 255, 0.85);
   --glass-rim-a: rgba(255, 255, 255, 0.95);
@@ -975,8 +980,8 @@ kbd {
   border: 1px solid var(--glass-edge, var(--line));
   border-radius: 10px;
   background: var(--glass-fill, var(--surface-2));
-  -webkit-backdrop-filter: blur(16px) saturate(170%);
-  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: var(--glass-filter, blur(16px) saturate(170%));
+  backdrop-filter: var(--glass-filter, blur(16px) saturate(170%));
   box-shadow:
     inset 0 1px 0 var(--glass-hi, transparent),
     var(--glass-drop, none);
@@ -4220,8 +4225,8 @@ html[data-go] .side-kbd {
 .tw-resume {
   border-color: var(--glass-edge);
   background: var(--glass-fill);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: var(--glass-filter, blur(22px) saturate(180%));
+  backdrop-filter: var(--glass-filter, blur(22px) saturate(180%));
   box-shadow:
     inset 0 1px 0 var(--glass-hi),
     var(--glass-drop);
@@ -4275,8 +4280,8 @@ html[data-go] .side-kbd {
 /* The banner keeps its red tint and border on top of the glass. */
 .stale-banner {
   background-color: var(--glass-fill);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: var(--glass-filter, blur(22px) saturate(180%));
+  backdrop-filter: var(--glass-filter, blur(22px) saturate(180%));
   box-shadow:
     inset 0 1px 0 var(--glass-hi),
     var(--glass-drop);
@@ -4295,8 +4300,8 @@ html[data-go] .side-kbd {
   inset: 0;
   z-index: -1;
   background: var(--glass-bar);
-  -webkit-backdrop-filter: blur(20px) saturate(170%);
-  backdrop-filter: blur(20px) saturate(170%);
+  -webkit-backdrop-filter: var(--glass-bar-filter, blur(20px) saturate(170%));
+  backdrop-filter: var(--glass-bar-filter, blur(20px) saturate(170%));
   pointer-events: none;
 }
 
