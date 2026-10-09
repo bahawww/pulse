@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .bg { fill: #0d0d0d; }
+    .pulse { fill: none; stroke: #ffffff; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #ffffff; }
+      .pulse { stroke: #0d0d0d; }
+    }
+  </style>
+  <rect class="bg" width="64" height="64" rx="16"/>
+  <path class="pulse" d="M9 35h14l6-19 9 31 6-12h11"/>
+</svg>
