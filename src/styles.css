@@ -3926,6 +3926,12 @@ html[data-go] .side-kbd {
     justify-content: center;
   }
 
+  /* .brand pushes the top bar's actions right with margin-right: auto; in the
+     rail that margin shoves the logo against the left edge. Centre it instead. */
+  .rail-brand {
+    margin: 0;
+  }
+
   .side-brand {
     margin: 0;
     gap: 10px;
