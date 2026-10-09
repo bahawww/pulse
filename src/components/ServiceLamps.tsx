@@ -1,6 +1,7 @@
 import { type JSX } from 'react';
-import type { StatsPayload } from '../shared/contract';
+import { SERVICES, type StatsPayload } from '../shared/contract';
 import { buildServiceUrl, type HostMode } from '../lib/urls';
+import { Bone, Loading } from './Skeleton';
 
 interface ServiceLampsProps {
   readonly data: StatsPayload | null;
@@ -10,7 +11,20 @@ interface ServiceLampsProps {
 
 /** One row per service: a lamp, the name, its port and round-trip time. Click opens it. */
 export function ServiceLamps({ data, hostMode, onNotify }: ServiceLampsProps): JSX.Element {
-  if (!data) return <p className="card-sub">Waiting for the first reading.</p>;
+  if (!data)
+    return (
+      <Loading what="services">
+        <ul className="lamps">
+          {SERVICES.map((svc, i) => (
+            <li key={svc.id} className="bone-row">
+              <Bone w={10} h={10} round />
+              <Bone w={`${32 + ((i * 13) % 24)}%`} />
+              <Bone w={44} className="bone-end" />
+            </li>
+          ))}
+        </ul>
+      </Loading>
+    );
 
   return (
     <ul className="lamps">

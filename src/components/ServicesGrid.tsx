@@ -2,6 +2,7 @@ import { type CSSProperties, type JSX, useState } from 'react';
 import { CATEGORY_FILTERS, SERVICES, type CategoryFilter, type Service, type StatsPayload } from '../shared/contract';
 import { buildServiceUrl, copyToClipboard, isSubdomainMode, type HostMode } from '../lib/urls';
 import { subdomainFor } from '../lib/site';
+import { Bone, BoneLines, Loading } from './Skeleton';
 import { ArrowUpRightIcon, CopyIcon, LinkIcon, ServiceIconGlyph } from './icons';
 
 /** Each service keeps one categorical colour for its whole life on the page. */
@@ -51,7 +52,28 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
         </div>
       </div>
 
-      {visible.length === 0 ? (
+      {!data ? (
+        <Loading what="services">
+          <div className="svc-grid">
+            {SERVICES.filter((s) => category === 'all' || s.category === category).map((s) => (
+              <div key={s.id} className="svc skeleton-card" aria-hidden="true">
+                <div className="bone-row" style={{ padding: 0 }}>
+                  <Bone w={36} h={36} />
+                  <div className="skeleton-head" style={{ flex: 1 }}>
+                    <Bone w="50%" h={14} />
+                    <Bone w="30%" h={10} />
+                  </div>
+                </div>
+                <BoneLines count={2} />
+                <div className="bone-row" style={{ padding: 0, borderTop: 0 }}>
+                  <Bone w={90} h={28} />
+                  <Bone w={28} h={28} className="bone-end" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Loading>
+      ) : visible.length === 0 ? (
         <p className="empty">No services in this category.</p>
       ) : (
         <div className="svc-grid">

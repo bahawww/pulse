@@ -3,6 +3,7 @@ import type { AlertsHandle } from '../hooks/useAlerts';
 import { formatAgo, formatPercent } from '../lib/format';
 import { BellIcon } from './icons';
 import type { AlertEvent, AlertState } from '../shared/contract';
+import { BoneRows, Loading } from './Skeleton';
 
 /**
  * Alerts bell. The badge counts only what is firing now; resolved events stay
@@ -95,7 +96,11 @@ export function NotificationBell({ alerts, onNotify }: NotificationBellProps): J
 
             {!error && <DesktopControl alerts={alerts} />}
 
-            {!data && !error && <p className="empty">Loading…</p>}
+            {!data && !error && (
+              <Loading what="alerts">
+                <BoneRows count={3} dense />
+              </Loading>
+            )}
 
             {data && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 10 }}>

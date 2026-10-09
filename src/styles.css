@@ -20,6 +20,8 @@
   --glass-strong: rgba(13, 13, 13, 0.95);
   --line: rgba(255, 255, 255, 0.09);
   --line-strong: rgba(255, 255, 255, 0.2);
+  --bone: rgba(255, 255, 255, 0.06);
+  --bone-shine: rgba(255, 255, 255, 0.07);
   --text: #f5f5f5;
   --text-2: #b8b8b8;
   --text-3: #8a8a8a;
@@ -78,6 +80,8 @@
   --glass-strong: rgba(249, 249, 249, 0.95);
   --line: rgba(0, 0, 0, 0.1);
   --line-strong: rgba(0, 0, 0, 0.2);
+  --bone: rgba(0, 0, 0, 0.06);
+  --bone-shine: rgba(255, 255, 255, 0.75);
   --text: #0d0d0d;
   --text-2: #424242;
   --text-3: #6e6e6e;
@@ -4469,4 +4473,97 @@ html[data-go] .side-kbd {
 .crash.is-page {
   max-width: 440px;
   margin: 18vh auto 0;
+}
+
+/* Skeleton loading (Skeleton.tsx): placeholders in the shape of the content,
+   with a soft shimmer sweep. */
+.bone {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  border-radius: 6px;
+  background: var(--bone) linear-gradient(90deg, transparent 0, var(--bone-shine) 50%, transparent 100%) no-repeat;
+  background-size: 200% 100%;
+  animation: bone-shimmer 1.4s ease-in-out infinite;
+}
+
+.bone.is-round {
+  border-radius: 999px;
+}
+
+@keyframes bone-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.skeleton {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.skeleton-card {
+  pointer-events: none;
+}
+
+.skeleton-head {
+  display: grid;
+  gap: 8px;
+}
+
+.bone-chart {
+  border-radius: var(--radius);
+}
+
+.bone-lines {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.bone-rows {
+  display: grid;
+}
+
+.bone-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.bone-row:first-child {
+  border-top: 0;
+}
+
+.bone-rows.is-dense .bone-row {
+  padding: 8px 0;
+}
+
+.bone-end {
+  margin-left: auto;
+}
+
+/* KPI tiles: the value bone sits where the big number goes. */
+.kpi-value.bone {
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* Lamps list while waiting for the first reading. */
+.lamps .bone-row {
+  padding: 16px 18px;
+  border-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bone {
+    animation: none;
+    background-image: none;
+  }
 }

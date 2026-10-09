@@ -26,6 +26,7 @@ import { ResourceTrends } from './components/ResourceTrends';
 import { ServicesGrid } from './components/ServicesGrid';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { GoHint } from './components/GoHint';
+import { Loading, SkeletonCard } from './components/Skeleton';
 import { Rail, Sidebar } from './components/Sidebar';
 import { VIEWS } from './lib/views';
 import { SpendPanel } from './components/SpendPanel';
@@ -276,6 +277,20 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
+            {!system && view in VIEW_SKELETONS && (
+              <Section title={VIEW_SKELETONS[view]!.title} hint={VIEW_SKELETONS[view]!.hint}>
+                <Loading what={VIEW_SKELETONS[view]!.title}>
+                  <div className="grid">
+                    {VIEW_SKELETONS[view]!.cards.map((c, i) => (
+                      <div key={i} className={c.span}>
+                        <SkeletonCard {...(c.rows ? { rows: c.rows } : { chart: c.chart ?? 160 })} />
+                      </div>
+                    ))}
+                  </div>
+                </Loading>
+              </Section>
+            )}
+
             {view === 'hardware' && system && (
               <Section title="Hardware" hint="cores, memory, network and disks">
                 <DeepTelemetry system={system} samples={samples} />
@@ -426,6 +441,38 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     </>
   );
 }
+
+/** Placeholder layouts for the views that need the first stats reading before they can render. */
+const VIEW_SKELETONS: Partial<
+  Record<string, { title: string; hint: string; cards: { span: string; rows?: number; chart?: number }[] }>
+> = {
+  hardware: {
+    title: 'Hardware',
+    hint: 'cores, memory, network and disks',
+    cards: [
+      { span: 'span-6', chart: 180 },
+      { span: 'span-6', chart: 180 },
+      { span: 'span-6', rows: 4 },
+      { span: 'span-6', rows: 4 },
+    ],
+  },
+  workload: {
+    title: 'Workload',
+    hint: 'what is running and how much it uses',
+    cards: [
+      { span: 'span-7', rows: 7 },
+      { span: 'span-5', rows: 5 },
+    ],
+  },
+  capacity: {
+    title: 'Capacity',
+    hint: 'what could run out',
+    cards: [
+      { span: 'span-5', rows: 5 },
+      { span: 'span-7', chart: 220 },
+    ],
+  },
+};
 
 function Section({ title, hint, children }: { readonly title: string; readonly hint: string; readonly children: ReactNode }): JSX.Element {
   return (

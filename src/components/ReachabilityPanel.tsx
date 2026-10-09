@@ -1,6 +1,7 @@
 import { usePolled } from '../hooks/usePolled';
 import { formatAgo } from '../lib/format';
 import type { ReachabilityReport } from '../shared/contract';
+import { BoneRows, Loading } from './Skeleton';
 
 /**
  * External reachability.
@@ -21,7 +22,7 @@ const VERDICT: Record<ReachabilityReport['results'][number]['status'], string> =
 };
 
 export function ReachabilityPanel() {
-  const { data, error, loading, refresh } = usePolled<ReachabilityReport>('/api/reachability', 300_000);
+  const { data, error, refresh } = usePolled<ReachabilityReport>('/api/reachability', 300_000);
 
   return (
     <section className="card" aria-labelledby="reach-h">
@@ -38,7 +39,11 @@ export function ReachabilityPanel() {
       </div>
 
       {error && <p className="note is-error">Check failed: {error.message}</p>}
-      {loading && !data && <p className="empty">Checking…</p>}
+      {!data && !error && (
+        <Loading what="reachability">
+          <BoneRows count={4} />
+        </Loading>
+      )}
 
       {data && (
         <>

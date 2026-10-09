@@ -2,6 +2,7 @@ import { type CSSProperties, type JSX, useMemo, useState } from 'react';
 import type { HistorySample, TimeRangeId } from '../shared/contract';
 import { formatPercent } from '../lib/format';
 import { RangePicker } from './RangePicker';
+import { Bone, Loading } from './Skeleton';
 import { TimeChart, type Series } from './TimeChart';
 
 /**
@@ -101,7 +102,16 @@ export function ResourceTrends({
         />
       </div>
 
-      {!hasData ? (
+      {!hasData && !ready ? (
+        <Loading what="trends">
+          <div className="bone-row" style={{ borderTop: 0, gap: 8 }}>
+            {[0, 1, 2].map((i) => (
+              <Bone key={i} h={56} style={{ flex: 1 }} />
+            ))}
+          </div>
+          <Bone h={170} className="bone-chart" />
+        </Loading>
+      ) : !hasData ? (
         <p className="empty">Collecting samples. The first trend lines appear after a few seconds.</p>
       ) : (
         <>

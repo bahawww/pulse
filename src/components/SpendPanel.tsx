@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { usePolled } from '../hooks/usePolled';
 import { formatTokens, formatUsd } from '../lib/format';
 import type { SpendPoint, SpendReport } from '../shared/contract';
+import { Bone, Loading } from './Skeleton';
 
 /**
  * LLM spend through 9router.
@@ -13,7 +14,7 @@ import type { SpendPoint, SpendReport } from '../shared/contract';
  */
 
 export function SpendPanel() {
-  const { data, error, loading } = usePolled<SpendReport>('/api/spend', 60_000);
+  const { data, error } = usePolled<SpendReport>('/api/spend', 60_000);
 
   const frame = (body: ReactNode, badge?: ReactNode) => (
     <section className="card" aria-labelledby="spend-h">
@@ -31,8 +32,17 @@ export function SpendPanel() {
   );
 
   if (error) return frame(<p className="note is-error">Could not read spend data: {error.message}</p>);
-  if (loading && !data) return frame(<p className="empty">Reading 9router usage…</p>);
-  if (!data) return frame(null);
+  if (!data)
+    return frame(
+      <Loading what="spend">
+        <div className="bone-row" style={{ borderTop: 0, gap: 8 }}>
+          {[0, 1, 2].map((i) => (
+            <Bone key={i} h={52} style={{ flex: 1 }} />
+          ))}
+        </div>
+        <Bone h={120} className="bone-chart" />
+      </Loading>,
+    );
 
   if (!data.available) {
     return frame(

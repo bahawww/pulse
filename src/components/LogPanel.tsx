@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LogEntry } from '../shared/contract';
 import { SelectMenu } from './SelectMenu';
+import { BoneLines, Loading } from './Skeleton';
 
 /**
  * Read-only journal tail.
@@ -131,7 +132,11 @@ export function LogPanel() {
       </div>
 
       {error && <p className="note is-error">{error}</p>}
-      {!error && entries === null && <p className="empty">Reading journal…</p>}
+      {!error && entries === null && (
+        <Loading what="journal">
+          <BoneLines count={8} />
+        </Loading>
+      )}
       {entries !== null && entries.length === 0 && <p className="empty">No entries for this unit in this window.</p>}
 
       {entries !== null && entries.length > 0 && (

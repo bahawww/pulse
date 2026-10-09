@@ -2,6 +2,7 @@ import { type JSX, useMemo } from 'react';
 import type { HistorySample, SystemMetrics } from '../shared/contract';
 import { formatUptime } from '../lib/urls';
 import { AnimatedNumber } from './AnimatedNumber';
+import { Bone } from './Skeleton';
 
 const nowFormat = (v: number) => v.toFixed(v < 10 ? 1 : 0);
 
@@ -65,6 +66,16 @@ export function PulseHero({ tone, statusText, system, samples }: PulseHeroProps)
           <span className={`lamp ${lamp}`} aria-hidden="true" />
           {statusText}
         </h1>
+        {!system && (
+          <div className="pulse-facts" aria-hidden="true">
+            {[96, 72, 120].map((w) => (
+              <div key={w}>
+                <Bone w={44} h={10} />
+                <Bone w={w} h={14} style={{ marginTop: 6 }} />
+              </div>
+            ))}
+          </div>
+        )}
         {system && (
           <dl className="pulse-facts">
             <div>
@@ -86,11 +97,19 @@ export function PulseHero({ tone, statusText, system, samples }: PulseHeroProps)
       <div className="trace">
         <div className="trace-head">
           <span className="trace-now">
-            {trace ? <AnimatedNumber value={trace.last} format={nowFormat} /> : '—'}%<small>CPU now</small>
+            {trace ? (
+              <>
+                <AnimatedNumber value={trace.last} format={nowFormat} />%
+              </>
+            ) : (
+              <Bone w={64} h={26} style={{ display: 'inline-block', verticalAlign: 'middle' }} />
+            )}
+            <small>CPU now</small>
           </span>
           <span className="trace-span">{trace ? `last ${trace.minutes} min` : 'collecting readings'}</span>
         </div>
         <div className="trace-plot" role="img" aria-label={trace ? `CPU usage over the last ${trace.minutes} minutes, now ${trace.last.toFixed(0)} percent` : 'CPU trace, waiting for data'}>
+          {!trace && <Bone w="100%" h="100%" className="bone-chart" />}
           {trace && (
             <>
               <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
