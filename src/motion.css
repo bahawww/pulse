@@ -701,15 +701,60 @@ html[data-vt='filter']::view-transition-new(*):only-child {
 
 /* ---------- 7. Theme switch (View Transitions, kind "theme") -------------- */
 
-/* The new theme grows as a circle from the toggle (--vt-x/-y/-r from useTheme). */
+/* The new theme grows as a circle from the toggle (--vt-x/-y/-r from useTheme),
+   but its edge is a soft wavefront, not a line: a radial mask feathered over
+   --vt-feather reads as motion blur on the moving edge. As it sweeps:
+   - the incoming theme focuses in: slightly blurred and enlarged at first,
+     sharp by the time the wave has passed;
+   - the outgoing theme recedes: blurred and dimmer, as if it sinks behind
+     the new one.
+   The new theme scales out of the toggle, so the page seems to breathe from it.
+   --vt-reveal is registered (@property) so the mask radius can animate. */
+@property --vt-reveal {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+html[data-vt='theme'] {
+  --vt-feather: calc(var(--vt-r, 150vmax) * 0.18);
+  --vt-dur: 900ms;
+  --vt-ease: cubic-bezier(0.7, 0, 0.2, 1);
+}
+
 html[data-vt='theme']::view-transition-old(root),
 html[data-vt='theme']::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+  transform-origin: var(--vt-x, 50%) var(--vt-y, 0);
+}
+
+html[data-vt='theme']::view-transition-old(root) {
+  animation: theme-recede var(--vt-dur) var(--vt-ease) both;
 }
 
 html[data-vt='theme']::view-transition-new(root) {
-  animation: theme-reveal 720ms cubic-bezier(0.65, 0, 0.35, 1) both;
+  -webkit-mask-image: radial-gradient(
+    circle at var(--vt-x, 50%) var(--vt-y, 0),
+    #000 calc(var(--vt-reveal) - var(--vt-feather)),
+    transparent var(--vt-reveal)
+  );
+  mask-image: radial-gradient(
+    circle at var(--vt-x, 50%) var(--vt-y, 0),
+    #000 calc(var(--vt-reveal) - var(--vt-feather)),
+    transparent var(--vt-reveal)
+  );
+  animation:
+    theme-reveal var(--vt-dur) var(--vt-ease) both,
+    theme-focus var(--vt-dur) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Without View Transitions the colours cross-fade (theme-switching, above);
+   the content also softly blurs and settles so the swap still has motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html.theme-switching .page {
+    animation: theme-soft 420ms var(--ease);
+  }
 }
 
 /* ---------- 8. Sign in (View Transitions, kind "login") ------------------- */
@@ -1188,10 +1233,39 @@ html[data-go] .side-kbd {
 
 @keyframes theme-reveal {
   from {
-    clip-path: circle(0 at var(--vt-x, 50%) var(--vt-y, 0));
+    --vt-reveal: 0px;
   }
   to {
-    clip-path: circle(var(--vt-r, 150vmax) at var(--vt-x, 50%) var(--vt-y, 0));
+    /* Past the farthest corner by a full feather, so no soft edge is left. */
+    --vt-reveal: calc(var(--vt-r, 150vmax) + var(--vt-feather) + 2px);
+  }
+}
+
+@keyframes theme-focus {
+  from {
+    transform: scale(1.02);
+    filter: blur(var(--mb-lg));
+  }
+  70% {
+    filter: blur(0);
+  }
+  to {
+    transform: none;
+    filter: none;
+  }
+}
+
+/* Blur and dim only: shrinking would open a strip of bare background at the edges. */
+@keyframes theme-recede {
+  to {
+    filter: blur(var(--mb-md)) brightness(0.86);
+  }
+}
+
+@keyframes theme-soft {
+  40% {
+    filter: blur(var(--mb-sm));
+    opacity: 0.85;
   }
 }
 
