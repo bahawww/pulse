@@ -20,9 +20,9 @@
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
   --dur-fast: 140ms;
   /* Motion blur for things in flight. Reduced motion sets these to 0. */
-  --mb-sm: 3px;
-  --mb-md: 6px;
-  --mb-lg: 10px;
+  --mb-sm: 5px;
+  --mb-md: 10px;
+  --mb-lg: 16px;
   --dur: 240ms;
   --dur-slow: 420ms;
 
@@ -819,6 +819,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(6px) scale(0.6);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -878,6 +879,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: scale(0.4);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -996,6 +998,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: rotate(-140deg) scale(0.3);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -1041,6 +1044,7 @@ html[data-go] .side-kbd {
 @keyframes badge-pop {
   from {
     transform: scale(0);
+    filter: blur(var(--mb-sm));
   }
 }
 

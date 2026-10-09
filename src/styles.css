@@ -56,7 +56,15 @@
   --s-tx: #d55181;
   --s-lat: #9085e9;
 
-  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  /* Liquid glass, for things that float over content (see the Glass section). */
+  --glass-fill: rgba(30, 30, 34, 0.58);
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --glass-hi: rgba(255, 255, 255, 0.1);
+  --glass-rim-a: rgba(255, 255, 255, 0.26);
+  --glass-rim-b: rgba(255, 255, 255, 0.05);
+  --glass-drop: 0 18px 50px -18px rgba(0, 0, 0, 0.7);
+  --glass-bar: rgba(5, 5, 5, 0.72);
   --backdrop: rgba(0, 0, 0, 0.75);
 
   --gutter: clamp(16px, 3.2vw, 56px);
@@ -113,7 +121,14 @@
   --s-tx: #c43d74;
   --s-lat: #4a3aa7;
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 1px 2px rgba(0, 0, 0, 0.05);
+  --glass-fill: rgba(255, 255, 255, 0.6);
+  --glass-edge: rgba(0, 0, 0, 0.08);
+  --glass-hi: rgba(255, 255, 255, 0.85);
+  --glass-rim-a: rgba(255, 255, 255, 0.95);
+  --glass-rim-b: rgba(255, 255, 255, 0.4);
+  --glass-drop: 0 18px 50px -20px rgba(0, 0, 0, 0.22);
+  --glass-bar: rgba(255, 255, 255, 0.72);
   --backdrop: rgba(0, 0, 0, 0.3);
 }
 
@@ -4090,5 +4105,132 @@ html[data-go] .side-kbd {
   .topbar-page {
     color: var(--text);
     font-weight: 600;
+  }
+}
+
+/* ---------- Glass ----------------------------------------------------------
+   Liquid glass for things that float over content: a translucent fill that
+   blurs and saturates what is behind it, a thin specular rim (bright at the
+   top-left edge, fading out along the sides), and a soft inner highlight on
+   the top edge. Flat panels on the page stay opaque; glass over a flat colour
+   only reads as grey. Colours come from --glass-* tokens per theme. */
+.pop,
+.palette,
+.toast,
+.confirm-root .confirm,
+.go-hint,
+.chart-tip,
+.tw-resume {
+  border-color: var(--glass-edge);
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    var(--glass-drop);
+}
+
+/* The rim: a gradient painted only in a 1px ring (mask excludes the inside). */
+.pop::before,
+.palette::before,
+.toast::before,
+.confirm-root .confirm::before,
+.go-hint::before,
+.chart-tip::before,
+.tw-resume::before,
+.stale-banner::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(150deg, var(--glass-rim-a), transparent 34%, transparent 66%, var(--glass-rim-b));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
+/* These scroll or clip their content, which would clip a rim drawn on the
+   border; draw it just inside instead. */
+.pop::before,
+.palette::before {
+  inset: 0;
+}
+
+/* The banner keeps its red tint and border on top of the glass. */
+.stale-banner {
+  background-color: var(--glass-fill);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    var(--glass-drop);
+}
+
+/* Top bar: content scrolls under frosted glass. The blur sits on a pseudo
+   element, not the bar, so menus opened from the bar can still blur the page
+   (an element with backdrop-filter would trap its children's backdrop). */
+.topbar {
+  background: transparent;
+}
+
+.topbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--glass-bar);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  backdrop-filter: blur(20px) saturate(170%);
+  pointer-events: none;
+}
+
+/* Without backdrop-filter, glass would only be see-through: go solid. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pop,
+  .palette,
+  .toast,
+  .confirm-root .confirm,
+  .go-hint,
+  .chart-tip,
+  .tw-resume,
+  .stale-banner {
+    background-color: var(--surface-2);
+  }
+
+  .topbar::before {
+    background: var(--bg);
+  }
+}
+
+/* People who ask the system for less transparency get solid panels. */
+@media (prefers-reduced-transparency: reduce) {
+  .pop,
+  .palette,
+  .toast,
+  .confirm-root .confirm,
+  .go-hint,
+  .chart-tip,
+  .tw-resume,
+  .stale-banner,
+  .tw-pop,
+  .tw-menu,
+  .tw-sheet,
+  .tw-jump {
+    background-color: var(--surface-2);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .topbar::before {
+    background: var(--bg);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }

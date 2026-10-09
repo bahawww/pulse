@@ -1515,3 +1515,54 @@
     animation-timing-function: steps(1);
   }
 }
+
+/* ---------------------------------------------------------------- glass
+   Panels that float over the shell use the dashboard's liquid glass
+   (--glass-* tokens, styles.css "Glass"). */
+.tw-pop,
+.tw-menu,
+.tw-sheet,
+.tw-jump {
+  border-color: var(--glass-edge);
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    var(--glass-drop);
+}
+
+.tw-pop::before,
+.tw-menu::before,
+.tw-sheet::before,
+.tw-jump::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(150deg, var(--glass-rim-a), transparent 34%, transparent 66%, var(--glass-rim-b));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
+.tw-sheet {
+  position: relative;
+}
+
+/* Phones: the bottom sheets are glass too, over the shell. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .tw-pop,
+  .tw-menu,
+  .tw-sheet,
+  .tw-jump {
+    background: var(--surface);
+  }
+}
