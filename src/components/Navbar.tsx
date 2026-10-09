@@ -88,7 +88,6 @@ export function Navbar({
           <BrandMark />
           <span className="brand-text">
             <span className="brand-name">Pulse</span>
-            <span className="brand-tag">your vps, live</span>
           </span>
         </a>
 

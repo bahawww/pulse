@@ -370,7 +370,8 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
           </div>
 
           <footer className="footer">
-            <Freshness lastOkAt={lastOkAt} stale={stale} />
+            {/* Overview already shows it under the hero status. */}
+            {view !== 'overview' && <Freshness lastOkAt={lastOkAt} stale={stale} />}
             <div className="footer-keys">
               {SERVICES.map((s) => (
                 <span key={s.id}>

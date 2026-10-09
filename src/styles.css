@@ -257,12 +257,6 @@ kbd {
   color: var(--accent);
 }
 
-.brand-tag {
-  margin-top: 3px;
-  color: var(--text-3);
-  font-size: 12px;
-}
-
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -2309,6 +2303,7 @@ kbd {
 
 .footer-keys {
   display: flex;
+  margin-left: auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
@@ -2500,10 +2495,6 @@ kbd {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .brand-tag {
-    display: none;
   }
 
   .pulse-facts {
