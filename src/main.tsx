@@ -1,11 +1,21 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginPage } from './components/LoginPage';
 import { type AuthState, useAuth } from './hooks/useAuth';
 import { useInstall } from './hooks/useInstall';
 import { canTransition, prefersReducedMotion, transition } from './lib/motion';
 import { installPointerEffects } from './lib/pointer';
+// Self-hosted fonts, latin subset only: no third-party request, and they work offline.
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-500.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/inter/latin-700.css';
+import '@fontsource/jetbrains-mono/latin-400.css';
+import '@fontsource/jetbrains-mono/latin-400-italic.css';
+import '@fontsource/jetbrains-mono/latin-500.css';
+import '@fontsource/jetbrains-mono/latin-700.css';
 import './styles.css';
 import './motion.css';
 
@@ -60,7 +70,9 @@ if (!container) throw new Error('#root missing from index.html');
 
 createRoot(container).render(
   <StrictMode>
-    <Root />
+    <ErrorBoundary label="the dashboard" page>
+      <Root />
+    </ErrorBoundary>
   </StrictMode>,
 );
 

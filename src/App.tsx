@@ -13,6 +13,7 @@ import { buildServiceUrl, readStoredHostMode, storeHostMode, type HostMode } fro
 import { CommandPalette, Toast } from './components/CommandPalette';
 import { ContainerHistory } from './components/ContainerHistory';
 import { DeepTelemetry } from './components/DeepTelemetry';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { FilesystemPanel } from './components/FilesystemPanel';
 import { LatencyHistory } from './components/LatencyHistory';
 import { LogPanel } from './components/LogPanel';
@@ -236,14 +237,18 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
           <div key={view} className="view" data-view={view}>
             {view === 'overview' && (
               <>
-                <PulseHero
-                  tone={status.tone === 'is-crit' ? 'is-crit' : status.tone === 'is-warn' ? 'is-warn' : ''}
-                  statusText={status.text}
-                  system={system}
-                  samples={samples}
-                />
+                <ErrorBoundary label="the status hero">
+                  <PulseHero
+                    tone={status.tone === 'is-crit' ? 'is-crit' : status.tone === 'is-warn' ? 'is-warn' : ''}
+                    statusText={status.text}
+                    system={system}
+                    samples={samples}
+                  />
+                </ErrorBoundary>
 
-                <TelemetryGrid system={system} samples={samples} />
+                <ErrorBoundary label="telemetry">
+                  <TelemetryGrid system={system} samples={samples} />
+                </ErrorBoundary>
 
                 <Section title="Services" hint="click to open">
                   <ServiceLamps data={data} hostMode={hostMode} onNotify={notify} />
@@ -380,11 +385,13 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       />
 
       {terminal !== 'never' && Workspace && (
-        <Workspace
-          open={terminal === 'open'}
-          onHide={() => setTerminal('hidden')}
-          onEmpty={() => setTerminal('never')}
-        />
+        <ErrorBoundary label="the terminal">
+          <Workspace
+            open={terminal === 'open'}
+            onHide={() => setTerminal('hidden')}
+            onEmpty={() => setTerminal('never')}
+          />
+        </ErrorBoundary>
       )}
 
       {terminal === 'hidden' && (
@@ -427,7 +434,7 @@ function Section({ title, hint, children }: { readonly title: string; readonly h
         <h2 className="section-title">{title}</h2>
         <span className="section-hint">{hint}</span>
       </div>
-      {children}
+      <ErrorBoundary label={title}>{children}</ErrorBoundary>
     </section>
   );
 }

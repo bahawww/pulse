@@ -4452,3 +4452,21 @@ html[data-go] .side-kbd {
     scrollbar-color: var(--line-strong) transparent;
   }
 }
+
+/* ErrorBoundary fallback: one panel failed, the rest of the page keeps working. */
+.crash {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 18px 20px;
+  border-color: var(--line-strong);
+}
+
+.crash .card-sub {
+  overflow-wrap: anywhere;
+}
+
+.crash.is-page {
+  max-width: 440px;
+  margin: 18vh auto 0;
+}

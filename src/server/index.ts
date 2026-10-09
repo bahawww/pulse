@@ -103,8 +103,8 @@ app.use(
         scriptSrc: ["'self'", "'unsafe-inline'", 'https://static.cloudflareinsights.com'],
         // Vite emits modulepreload + stylesheet links from 'self'; fonts come
         // from Google's CDN.
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        fontSrc: ["'self'", 'data:'],
         imgSrc: ["'self'", 'data:'],
         connectSrc: ["'self'", 'https://cloudflareinsights.com'],
         objectSrc: ["'none'"],
