@@ -1,5 +1,6 @@
-import { type JSX, type ReactNode, useMemo } from 'react';
+import { type JSX, type PointerEvent as ReactPointerEvent, type ReactNode, useMemo, useState } from 'react';
 import type { HistorySample, SystemMetrics } from '../shared/contract';
+import { formatClock } from '../lib/format';
 import { formatUptime } from '../lib/urls';
 import { AnimatedNumber } from './AnimatedNumber';
 import { Bone } from './Skeleton';
@@ -17,11 +18,9 @@ interface PulseHeroProps {
 
 const W = 1000;
 const H = 150;
-const TOP = 14;
-const BOTTOM = 10;
+const TOP = 10;
+const BOTTOM = 4;
 const MAX_POINTS = 240;
-/** Right gap in plot units, so the newest point and its ring are not clipped by the panel edge. */
-const END_GAP = 16;
 
 /**
  * Overview opener: one sentence on the host's state, then its pulse, the CPU
@@ -29,15 +28,16 @@ const END_GAP = 16;
  * the only moving element on the page.
  */
 export function PulseHero({ tone, statusText, system, samples, freshness }: PulseHeroProps): JSX.Element {
+  const [hover, setHover] = useState<number | null>(null);
   const trace = useMemo(() => {
-    const recent = samples.slice(-MAX_POINTS);
-    const values = recent.map((s) => s.cpu).filter((v) => Number.isFinite(v));
+    const recent = samples.slice(-MAX_POINTS).filter((s) => Number.isFinite(s.cpu));
+    const values = recent.map((s) => s.cpu);
     if (values.length < 2) return null;
 
     // Scale to the data with headroom, never below 25%, so a quiet host reads as quiet.
     const peak = Math.max(...values);
     const ceiling = Math.max(25, Math.ceil((peak * 1.3) / 5) * 5);
-    const x = (i: number) => (i / (values.length - 1)) * (W - END_GAP);
+    const x = (i: number) => (i / (values.length - 1)) * W;
     const y = (v: number) => TOP + (1 - Math.min(v, ceiling) / ceiling) * (H - TOP - BOTTOM);
 
     const line = values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
@@ -48,14 +48,17 @@ export function PulseHero({ tone, statusText, system, samples, freshness }: Puls
 
     return {
       line,
-      area: `${line} L${W - END_GAP} ${H} L0 ${H} Z`,
+      area: `${line} L${W} ${H - BOTTOM} L0 ${H - BOTTOM} Z`,
       ceiling,
       last,
-      dotX: ((W - END_GAP) / W) * 100,
-      dotY: (y(last) / H) * 100,
+      values,
+      times: recent.map((s) => s.t),
+      /** Point i as percentages of the plot box, for HTML overlays. */
+      at: (i: number) => ({ left: (x(i) / W) * 100, top: (y(values[i] ?? 0) / H) * 100 }),
       minutes,
       midY: (y(ceiling / 2) / H) * 100,
       topY: (y(ceiling) / H) * 100,
+      baseY: (y(0) / H) * 100,
     };
   }, [samples]);
 
@@ -113,23 +116,56 @@ export function PulseHero({ tone, statusText, system, samples, freshness }: Puls
           </span>
           <span className="trace-span">{trace ? `last ${trace.minutes} min` : 'collecting readings'}</span>
         </div>
-        <div className="trace-plot" role="img" aria-label={trace ? `CPU usage over the last ${trace.minutes} minutes, now ${trace.last.toFixed(0)} percent` : 'CPU trace, waiting for data'}>
+        <div
+          className="trace-plot"
+          role="img"
+          aria-label={trace ? `CPU usage over the last ${trace.minutes} minutes, now ${trace.last.toFixed(0)} percent` : 'CPU trace, waiting for data'}
+        >
           {!trace && <Bone w="100%" h="100%" className="bone-chart" />}
           {trace && (
             <>
-              <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-                <line className="trace-grid" x1="0" x2={W} y1={H * (trace.midY / 100)} y2={H * (trace.midY / 100)} />
-                <line className="trace-grid" x1="0" x2={W} y1={H * (trace.topY / 100)} y2={H * (trace.topY / 100)} />
-                <path className="trace-fill" d={trace.area} />
-                <path className="trace-line" d={trace.line} />
-              </svg>
-              <span className="trace-scale" style={{ top: `${trace.topY}%` }}>
-                {trace.ceiling}%
-              </span>
-              <span className="trace-scale" style={{ top: `${trace.midY}%` }}>
-                {trace.ceiling / 2}%
-              </span>
-              <span className="trace-dot" style={{ left: `${trace.dotX}%`, top: `${trace.dotY}%` }} aria-hidden="true" />
+              {/* The plot and its scale sit side by side, so the line never runs under a label. */}
+              <div
+                className="trace-area"
+                onPointerMove={(e: ReactPointerEvent<HTMLDivElement>) => {
+                  const box = e.currentTarget.getBoundingClientRect();
+                  const f = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+                  setHover(Math.round(f * (trace.values.length - 1)));
+                }}
+                onPointerLeave={() => setHover(null)}
+              >
+                <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                  <line className="trace-grid" x1="0" x2={W} y1={H * (trace.topY / 100)} y2={H * (trace.topY / 100)} />
+                  <line className="trace-grid" x1="0" x2={W} y1={H * (trace.midY / 100)} y2={H * (trace.midY / 100)} />
+                  <line className="trace-base" x1="0" x2={W} y1={H * (trace.baseY / 100)} y2={H * (trace.baseY / 100)} />
+                  <path className="trace-fill" d={trace.area} />
+                  <path className="trace-line" d={trace.line} />
+                </svg>
+                {hover === null ? (
+                  <span className="trace-dot" style={{ left: '100%', top: `${trace.at(trace.values.length - 1).top}%` }} aria-hidden="true" />
+                ) : (
+                  (() => {
+                    const p = trace.at(hover);
+                    const v = trace.values[hover] ?? 0;
+                    const t = trace.times[hover];
+                    return (
+                      <>
+                        <span className="trace-cross" style={{ left: `${p.left}%` }} aria-hidden="true" />
+                        <span className="trace-dot is-hover" style={{ left: `${p.left}%`, top: `${p.top}%` }} aria-hidden="true" />
+                        <span className={`trace-tip${p.left > 70 ? ' is-left' : ''}`} style={{ left: `${p.left}%`, top: `${p.top}%` }}>
+                          <strong>{v.toFixed(v < 10 ? 1 : 0)}%</strong>
+                          {t !== undefined && <span>{formatClock(t)}</span>}
+                        </span>
+                      </>
+                    );
+                  })()
+                )}
+              </div>
+              <div className="trace-axis" aria-hidden="true">
+                <span style={{ top: `${trace.topY}%` }}>{trace.ceiling}%</span>
+                <span style={{ top: `${trace.midY}%` }}>{trace.ceiling / 2}%</span>
+                <span style={{ top: `${trace.baseY}%` }}>0</span>
+              </div>
             </>
           )}
         </div>
