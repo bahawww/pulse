@@ -1,7 +1,8 @@
-import { type CSSProperties, type JSX, useState } from 'react';
+import { type CSSProperties, type JSX, useLayoutEffect, useRef, useState } from 'react';
 import { CATEGORY_FILTERS, SERVICES, type CategoryFilter, type Service, type StatsPayload } from '../shared/contract';
 import { buildServiceUrl, copyToClipboard, isSubdomainMode, type HostMode } from '../lib/urls';
 import { subdomainFor } from '../lib/site';
+import { transition } from '../lib/motion';
 import { Bone, BoneLines, Loading } from './Skeleton';
 import { ArrowUpRightIcon, CopyIcon, LinkIcon, ServiceIconGlyph } from './icons';
 
@@ -28,10 +29,39 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
   const all = data?.services ?? [];
   const visible = category === 'all' ? all : all.filter((s) => s.category === category);
 
+  // The highlight behind the active tab, measured from the DOM so it can spring
+  // from tab to tab (motion.css) instead of each tab lighting up on its own.
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [pill, setPill] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const tab = tabsRef.current?.querySelector<HTMLElement>('.tab.is-active');
+      setPill(tab ? { x: tab.offsetLeft, y: tab.offsetTop, w: tab.offsetWidth, h: tab.offsetHeight } : null);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (tabsRef.current) observer.observe(tabsRef.current);
+    return () => observer.disconnect();
+  }, [category]);
+
+  /** Switch category inside a View Transition: cards that stay glide to their
+   * new place, the rest blur out and in (motion.css, kind "filter"). */
+  const choose = (id: CategoryFilter) => {
+    if (id === category) return;
+    transition('filter', () => setCategory(id));
+  };
+
   return (
     <div className="section-body">
       <div className="toolbar" style={{ marginBottom: 16 }}>
-        <div className="tabs" role="tablist" aria-label="Filter services by category">
+        <div className="tabs" role="tablist" aria-label="Filter services by category" ref={tabsRef}>
+          {pill && (
+            <span
+              className="tab-pill"
+              style={{ width: pill.w, height: pill.h, transform: `translate(${pill.x}px, ${pill.y}px)` }}
+              aria-hidden="true"
+            />
+          )}
           {CATEGORY_FILTERS.map((filter) => {
             const count =
               filter.id === 'all' ? SERVICES.length : SERVICES.filter((s) => s.category === filter.id).length;
@@ -42,7 +72,7 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
                 role="tab"
                 aria-selected={category === filter.id}
                 className={`tab${category === filter.id ? ' is-active' : ''}`}
-                onClick={() => setCategory(filter.id)}
+                onClick={() => choose(filter.id)}
               >
                 {filter.label}
                 <span className="tab-count">{count}</span>
@@ -79,7 +109,9 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
         <div className="svc-grid">
           {visible.map((service, index) => (
             <ServiceCard
-              key={`${category}:${service.id}`}
+              // Keyed by service alone: a card that stays in the new category is
+              // the same element, so the transition can move it rather than redraw it.
+              key={service.id}
               service={service}
               index={index}
               hostMode={hostMode}
@@ -116,7 +148,7 @@ function ServiceCard({
   return (
     <article
       className="svc"
-      style={{ '--i': index, '--svc': color } as CSSProperties}
+      style={{ '--i': index, '--svc': color, '--vt-name': `svc-${service.id}` } as CSSProperties}
       data-service-id={service.id}
     >
       <div className="svc-head">

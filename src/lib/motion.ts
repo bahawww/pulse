@@ -6,7 +6,7 @@ import { flushSync } from 'react-dom';
  * runs and tags <html> so the CSS can pick the right choreography.
  */
 
-type TransitionKind = 'view' | 'theme' | 'login';
+type TransitionKind = 'view' | 'theme' | 'login' | 'filter';
 
 interface ViewTransitionLike {
   readonly finished: Promise<void>;
