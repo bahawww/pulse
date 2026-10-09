@@ -11,6 +11,9 @@ const POLL_INTERVAL_MS = 5000;
 export function useStats() {
   const [data, setData] = useState<StatsPayload | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  // Client clock at the last successful poll. The server's own timestamp is not
+  // used for staleness: a skewed server clock would read as "stale" forever.
+  const [lastOkAt, setLastOkAt] = useState<number | null>(null);
   const failureCount = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aborted = useRef(false);
@@ -31,6 +34,7 @@ export function useStats() {
       if (aborted.current) return;
       setData(payload);
       setError(null);
+      setLastOkAt(Date.now());
       failureCount.current = 0;
     } catch (err) {
       if (aborted.current) return;
@@ -75,5 +79,5 @@ export function useStats() {
 
   const refresh = useCallback(() => setManualRefresh((n) => n + 1), []);
 
-  return { data, error, refresh };
+  return { data, error, refresh, lastOkAt };
 }

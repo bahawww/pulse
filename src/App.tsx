@@ -1,6 +1,7 @@
 import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SERVICES, isHiddenContainer, type HistorySample } from './shared/contract';
+import { useNow } from './hooks/useNow';
 import { useStats } from './hooks/useStats';
 import { useHistory } from './hooks/useHistory';
 import { useTheme } from './hooks/useTheme';
@@ -14,6 +15,7 @@ import { CommandPalette, Toast } from './components/CommandPalette';
 import { ContainerHistory } from './components/ContainerHistory';
 import { DeepTelemetry } from './components/DeepTelemetry';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Freshness, isStale, StaleBanner } from './components/Freshness';
 import { FilesystemPanel } from './components/FilesystemPanel';
 import { LatencyHistory } from './components/LatencyHistory';
 import { LogPanel } from './components/LogPanel';
@@ -55,7 +57,10 @@ interface AppProps {
 
 export default function App({ user, onLogout, install }: AppProps): JSX.Element {
   const { theme, toggleTheme } = useTheme();
-  const { data, error, refresh } = useStats();
+  const { data, error, refresh, lastOkAt } = useStats();
+  // Re-read every poll interval so a hung request (no error, no data) still turns stale.
+  const now = useNow(5000);
+  const stale = isStale(data !== null, error, lastOkAt, now);
   const { history, range, setRange, maxSpanMs, loading: historyLoading } = useHistory();
 
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -196,6 +201,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   const status = useMemo(() => {
     if (error && !data) return { tone: 'is-crit', text: 'Backend unreachable' };
     if (!data) return { tone: '', text: 'Connecting…' };
+    if (stale) return { tone: 'is-crit', text: 'Connection lost' };
     if (offline > 0) return { tone: 'is-warn', text: `${offline} service${offline === 1 ? '' : 's'} offline` };
     // A firing alert outranks "operational": the services answer, but the host
     // is in a state a rule says needs attention.
@@ -208,7 +214,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     }
     if (degraded.length > 0) return { tone: 'is-warn', text: `Partial data: ${degraded.join(', ')}` };
     return { tone: 'is-ok', text: 'All systems operational' };
-  }, [data, error, offline, degraded, alerts.firing]);
+  }, [data, error, stale, offline, degraded, alerts.firing]);
 
   const latencyServices = useMemo(() => SERVICES.map((s) => ({ id: s.id, label: s.name })), []);
 
@@ -233,7 +239,9 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
           <Rail active={view} onExpand={toggleSidebar} />
         )}
 
-        <main className="page">
+        <main className={`page${stale ? ' is-stale' : ''}`}>
+          {stale && <StaleBanner lastOkAt={lastOkAt} error={error} onRetry={refresh} />}
+
           {/* data-view picks this view's entrance choreography in motion.css. */}
           <div key={view} className="view" data-view={view}>
             {view === 'overview' && (
@@ -242,6 +250,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                   <PulseHero
                     tone={status.tone === 'is-crit' ? 'is-crit' : status.tone === 'is-warn' ? 'is-warn' : ''}
                     statusText={status.text}
+                    freshness={<Freshness lastOkAt={lastOkAt} stale={stale} />}
                     system={system}
                     samples={samples}
                   />
@@ -361,7 +370,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
           </div>
 
           <footer className="footer">
-            <span>{data ? `Synced ${new Date(data.system.serverTime).toLocaleTimeString()}` : 'Waiting for first sync'}</span>
+            <Freshness lastOkAt={lastOkAt} stale={stale} />
             <div className="footer-keys">
               {SERVICES.map((s) => (
                 <span key={s.id}>

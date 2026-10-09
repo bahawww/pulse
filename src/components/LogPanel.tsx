@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LogEntry } from '../shared/contract';
+import { formatClock } from '../lib/format';
 import { SelectMenu } from './SelectMenu';
 import { BoneLines, Loading } from './Skeleton';
 
@@ -144,7 +145,7 @@ export function LogPanel() {
           {entries.map((entry, i) => (
             <li className={`log-row ${levelClass(entry.priority)}`} key={`${entry.ts}-${i}`}>
               <time className="log-time" dateTime={new Date(entry.ts).toISOString()}>
-                {new Date(entry.ts).toLocaleTimeString('en-GB', { hour12: false })}
+                {formatClock(entry.ts)}
               </time>
               <span className="log-message">{entry.message}</span>
             </li>

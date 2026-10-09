@@ -1,4 +1,4 @@
-import { type JSX, useMemo } from 'react';
+import { type JSX, type ReactNode, useMemo } from 'react';
 import type { HistorySample, SystemMetrics } from '../shared/contract';
 import { formatUptime } from '../lib/urls';
 import { AnimatedNumber } from './AnimatedNumber';
@@ -11,6 +11,8 @@ interface PulseHeroProps {
   readonly statusText: string;
   readonly system: SystemMetrics | null;
   readonly samples: readonly HistorySample[];
+  /** "Updated 4s ago", rendered under the status line. */
+  readonly freshness?: ReactNode;
 }
 
 const W = 1000;
@@ -26,7 +28,7 @@ const END_GAP = 16;
  * trace from the same history the trend charts use. The newest reading carries
  * the only moving element on the page.
  */
-export function PulseHero({ tone, statusText, system, samples }: PulseHeroProps): JSX.Element {
+export function PulseHero({ tone, statusText, system, samples, freshness }: PulseHeroProps): JSX.Element {
   const trace = useMemo(() => {
     const recent = samples.slice(-MAX_POINTS);
     const values = recent.map((s) => s.cpu).filter((v) => Number.isFinite(v));
@@ -62,10 +64,13 @@ export function PulseHero({ tone, statusText, system, samples }: PulseHeroProps)
   return (
     <section className="pulse" aria-labelledby="pulse-h">
       <div className="pulse-copy">
-        <h1 id="pulse-h" className="pulse-status">
-          <span className={`lamp ${lamp}`} aria-hidden="true" />
-          {statusText}
-        </h1>
+        <div>
+          <h1 id="pulse-h" className="pulse-status">
+            <span className={`lamp ${lamp}`} aria-hidden="true" />
+            {statusText}
+          </h1>
+          {freshness && <p className="pulse-fresh">{freshness}</p>}
+        </div>
         {!system && (
           <div className="pulse-facts" aria-hidden="true">
             {[96, 72, 120].map((w) => (

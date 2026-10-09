@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { usePolled } from '../hooks/usePolled';
 import type { ActionLogEntry, ActionResult, ActionTarget } from '../shared/contract';
+import { formatClock } from '../lib/format';
 
 /**
  * Service control. Two deliberate friction points, because this panel can take
@@ -190,7 +191,7 @@ export function ActionsPanel({
             {log.data.entries.slice(0, 5).map((e) => (
               <li className="action-row" key={e.id}>
                 <span className="action-kind">
-                  {new Date(e.ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                  {formatClock(e.ts, false)}
                 </span>
                 <span className="action-name" title={e.message}>
                   {e.action} {e.name}

@@ -106,6 +106,30 @@ export function formatAxisTime(t: number, spanMs: number): string {
   return `${day}/${month} ${hh}:${mm}`;
 }
 
+/**
+ * Wall-clock time of day, always 24-hour, in the viewer's zone: "14:02:11".
+ * One formatter for every timestamp in the UI, so the footer, logs and the
+ * action log can never disagree on 12h vs 24h.
+ */
+export function formatClock(t: number, seconds = true): string {
+  const d = new Date(t);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return seconds ? `${hh}:${mm}:${String(d.getSeconds()).padStart(2, '0')}` : `${hh}:${mm}`;
+}
+
+/** Short name of the viewer's time zone, "GMT+7" or "WIB" depending on the browser. */
+export function zoneLabel(): string {
+  try {
+    const part = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+      .formatToParts(new Date())
+      .find((p) => p.type === 'timeZoneName');
+    return part?.value ?? '';
+  } catch {
+    return '';
+  }
+}
+
 /** "3m ago", "2h ago" — used by the alert feed. */
 export function formatAgo(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '—';

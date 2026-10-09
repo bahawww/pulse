@@ -45,13 +45,16 @@
   --crit-text: #ff6b78;
   --crit-soft: rgba(255, 59, 78, 0.18);
 
-  /* Series. CPU takes the accent so the hero trace and the CPU tile match. */
-  --s-cpu: #14f0b4;
-  --s-mem: #4d8dff;
-  --s-disk: #ffc233;
-  --s-rx: #9dff3d;
-  --s-tx: #22d3ee;
-  --s-lat: #ff8a2b;
+  /* Series. Hues stay clear of the status colours (green, amber, orange, red)
+     so a data line never reads as a state. Validated with the dataviz palette
+     checks against --surface in each theme: CPU/Mem/Disk share the trends
+     chart (all pairs pass CVD and normal vision), RX/TX share network charts. */
+  --s-cpu: #1aa3c4;
+  --s-mem: #3d6fe0;
+  --s-disk: #d55181;
+  --s-rx: #3d6fe0;
+  --s-tx: #d55181;
+  --s-lat: #9085e9;
 
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
   --backdrop: rgba(0, 0, 0, 0.75);
@@ -103,12 +106,12 @@
   --crit-text: #b42318;
   --crit-soft: rgba(217, 45, 32, 0.1);
 
-  --s-cpu: #0d8f6e;
-  --s-mem: #2f6fe0;
-  --s-disk: #a08a2e;
-  --s-rx: #5d9a22;
-  --s-tx: #1b8fa5;
-  --s-lat: #c2561f;
+  --s-cpu: #1798b5;
+  --s-mem: #2350c0;
+  --s-disk: #c43d74;
+  --s-rx: #2350c0;
+  --s-tx: #c43d74;
+  --s-lat: #4a3aa7;
 
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   --backdrop: rgba(0, 0, 0, 0.3);
@@ -4565,5 +4568,187 @@ html[data-go] .side-kbd {
   .bone {
     animation: none;
     background-image: none;
+  }
+}
+
+/* Freshness label ("Updated 4s ago") in the hero and footer. */
+.pulse-fresh {
+  margin-top: 10px;
+  padding-left: 30px;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.fresh {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fresh-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.fresh.is-stale {
+  color: var(--crit);
+}
+
+.fresh.is-stale .fresh-dot {
+  background: var(--crit);
+}
+
+.fresh-clock {
+  white-space: nowrap;
+}
+
+/* Data on screen is frozen at the last good reading: say so, and dim it so
+   frozen numbers cannot pass for live ones. Opacity only: a filter would make
+   .view the containing block for fixed popovers inside it. */
+.stale-banner {
+  position: sticky;
+  top: calc(var(--topbar-h, 56px) + 8px);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px 12px 16px;
+  border: 1px solid var(--crit);
+  border-radius: var(--radius);
+  background: var(--surface);
+  background-image: linear-gradient(var(--crit-soft), var(--crit-soft));
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  animation: stale-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.stale-copy {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.stale-copy strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.view > *,
+.pulse .trace {
+  transition: opacity 300ms;
+}
+
+/* Everything but the hero's status line, which is what says "Connection lost". */
+.page.is-stale .view > :not(.pulse),
+.page.is-stale .pulse .trace,
+.page.is-stale .pulse-facts {
+  opacity: 0.5;
+}
+
+@keyframes stale-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (max-width: 640px) {
+  .stale-banner {
+    flex-wrap: wrap;
+  }
+
+  .stale-banner .btn {
+    margin-left: 26px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stale-banner {
+    animation: none;
+  }
+
+  .view > *,
+  .pulse .trace {
+    transition: none;
+  }
+}
+
+/* Touch screens: bigger hit areas. Desktop sizes above stay as they are;
+   these only apply where the pointer is a finger. 36-40px meets WCAG 2.2's
+   24px minimum with room for thumbs. */
+@media (pointer: coarse) {
+  .btn {
+    height: 40px;
+  }
+
+  .btn-sm {
+    height: 36px;
+    padding: 0 12px;
+  }
+
+  .btn-icon,
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .tab {
+    height: 36px;
+  }
+
+  .range-btn {
+    height: 34px;
+    padding: 0 11px;
+  }
+
+  .spark-btn {
+    width: 32px;
+    height: 30px;
+  }
+
+  .menu-item {
+    padding: 12px;
+  }
+
+  .side-link {
+    padding: 11px 10px;
+  }
+
+  .tw-btn {
+    padding: 10px 14px;
+  }
+}
+
+/* Phones: nothing that carries information below 12px (chart scales 11px). */
+@media (max-width: 640px) {
+  .tag,
+  .table th,
+  .tab-count,
+  .range-note,
+  .stat-sub,
+  .spark-toolbar,
+  .spark-btn,
+  .chart-tip-time,
+  .iface-foot,
+  .fs-meta,
+  .ct-image,
+  .action-kind,
+  .result pre,
+  .alert-meta,
+  .rules-thresh,
+  .kpi-sub,
+  .card-sub,
+  .footer {
+    font-size: 12px;
+  }
+
+  .trace-scale,
+  .spark-axis-label,
+  .core {
+    font-size: 11px;
   }
 }
