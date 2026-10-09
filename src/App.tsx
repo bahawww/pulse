@@ -230,6 +230,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
         alerts={alerts}
         user={user}
         onLogout={requestLogout}
+        active={view}
       />
 
       <div className={`shell${sidebarOpen ? '' : ' is-collapsed'}`}>

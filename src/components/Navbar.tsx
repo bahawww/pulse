@@ -3,7 +3,7 @@ import { type AlertsHandle } from '../hooks/useAlerts';
 import { type AuthUser } from '../hooks/useAuth';
 import { type Theme, type ThemeOrigin } from '../hooks/useTheme';
 import { HOST_OPTIONS, type HostMode } from '../lib/urls';
-import { VIEWS } from '../lib/views';
+import { VIEW_GROUPS, VIEWS, type ViewId } from '../lib/views';
 import { CheckIcon, MoonIcon, SearchIcon, SunIcon } from './icons';
 import { NotificationBell } from './NotificationBell';
 
@@ -18,6 +18,8 @@ interface NavbarProps {
   readonly alerts: AlertsHandle;
   readonly user: AuthUser;
   readonly onLogout: () => void;
+  /** The current view, named on the left of the bar on desktop (where the brand is in the sidebar). */
+  readonly active: ViewId;
 }
 
 /**
@@ -35,6 +37,7 @@ export function Navbar({
   alerts,
   user,
   onLogout,
+  active,
 }: NavbarProps): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -90,6 +93,18 @@ export function Navbar({
             <span className="brand-name">Pulse</span>
           </span>
         </a>
+
+        {(() => {
+          const group = VIEW_GROUPS.find((g) => g.items.some((i) => i.id === active));
+          const item = group?.items.find((i) => i.id === active);
+          if (!group || !item) return null;
+          return (
+            <p className="topbar-title" aria-hidden="true">
+              {group.title !== item.label && <span className="topbar-crumb">{group.title}</span>}
+              <span className="topbar-page">{item.label}</span>
+            </p>
+          );
+        })()}
 
         <div className="topbar-actions">
           <button
@@ -216,7 +231,7 @@ export function Navbar({
  * Logo: flat 2D. A blue rounded square with one white heartbeat line, the
  * pulse of a live server. Two flat colours, no effects.
  */
-function BrandMark(): JSX.Element {
+export function BrandMark(): JSX.Element {
   return (
     <svg className="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
       <rect width="40" height="40" rx="10" fill="var(--logo-bg)" />

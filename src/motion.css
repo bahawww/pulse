@@ -268,11 +268,7 @@ html.theme-switching *::after {
   animation-delay: calc(50ms + var(--i, 0) * 28ms);
 }
 
-@media (min-width: 1024px) {
-  .shell {
-    transition: grid-template-columns var(--spring-snappy-dur) var(--spring-snappy);
-  }
-}
+
 
 /* ---------- 3. Pointer: tilt and spotlight (src/lib/pointer.ts) ----------- */
 
@@ -612,9 +608,10 @@ html[data-vt='theme']::view-transition-new(root) {
 
 /* ---------- 8. Sign in (View Transitions, kind "login") ------------------- */
 
-/* The login logo flies into the top-bar logo while the screens swap. */
+/* The login logo flies into the visible app logo (sidebar or rail on desktop,
+   top bar on phones) while the screens swap. Hidden copies are not captured. */
 html[data-vt='login'] .login-mark,
-html[data-vt='login'] .topbar .brand-mark {
+html[data-vt='login'] :is(.topbar, .sidebar, .rail) .brand-mark {
   view-transition-name: brand-mark;
 }
 

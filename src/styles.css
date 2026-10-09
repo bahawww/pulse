@@ -2624,29 +2624,6 @@ kbd {
   display: none;
 }
 
-@media (min-width: 1024px) {
-  .shell {
-    display: grid;
-    grid-template-columns: 220px minmax(0, 1fr);
-    align-items: start;
-    /* Tall enough that the sticky rail and sidebar can sit at the same height
-       in both states. Without it the sidebar is pinned lower than the rail. */
-    min-height: calc(100vh - 55px);
-  }
-
-  .sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
-    position: sticky;
-    top: 72px;
-    max-height: calc(100vh - 72px);
-    overflow-y: auto;
-    /* Same 10px inset as the rail, so the hide/show button never moves. */
-    padding: 40px 10px 24px;
-  }
-}
-
 @media (max-width: 1023px) {
   .nav-toggle {
     display: block;
@@ -2682,20 +2659,45 @@ kbd {
 }
 
 .side-title {
-  margin: 0 0 6px 10px;
+  margin: 0 0 4px 10px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .side-link {
-  display: block;
-  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 9px;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 500;
   text-decoration: none;
+}
+
+.side-link svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--text-3);
+  transition: color var(--dur-fast) ease;
+}
+
+.side-link:hover svg,
+.side-link.is-active svg {
+  color: var(--text);
+}
+
+.side-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .side-link:hover {
@@ -2721,42 +2723,6 @@ kbd {
   gap: 36px;
 }
 
-/* Hide/show button. Lives in the sidebar head, or at the top of the rail when
-   the sidebar is hidden. Both only exist on desktop. */
-.sidebar-head {
-  display: flex;
-  align-items: center;
-}
-
-/* Same 36px box as the rail button, so the two line up exactly. */
-.sidebar-head .icon-btn {
-  width: 36px;
-  height: 36px;
-}
-
-/* Collapsed: the rail takes the sidebar's column. */
-.shell.is-collapsed {
-  grid-template-columns: 56px minmax(0, 1fr);
-}
-
-.rail {
-  display: none;
-}
-
-@media (min-width: 1024px) {
-  .rail {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    position: sticky;
-    top: 72px;
-    max-height: calc(100vh - 72px);
-    padding: 40px 0 16px;
-    border-right: 1px solid var(--line);
-  }
-}
-
 .rail-link {
   display: grid;
   place-items: center;
@@ -2768,10 +2734,6 @@ kbd {
   background: none;
   color: var(--text-3);
   cursor: pointer;
-}
-
-.rail-toggle {
-  margin-bottom: 14px;
 }
 
 .rail-link:hover {
@@ -3895,5 +3857,194 @@ html[data-go] .side-kbd {
   .spark-axis-label,
   .core {
     font-size: 11px;
+  }
+}
+
+/* ---------- App frame: sidebar pinned to the left edge (desktop) ----------
+   The sidebar (or the collapsed rail) runs the full height from the top-left
+   corner; the top bar and the page sit to its right. Its width follows
+   html[data-sidebar], set by useSidebar before paint. Below 1024px neither
+   exists and the top bar keeps the brand and the view menu. */
+.rail {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  html[data-sidebar] {
+    --side-w: 248px;
+    --topbar-h: 57px;
+  }
+
+  html[data-sidebar='closed'] {
+    --side-w: 68px;
+  }
+
+  html[data-sidebar] .topbar,
+  html[data-sidebar] .shell {
+    margin-left: var(--side-w);
+    transition: margin-left var(--spring-snappy-dur, 320ms) var(--spring-snappy, ease);
+  }
+
+  html[data-sidebar] .topbar-inner {
+    min-height: calc(var(--topbar-h) - 1px);
+  }
+
+  /* The brand lives in the sidebar; the bar names the current page instead. */
+  html[data-sidebar] .topbar > .topbar-inner > .brand {
+    display: none;
+  }
+
+  .sidebar,
+  .rail {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    width: var(--side-w);
+    border-right: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .sidebar-head,
+  .rail-head {
+    display: flex;
+    align-items: center;
+    flex: none;
+    height: var(--topbar-h);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .sidebar-head {
+    justify-content: space-between;
+    padding: 0 10px 0 18px;
+  }
+
+  .rail-head {
+    justify-content: center;
+  }
+
+  .side-brand {
+    margin: 0;
+    gap: 10px;
+  }
+
+  .side-brand .brand-mark,
+  .rail-brand .brand-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .side-brand .brand-name {
+    font-size: 21px;
+  }
+
+  .side-collapse {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text-3);
+    cursor: pointer;
+  }
+
+  .side-collapse:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .side-scroll,
+  .rail-scroll {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .side-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 16px 12px 16px;
+  }
+
+  .rail-scroll {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 0;
+  }
+
+  .rail-toggle {
+    margin-bottom: 10px;
+  }
+
+  .rail-link {
+    width: 40px;
+    height: 40px;
+  }
+
+  .side-foot {
+    flex: none;
+    padding: 12px 18px 14px;
+    border-top: 1px solid var(--line);
+    color: var(--text-3);
+    font-size: 11.5px;
+  }
+
+  .side-foot kbd {
+    padding: 0 5px;
+    border: 1px solid var(--line-strong);
+    border-radius: 5px;
+    font: 500 10.5px/16px var(--font-mono);
+  }
+
+  .page {
+    padding-top: 28px;
+  }
+}
+
+@media (min-width: 1024px) and (max-height: 620px) {
+  .side-foot {
+    display: none;
+  }
+}
+
+/* Current page, on the left of the top bar (desktop). Phones show the brand there. */
+.topbar-title {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  html[data-sidebar] .topbar-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: auto;
+    min-width: 0;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  .topbar-crumb {
+    color: var(--text-3);
+  }
+
+  .topbar-crumb::after {
+    content: '/';
+    margin-left: 8px;
+    color: var(--line-strong);
+  }
+
+  .topbar-page {
+    color: var(--text);
+    font-weight: 600;
   }
 }
