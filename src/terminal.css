@@ -36,6 +36,7 @@
   from {
     opacity: 0;
     transform: translateY(18px);
+    filter: blur(var(--mb-md, 6px));
   }
 }
 
@@ -43,6 +44,7 @@
   to {
     opacity: 0;
     transform: translateY(18px);
+    filter: blur(var(--mb-md, 6px));
   }
 }
 
@@ -441,6 +443,7 @@
   from {
     opacity: 0;
     transform: translateY(-6px) scale(0.97);
+    filter: blur(var(--mb-sm, 3px));
   }
 }
 
@@ -1309,11 +1312,13 @@
   0% {
     opacity: 0;
     transform: translate(-50%, 8px);
+    filter: blur(var(--mb-sm, 3px));
   }
   12%,
   80% {
     opacity: 1;
     transform: translate(-50%, 0);
+    filter: blur(0);
   }
   100% {
     opacity: 0;
@@ -1448,6 +1453,7 @@
   from {
     opacity: 0;
     transform: translateY(24px);
+    filter: blur(var(--mb-md, 6px));
   }
 }
 

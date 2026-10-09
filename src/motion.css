@@ -8,6 +8,9 @@
      its own entrance.
    - Page, theme and login swaps use View Transitions (src/lib/motion.ts).
    - Only transform, opacity, filter and clip-path animate.
+   - Motion blur: anything that travels starts (or ends) slightly blurred and
+     sharpens as it lands, scaled to the distance (--mb-sm/md/lg). Nothing
+     stays blurred at rest; fill-mode stays `backwards`.
    - prefers-reduced-motion turns all of it off (end of file).
    ========================================================================== */
 
@@ -16,6 +19,10 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
   --dur-fast: 140ms;
+  /* Motion blur for things in flight. Reduced motion sets these to 0. */
+  --mb-sm: 3px;
+  --mb-md: 6px;
+  --mb-lg: 10px;
   --dur: 240ms;
   --dur-slow: 420ms;
 
@@ -769,9 +776,11 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: scale(1.12);
+    filter: blur(var(--mb-sm));
   }
   35% {
     opacity: 1;
+    filter: blur(0);
   }
 }
 
@@ -779,6 +788,7 @@ html[data-go] .side-kbd {
   to {
     opacity: 0;
     transform: scale(0.94);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -800,9 +810,11 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(40px);
+    filter: blur(var(--mb-md));
   }
   35% {
     opacity: 1;
+    filter: blur(0);
   }
 }
 
@@ -817,6 +829,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(24px) scale(0.8);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -836,6 +849,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(16px);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -843,6 +857,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateX(-18px);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -850,6 +865,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateX(24px);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -857,6 +873,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(-10px);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -871,6 +888,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(20px) scale(0.92);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -878,6 +896,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(30px) rotate(-2deg) scale(0.95);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -885,6 +904,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: perspective(1200px) rotateX(14deg) translateY(24px);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -892,6 +912,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: perspective(1000px) rotateY(-18deg) translateX(-12px);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -899,7 +920,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: scale(0.94);
-    filter: blur(8px);
+    filter: blur(var(--mb-lg));
   }
 }
 
@@ -928,6 +949,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(-6px);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -936,9 +958,11 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(-8px) scale(0.9);
+    filter: blur(var(--mb-sm));
   }
   35% {
     opacity: 1;
+    filter: blur(0);
   }
 }
 
@@ -946,9 +970,11 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(-20px) scale(0.95);
+    filter: blur(var(--mb-md));
   }
   35% {
     opacity: 1;
+    filter: blur(0);
   }
 }
 
@@ -957,6 +983,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateX(-50%) translateY(28px) scale(0.88);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -964,6 +991,7 @@ html[data-go] .side-kbd {
   to {
     opacity: 0;
     transform: translateX(-50%) translateY(16px) scale(0.95);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -1023,7 +1051,7 @@ html[data-go] .side-kbd {
   to {
     opacity: 0;
     transform: translateY(-22px) scale(0.985);
-    filter: blur(3px);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -1031,6 +1059,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(34px);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -1038,7 +1067,7 @@ html[data-go] .side-kbd {
   to {
     opacity: 0;
     transform: translateY(22px) scale(0.985);
-    filter: blur(3px);
+    filter: blur(var(--mb-sm));
   }
 }
 
@@ -1046,6 +1075,7 @@ html[data-go] .side-kbd {
   from {
     opacity: 0;
     transform: translateY(-34px);
+    filter: blur(var(--mb-md));
   }
 }
 
@@ -1091,6 +1121,12 @@ html[data-go] .side-kbd {
 /* ---------- Reduced motion ------------------------------------------------ */
 
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --mb-sm: 0px;
+    --mb-md: 0px;
+    --mb-lg: 0px;
+  }
+
   *,
   *::before,
   *::after {
