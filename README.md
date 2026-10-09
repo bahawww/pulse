@@ -11,10 +11,16 @@ Built with React 19, TypeScript and Vite on the frontend, and an Express 5 API o
 - **Alerts.** Threshold rules for CPU, RAM, disk, inodes and latency, with debounce. Alerts appear in the bell, as toasts and as desktop notifications. Telegram delivery is optional.
 - **Service links.** Cards for each app on the box. Links can point at the current host, localhost, a Tailscale IP, or HTTPS subdomains of your domain.
 - **Logs and control.** Read journald logs per unit. Start, stop or restart systemd units and containers.
-- **Browser terminal.** An xterm.js shell over WebSocket, with tabs, themes and find.
+- **Browser terminal.** An xterm.js shell over WebSocket with a GPU (WebGL) renderer that falls back to the DOM renderer.
+  - Tabs or side-by-side tiles. Shells survive a reload and reattach.
+  - Find with regex, case and whole-word options, plus ticks on the scroll rail.
+  - Saved command snippets, and broadcast typing to every window.
+  - Copy or save all output, restart a shell, and a confirmation before a multi-line paste runs.
+  - OSC 52 clipboard and clickable links.
+  - Colour schemes and a shortcut sheet (`F1`). Phones get a key bar with sticky Ctrl and Alt.
 - **Reachability.** Checks from outside whether the box can actually be reached. Useful behind NAT, where a port bound to `0.0.0.0` can still be unreachable from the internet.
 - **LLM spend.** Optional panel that reads usage from a local 9router database.
-- **Keyboard first.** `Ctrl+K` opens the command palette. `G` then a letter opens a view. `[` toggles the sidebar. `` Ctrl+` `` opens the terminal.
+- **Keyboard first.** `Ctrl+K` opens the command palette. `G` then a letter opens a view. `[` toggles the sidebar. `` Ctrl+` `` opens and hides the terminal.
 - Light and dark themes, installable as a PWA, and works on phones.
 
 ## Requirements

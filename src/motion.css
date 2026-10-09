@@ -684,98 +684,14 @@ html[data-vt='login']::view-transition-new(root) {
 }
 
 /* ---------- 10. Terminal -------------------------------------------------- */
+/* The workspace's own motion lives in src/terminal.css, loaded with it. */
 
-/* The workspace rises in like a sheet and its parts follow. It switches from
-   display:none, which replays these on every open; a window shown by a tab
-   switch replays its own. :where() keeps .tw-win.is-bell able to win. */
-.tw:not(.is-hidden) {
-  animation: tw-sheet-in var(--spring-snappy-dur) var(--spring-snappy) backwards;
-}
-
-:where(.tw:not(.is-hidden)) > .tw-bar {
-  animation: drop-in var(--spring-snappy-dur) var(--spring-snappy) 50ms backwards;
-}
-
-:where(.tw:not(.is-hidden)) .tw-win {
-  animation: tw-win-in var(--spring-soft-dur) var(--spring-soft) 80ms backwards;
-}
-
-:where(.tw:not(.is-hidden)) > .tw-keys {
-  animation: tw-keys-in var(--spring-bouncy-dur) var(--spring-bouncy) 140ms backwards;
-}
-
-/* Closing: drops away, then display:none (CLOSE_MS in TerminalWorkspace). */
-.tw.is-closing {
-  pointer-events: none;
-  animation: tw-sheet-out 220ms var(--ease-in) forwards;
-}
-
-/* Overlay focus is only a waiting room for keys; no ring. */
-.tw:focus {
-  outline: none;
-}
-
-/* Tabs pop in when created and squash when pressed. */
-.tw-tab {
-  animation: tab-pop var(--spring-bouncy-dur) var(--spring-bouncy) backwards;
-  transition:
-    border-color var(--dur-fast) var(--ease),
-    background-color var(--dur-fast) var(--ease),
-    transform var(--spring-bouncy-dur) var(--spring-bouncy);
-}
-
-.tw-tab:active {
-  transform: scale(0.95);
-  transition-duration: var(--dur-fast), var(--dur-fast), 90ms;
-}
-
-.tw-btn,
-.tw-x,
-.tw-key,
-.tw-scheme,
 .tw-resume {
   transition:
     background-color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease),
     transform var(--spring-bouncy-dur) var(--spring-bouncy);
-}
-
-.tw-btn:hover:not(:disabled),
-.tw-scheme:hover {
-  transform: translateY(-1px);
-}
-
-:is(.tw-btn, .tw-x, .tw-scheme):active:not(:disabled) {
-  transform: scale(0.9);
-  transition-duration: var(--dur-fast), var(--dur-fast), var(--dur-fast), 90ms;
-}
-
-/* Key bar keys sink like real keys. */
-.tw-key:active {
-  transform: translateY(1px) scale(0.9);
-  transition-duration: var(--dur-fast), var(--dur-fast), var(--dur-fast), 70ms;
-}
-
-/* Theme panel, context menu and find bar spring out of their anchors. */
-.tw-pop {
-  transform-origin: top right;
-  animation: pop-spring var(--spring-snappy-dur) var(--spring-snappy) backwards;
-}
-
-.tw-menu {
-  transform-origin: top left;
-  animation: pop-spring var(--spring-snappy-dur) var(--spring-snappy) backwards;
-}
-
-.tw-find {
-  animation: drop-in var(--spring-snappy-dur) var(--spring-snappy) backwards;
-}
-
-/* On phones the theme panel is a bottom sheet: it slides up and settles. */
-.is-compact .tw-pop {
-  transform-origin: bottom center;
-  animation: sheet-up var(--spring-snappy-dur) var(--spring-snappy) backwards;
 }
 
 /* "Continue session" bounces up from the corner; its dot breathes. */
@@ -887,34 +803,6 @@ html[data-go] .side-kbd {
   }
   35% {
     opacity: 1;
-  }
-}
-
-@keyframes tw-sheet-in {
-  from {
-    opacity: 0;
-    transform: translateY(26px) scale(0.985);
-  }
-}
-
-@keyframes tw-sheet-out {
-  to {
-    opacity: 0;
-    transform: translateY(20px) scale(0.985);
-  }
-}
-
-@keyframes tw-win-in {
-  from {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-}
-
-@keyframes tw-keys-in {
-  from {
-    opacity: 0;
-    transform: translateY(100%);
   }
 }
 

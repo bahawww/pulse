@@ -1,0 +1,1511 @@
+/* Terminal workspace (src/components/terminal/). Loaded with the terminal chunk.
+   The chrome wears the dashboard's tokens (surfaces, lines, radii, Inter); only
+   the shell area takes the colour scheme, through --term-bg/--term-fg/--term-accent. */
+
+/* ---------------------------------------------------------------- frame */
+
+.tw {
+  position: fixed;
+  /* --tw-h and --tw-top follow the visual viewport, so the on-screen keyboard
+     does not cover the key bar. Without them the overlay fills the window. */
+  top: var(--tw-top, 0);
+  left: 0;
+  right: 0;
+  height: var(--tw-h, 100dvh);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px var(--gutter, 20px) 10px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  animation: tw-in 260ms cubic-bezier(0.2, 0.9, 0.25, 1) backwards;
+}
+
+.tw.is-hidden {
+  display: none;
+}
+
+.tw.is-closing {
+  animation: tw-out 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  pointer-events: none;
+}
+
+@keyframes tw-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+}
+
+@keyframes tw-out {
+  to {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+.tw-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+}
+
+.tw-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.tw-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--text);
+  color: var(--bg);
+  font: 600 12px var(--font-mono);
+  letter-spacing: -0.06em;
+}
+
+/* Tabs: the dashboard's segmented control, one segment per shell. */
+.tw-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tw-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tw-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  border-radius: 9px;
+  color: var(--text-2);
+  transition: background-color 140ms, color 140ms;
+}
+
+.tw-tab:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.tw-tab.is-active {
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.tw-tab-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 4px 0 11px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.tw-tab-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.tw-tab-kbd {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text-3);
+  font: 10px/16px var(--font-mono);
+}
+
+.tw-tab.is-busy:not(.is-active) .tw-tab-text::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--s-cpu);
+  vertical-align: middle;
+  animation: tw-blip 1.6s ease-in-out infinite;
+}
+
+.tw-tab-x {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms, background-color 120ms, color 120ms;
+}
+
+.tw-tab:hover .tw-tab-x,
+.tw-tab.is-active .tw-tab-x,
+.tw-tab-x:focus-visible {
+  opacity: 1;
+}
+
+.tw-tab-x:hover {
+  background: var(--crit-soft);
+  color: var(--crit);
+}
+
+.tw-tab-add {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.tw-tab-add:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.tw-rename {
+  width: 160px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12.5px var(--font-mono);
+  outline: none;
+}
+
+/* Tool buttons: the dashboard's icon buttons. */
+.tw-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: none;
+}
+
+.tw-tool,
+.tw-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background-color 140ms, border-color 140ms, color 140ms, transform 160ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+.tw-tool:hover,
+.tw-icon-btn:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.tw-tool:active,
+.tw-icon-btn:active {
+  transform: scale(0.92);
+}
+
+.tw-tool.is-on {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
+}
+
+.tw-icon-btn.is-sm {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.tw-size {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.tw-size-btn,
+.tw-size-now {
+  height: 100%;
+  padding: 0 9px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.tw-size-now {
+  min-width: 32px;
+  padding: 0 4px;
+  border-inline: 1px solid var(--line);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tw-size-btn:hover:not(:disabled),
+.tw-size-now:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.tw-size-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tw-hide {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.tw-hide:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* Compact: the window switcher replaces the tab strip. */
+.tw-switch-wrap {
+  min-width: 0;
+  flex: 1;
+}
+
+.tw-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 36px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.tw-switch.is-on {
+  border-color: var(--line-strong);
+}
+
+.tw-switch-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.tw-count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font: 600 11px/18px var(--font-mono);
+}
+
+/* ---------------------------------------------------------------- status lamps */
+
+.tw-led {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.tw-led.is-live {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+.tw-led.is-connecting,
+.tw-led.is-reconnecting {
+  background: var(--warn);
+  animation: tw-blip 1s ease-in-out infinite;
+}
+
+.tw-led.is-offline,
+.tw-led.is-elsewhere,
+.tw-led.is-exited {
+  background: var(--crit);
+}
+
+@keyframes tw-blip {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---------------------------------------------------------------- popovers */
+
+.tw-pop-wrap {
+  position: relative;
+}
+
+.tw-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 340px;
+  max-height: min(70vh, 620px);
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, 16px);
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  animation: tw-pop-in 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+  transform-origin: top right;
+}
+
+.tw-pop-tabs {
+  left: 0;
+  right: auto;
+  width: min(320px, calc(100vw - 32px));
+  transform-origin: top left;
+}
+
+.tw-pop-theme {
+  width: 400px;
+}
+
+.tw-pop-snip {
+  width: 420px;
+}
+
+.tw-pop-menu {
+  width: 260px;
+  padding: 6px;
+}
+
+@keyframes tw-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+}
+
+.tw-pop-head {
+  margin: 12px 2px 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tw-pop-head:first-child {
+  margin-top: 2px;
+}
+
+.tw-pop-foot {
+  margin: 10px 2px 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.tw-pop kbd,
+.tw-menu kbd,
+.tw-foot kbd,
+.tw-sheet kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-2);
+  font: 11px var(--font-mono);
+  white-space: nowrap;
+}
+
+/* Chips: small toggles inside panels and the find bar. */
+.tw-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tw-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.tw-chip:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.tw-chip.is-on {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* Colour scheme cards. */
+.tw-schemes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tw-scheme {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms cubic-bezier(0.3, 1.6, 0.5, 1), box-shadow 140ms;
+}
+
+.tw-scheme:hover {
+  transform: translateY(-1px);
+}
+
+.tw-scheme.is-on {
+  box-shadow: 0 0 0 2px var(--text);
+}
+
+.tw-scheme-prompt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: 12px var(--font-mono);
+}
+
+.tw-scheme-caret {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+}
+
+.tw-scheme-dots {
+  display: flex;
+  gap: 3px;
+}
+
+.tw-scheme-dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.tw-scheme-name {
+  font: 500 11px var(--font-ui);
+  opacity: 0.8;
+}
+
+.tw-range {
+  display: grid;
+  grid-template-columns: auto 1fr 38px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.tw-range input {
+  accent-color: var(--text);
+}
+
+.tw-range output {
+  color: var(--text);
+  font: 12px var(--font-mono);
+  text-align: right;
+}
+
+/* Switches. */
+.tw-toggles {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.tw-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tw-toggle:first-child {
+  border-top: 0;
+}
+
+.tw-toggle small {
+  display: block;
+  margin-top: 1px;
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.tw-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tw-toggle i {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background-color 160ms;
+}
+
+.tw-toggle i::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 200ms cubic-bezier(0.3, 1.5, 0.5, 1), background-color 160ms;
+}
+
+.tw-toggle input:checked + i {
+  background: var(--text);
+}
+
+.tw-toggle input:checked + i::after {
+  transform: translateX(14px);
+  background: var(--bg);
+}
+
+.tw-toggle input:focus-visible + i {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* Snippets. */
+.tw-snip-top {
+  display: flex;
+  gap: 8px;
+}
+
+.tw-snip-search,
+.tw-snip-form input,
+.tw-snip-form textarea,
+.tw-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px var(--font-ui);
+  outline: none;
+}
+
+.tw-snip-search:focus,
+.tw-snip-form input:focus,
+.tw-snip-form textarea:focus,
+.tw-find-input:focus {
+  border-color: var(--line-strong);
+}
+
+.tw-snips {
+  display: grid;
+  gap: 2px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tw-snips li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 2px;
+  border-radius: 10px;
+}
+
+.tw-snips li.is-at {
+  background: var(--surface-2);
+}
+
+.tw-snip-main {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tw-snip-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tw-snip-main code {
+  overflow: hidden;
+  color: var(--text-3);
+  font: 11.5px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tw-snip-tools {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.tw-snips li.is-at .tw-snip-tools,
+.tw-snips li:focus-within .tw-snip-tools {
+  opacity: 1;
+}
+
+.tw-snip-empty {
+  padding: 18px 8px !important;
+  color: var(--text-3);
+  font-size: 13px;
+  justify-content: center;
+}
+
+.tw-snip-form {
+  display: grid;
+  gap: 10px;
+}
+
+.tw-snip-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.tw-snip-form textarea {
+  height: auto;
+  padding: 10px 12px;
+  font: 12.5px/1.5 var(--font-mono);
+  resize: vertical;
+}
+
+.tw-snip-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Menus: "More" and the right-click menu share one look. */
+.tw-menu-list,
+.tw-menu {
+  display: grid;
+}
+
+.tw-menu-list button,
+.tw-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tw-menu-list button svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.tw-menu-list button:hover,
+.tw-menu button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.tw-menu button:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.tw-menu-list kbd,
+.tw-menu kbd {
+  margin-left: auto;
+}
+
+.tw-menu-list hr,
+.tw-menu hr {
+  margin: 4px 6px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.tw-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.tw-menu {
+  position: absolute;
+  z-index: 25;
+  width: 220px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+  animation: tw-pop-in 140ms ease backwards;
+}
+
+/* Window list (compact). */
+.tw-winlist {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.tw-winlist li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 10px;
+}
+
+.tw-winlist li.is-active {
+  background: var(--surface-2);
+}
+
+.tw-winlist-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 13px var(--font-mono);
+  text-align: left;
+}
+
+.tw-busy-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--s-cpu);
+}
+
+.tw-winlist-add {
+  width: 100%;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* ---------------------------------------------------------------- bars under the top bar */
+
+.tw-find,
+.tw-ask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-2);
+  animation: tw-pop-in 160ms ease backwards;
+}
+
+.tw-find .tw-find-input {
+  height: 30px;
+  border: 0;
+  background: none;
+  padding: 0 4px;
+}
+
+.tw-find-count {
+  min-width: 70px;
+  color: var(--text-3);
+  font: 12px var(--font-mono);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tw-ask {
+  border-color: var(--warn);
+  background: var(--surface);
+  background-image: linear-gradient(var(--warn-soft, rgba(255, 196, 0, 0.12)), var(--warn-soft, rgba(255, 196, 0, 0.12)));
+  font-size: 13px;
+}
+
+.tw-ask > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.tw-ask strong {
+  color: var(--text);
+}
+
+.tw-ask.is-broadcast {
+  border-color: var(--s-disk);
+  background-image: linear-gradient(color-mix(in srgb, var(--s-disk) 12%, transparent), color-mix(in srgb, var(--s-disk) 12%, transparent));
+}
+
+/* ---------------------------------------------------------------- windows */
+
+.tw-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.tw-body.is-tile {
+  display: grid;
+  gap: 10px;
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+.tw-win {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, 16px);
+  background: var(--term-bg);
+  color: var(--term-fg);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: border-color 160ms, box-shadow 160ms;
+}
+
+.tw-win.is-off {
+  display: none;
+}
+
+.is-tile .tw-win.is-current {
+  border-color: color-mix(in srgb, var(--term-accent) 55%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-accent) 35%, transparent);
+}
+
+.is-broadcast .is-tile .tw-win {
+  border-color: var(--s-disk);
+}
+
+.tw-win.is-bell {
+  animation: tw-bell 600ms ease;
+}
+
+@keyframes tw-bell {
+  0% {
+    box-shadow: inset 0 0 0 2px var(--term-accent), 0 0 30px color-mix(in srgb, var(--term-accent) 45%, transparent);
+  }
+}
+
+.tw-win-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--term-fg) 10%, transparent);
+  font: 12px var(--font-mono);
+}
+
+.tw-win-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.tw-win-x {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.tw-win-x:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--term-fg) 10%, transparent);
+}
+
+.tw-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px 6px 16px;
+}
+
+.tw-term {
+  width: 100%;
+  height: 100%;
+}
+
+.tw-term .xterm {
+  height: 100%;
+  padding: 0;
+}
+
+.tw-term .xterm .xterm-viewport {
+  background: transparent !important;
+}
+
+/* xterm's own scrollbar is replaced by .tw-rail. */
+.tw-term .xterm-scrollable-element > .scrollbar,
+.tw-term .xterm-scrollable-element > .shadow {
+  display: none !important;
+}
+
+/* IME composition text shows above the rendered screen. */
+.tw-term .xterm .composition-view {
+  z-index: 5;
+}
+
+/* Scroll rail (rail.tsx). */
+.tw-rail {
+  position: absolute;
+  top: 10px;
+  right: 3px;
+  bottom: 6px;
+  width: 12px;
+  border-radius: 6px;
+  cursor: default;
+  touch-action: none;
+  opacity: 0.55;
+  transition: background-color 160ms ease, opacity 200ms ease;
+}
+
+.tw-win:hover .tw-rail,
+.tw-rail.is-drag {
+  opacity: 1;
+}
+
+.tw-rail:hover,
+.tw-rail.is-drag {
+  background: color-mix(in srgb, var(--term-fg) 7%, transparent);
+}
+
+.tw-rail.is-empty {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tw-thumb {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--term-fg) 30%, transparent);
+  transition: left 120ms ease, right 120ms ease, background-color 120ms ease;
+}
+
+.tw-rail:hover .tw-thumb,
+.tw-rail.is-drag .tw-thumb {
+  left: 2px;
+  right: 2px;
+  background: color-mix(in srgb, var(--term-fg) 50%, transparent);
+}
+
+.tw-rail.is-drag .tw-thumb {
+  background: var(--term-accent);
+}
+
+.tw-tick {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 212, 0, 0.85);
+  pointer-events: none;
+}
+
+.tw-tick.is-current {
+  height: 3px;
+  background: #ff9500;
+  box-shadow: 0 0 6px #ff9500;
+  z-index: 1;
+}
+
+.tw-rail-tip {
+  position: absolute;
+  right: 18px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg);
+  font: 11px/16px var(--font-mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tw-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 5;
+  padding: 6px 14px;
+  border: 1px solid color-mix(in srgb, var(--term-fg) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--term-bg) 85%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--term-fg);
+  font: 12px var(--font-mono);
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  transform: translateX(-50%);
+  animation: tw-pop-in 160ms ease backwards;
+}
+
+.tw-jump:hover {
+  border-color: var(--term-accent);
+}
+
+/* ---------------------------------------------------------------- status bar */
+
+.tw-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 26px;
+  padding: 0 4px;
+  color: var(--text-3);
+  font: 12px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tw-foot .tw-led {
+  margin-right: -6px;
+}
+
+.tw-foot-strong {
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+
+.tw-foot-gap {
+  flex: 1;
+}
+
+.tw-foot-keys {
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-ui);
+}
+
+.tw-foot-keys > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* On narrower desktops the hints drop from the left, keeping the most useful. */
+@media (max-width: 1440px) {
+  .tw-foot-keys > span:nth-child(-n + 1) {
+    display: none;
+  }
+}
+
+@media (max-width: 1280px) {
+  .tw-foot-keys > span:nth-child(-n + 2) {
+    display: none;
+  }
+}
+
+@media (max-width: 1080px) {
+  .tw-foot-keys > span:nth-child(-n + 4) {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- touch key bar */
+
+.tw-keys {
+  display: flex;
+  gap: 6px;
+  margin: 0 calc(-1 * var(--gutter, 20px));
+  padding: 2px var(--gutter, 20px) 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tw-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.tw-key {
+  flex: none;
+  min-width: 44px;
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: 500 13px var(--font-mono);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tw-key:active {
+  transform: translateY(1px);
+  border-bottom-width: 1px;
+  background: var(--surface-3);
+}
+
+.tw-key.is-wide {
+  padding: 0 14px;
+  font-family: var(--font-ui);
+}
+
+.tw-key.is-once {
+  border-color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--text);
+}
+
+.tw-key.is-lock {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* ---------------------------------------------------------------- overlays */
+
+.tw-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  z-index: 40;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font: 500 13px var(--font-ui);
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: tw-toast 1600ms ease forwards;
+}
+
+@keyframes tw-toast {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  12%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.tw-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: tw-fade 160ms ease backwards;
+}
+
+@keyframes tw-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.tw-sheet {
+  width: min(760px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 20px 22px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, 16px);
+  background: var(--surface);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  animation: tw-pop-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+}
+
+.tw-sheet header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.tw-sheet h2 {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.tw-sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px 24px;
+}
+
+.tw-sheet h3 {
+  margin-bottom: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tw-sheet dl > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.tw-sheet dd {
+  color: var(--text-2);
+}
+
+/* ---------------------------------------------------------------- compact (phones, tablets) */
+
+.tw.is-compact {
+  --gutter: 10px;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 10px max(6px, env(safe-area-inset-bottom));
+}
+
+.is-compact .tw-bar {
+  gap: 6px;
+}
+
+.is-compact .tw-tools {
+  gap: 4px;
+}
+
+.is-compact .tw-tool,
+.is-compact .tw-hide {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+}
+
+.is-compact .tw-win {
+  border-radius: 12px;
+}
+
+.is-compact .tw-stage {
+  padding: 8px 6px 4px 10px;
+}
+
+.is-compact .tw-foot {
+  gap: 10px;
+  min-height: 20px;
+  font-size: 11px;
+}
+
+/* Panels become bottom sheets on phones: full width, above the key bar. */
+.is-compact .tw-pop {
+  position: fixed;
+  top: auto;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: auto;
+  max-height: 72dvh;
+  border-radius: 18px;
+  transform-origin: bottom center;
+  animation: tw-sheet-up 240ms cubic-bezier(0.2, 0.9, 0.3, 1.1) backwards;
+}
+
+@keyframes tw-sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+}
+
+.is-compact .tw-find {
+  flex-wrap: wrap;
+}
+
+.is-compact .tw-find .tw-find-input {
+  flex-basis: 60%;
+}
+
+.is-compact .tw-ask {
+  flex-wrap: wrap;
+}
+
+.is-compact .tw-ask > span {
+  flex-basis: 100%;
+}
+
+@media (pointer: coarse) {
+  .tw-tab-x {
+    opacity: 1;
+  }
+
+  .tw-snip-tools {
+    opacity: 1;
+  }
+
+  .tw-chip {
+    height: 36px;
+  }
+
+  .tw-menu-list button,
+  .tw-menu button {
+    padding: 11px 12px;
+  }
+}
+
+/* ---------------------------------------------------------------- reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  .tw,
+  .tw.is-closing,
+  .tw-pop,
+  .tw-find,
+  .tw-ask,
+  .tw-menu,
+  .tw-jump,
+  .tw-sheet,
+  .tw-sheet-backdrop,
+  .tw-win.is-bell,
+  .tw-led,
+  .tw-tab.is-busy .tw-tab-text::after {
+    animation: none !important;
+  }
+
+  .tw-toast {
+    animation-duration: 1600ms;
+    animation-timing-function: steps(1);
+  }
+}
