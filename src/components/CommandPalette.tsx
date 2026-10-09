@@ -1,4 +1,5 @@
-import { type CSSProperties, type JSX, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { prefersReducedMotion } from '../lib/motion';
 import { SERVICES, type StatsPayload } from '../shared/contract';
 import { buildServiceUrl, copyToClipboard, isSubdomainMode, type HostMode } from '../lib/urls';
 import { VIEWS, shortcutLabel } from '../lib/views';
@@ -42,6 +43,9 @@ const SERVICE_COLOR: Readonly<Record<string, string>> = {
  * Command palette (Ctrl+K or "/"). Filters services, copy-URL actions and the
  * two system actions. Arrow keys move, Enter runs, Escape closes.
  */
+/** Matches the palette-out animation in motion.css. */
+const PALETTE_OUT_MS = 180;
+
 export function CommandPalette({
   open,
   onClose,
@@ -57,7 +61,31 @@ export function CommandPalette({
 }: PaletteProps): JSX.Element | null {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  // True while the exit animation plays (.palette-root.is-leaving in motion.css).
+  const [leaving, setLeaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /** Close with the exit animation. A chosen item runs right away; only the panel waits. */
+  const dismiss = useCallback(
+    (then?: () => void) => {
+      then?.();
+      if (prefersReducedMotion()) {
+        onClose();
+        return;
+      }
+      setLeaving(true);
+    },
+    [onClose],
+  );
+
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => {
+      setLeaving(false);
+      onClose();
+    }, PALETTE_OUT_MS);
+    return () => clearTimeout(t);
+  }, [leaving, onClose]);
   const listRef = useRef<HTMLDivElement>(null);
 
   const effectiveHost = hostMode === 'auto' ? window.location.hostname || '127.0.0.1' : hostMode;
@@ -200,11 +228,11 @@ export function CommandPalette({
   }, [query]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || leaving) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        dismiss();
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         if (filtered.length) setActive((i) => (i + 1) % filtered.length);
@@ -214,15 +242,12 @@ export function CommandPalette({
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const item = filtered[active];
-        if (item) {
-          onClose();
-          item.run();
-        }
+        if (item) dismiss(item.run);
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, filtered, active, onClose]);
+  }, [open, leaving, filtered, active, dismiss]);
 
   useEffect(() => {
     listRef.current?.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' });
@@ -233,8 +258,8 @@ export function CommandPalette({
   let lastCategory = '';
 
   return (
-    <div className="palette-root" role="dialog" aria-modal="true" aria-label="Command palette">
-      <div className="palette-backdrop" onMouseDown={onClose} />
+    <div className={`palette-root${leaving ? ' is-leaving' : ''}`} role="dialog" aria-modal="true" aria-label="Command palette">
+      <div className="palette-backdrop" onMouseDown={() => dismiss()} />
       <div className="palette">
         <div className="palette-input-row">
           <SearchIcon size={16} />
@@ -269,10 +294,7 @@ export function CommandPalette({
                     className={`palette-item${index === active ? ' is-active' : ''}`}
                     style={item.color ? ({ '--svc': item.color } as CSSProperties) : undefined}
                     onMouseEnter={() => setActive(index)}
-                    onClick={() => {
-                      onClose();
-                      item.run();
-                    }}
+                    onClick={() => dismiss(item.run)}
                   >
                     <span className="palette-item-glyph" aria-hidden="true">
                       {item.icon}

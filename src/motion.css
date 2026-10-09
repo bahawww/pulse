@@ -571,6 +571,28 @@ html[data-vt='view'][data-vt-dir='back']::view-transition-new(page) {
 }
 
 .pop-backdrop,
+/* Closing (Esc, backdrop, or an item chosen): the panel lifts away, shrinks
+   a touch and blurs out while the backdrop fades. 180ms, PALETTE_OUT_MS. */
+.palette-root.is-leaving {
+  pointer-events: none;
+}
+
+.palette-root.is-leaving .palette {
+  animation: palette-out 180ms var(--ease) forwards;
+}
+
+.palette-root.is-leaving .palette-backdrop {
+  animation: fade-out-quick 180ms var(--ease) forwards;
+}
+
+@keyframes palette-out {
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+    filter: blur(var(--mb-md));
+  }
+}
+
 .palette-backdrop {
   animation: fade-in var(--dur) var(--ease) backwards;
 }

@@ -4163,6 +4163,18 @@ html[data-go] .side-kbd {
   inset: 0;
 }
 
+/* Light mode palette: big and over a dimmed page, full glass reads busy.
+   Mostly opaque, gentler blur, softer rim. */
+:root[data-theme='light'] .palette {
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
+}
+
+:root[data-theme='light'] .palette::before {
+  opacity: 0.5;
+}
+
 /* The banner keeps its red tint and border on top of the glass. */
 .stale-banner {
   background-color: var(--glass-fill);
