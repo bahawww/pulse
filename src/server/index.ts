@@ -258,6 +258,28 @@ app.get('/api/stats', apiLimiter, (_req: Request, res: Response) => {
     });
 });
 
+/**
+ * History answers are cached briefly: a long range only changes once a minute
+ * (its buckets are minute averages), and several tabs or a quick 12h/24h
+ * toggle should not rebuild and re-serialise the same megabyte.
+ */
+const HISTORY_CACHE_SHORT_MS = 2_000;
+const HISTORY_CACHE_LONG_MS = 15_000;
+const historyCache = new Map<string, { at: number; body: string }>();
+
+/**
+ * Trims float noise before it goes on the wire (0.024999999999999998 ->
+ * 0.025): averages and probe timings carry 16 digits nobody reads, and they
+ * were a large share of a 24h payload. Integers pass through untouched.
+ */
+function roundForWire(_key: string, value: unknown): unknown {
+  if (typeof value !== 'number' || Number.isInteger(value) || !Number.isFinite(value)) return value;
+  const abs = Math.abs(value);
+  if (abs >= 100) return Math.round(value);
+  if (abs >= 1) return Math.round(value * 100) / 100;
+  return Math.round(value * 10_000) / 10_000;
+}
+
 app.get('/api/history', (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
 
@@ -266,20 +288,34 @@ app.get('/api/history', (req: Request, res: Response) => {
   const requested = Number.parseInt(String(req.query.ms ?? ''), 10);
   const windowMs = Number.isFinite(requested) && requested > 0 ? Math.min(requested, 24 * 3_600_000) : 20 * 60_000;
 
-  const payload = windowMs === 20 * 60_000 && !req.query.ms ? getHistory() : query(windowMs);
+  const defaultView = windowMs === 20 * 60_000 && !req.query.ms;
+  const key = defaultView ? 'default' : String(windowMs);
+  const ttl = windowMs > 3_600_000 ? HISTORY_CACHE_LONG_MS : HISTORY_CACHE_SHORT_MS;
+  const hit = historyCache.get(key);
+  if (hit && Date.now() - hit.at < ttl) {
+    res.type('application/json').send(hit.body);
+    return;
+  }
+
+  const payload = defaultView ? getHistory() : query(windowMs);
   const stats = historyStats();
-  res.json({
-    ...payload,
-    maxSpanMs: Math.max(payload.maxSpanMs, maxSpanMs()),
-    storage: {
-      ...stats,
-      // Reported honestly: `persisted: false` means a restart will lose the
-      // in-memory window, and the UI says so rather than implying continuity.
-      persisted: isStoreOpen(),
-      storedRows: storeCount(),
-      error: storeError(),
+  const body = JSON.stringify(
+    {
+      ...payload,
+      maxSpanMs: Math.max(payload.maxSpanMs, maxSpanMs()),
+      storage: {
+        ...stats,
+        // Reported honestly: `persisted: false` means a restart will lose the
+        // in-memory window, and the UI says so rather than implying continuity.
+        persisted: isStoreOpen(),
+        storedRows: storeCount(),
+        error: storeError(),
+      },
     },
-  });
+    roundForWire,
+  );
+  historyCache.set(key, { at: Date.now(), body });
+  res.type('application/json').send(body);
 });
 
 // ---------------------------------------------------------------------------

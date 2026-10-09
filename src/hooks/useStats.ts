@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StatsPayload } from '../shared/contract';
 
 const POLL_INTERVAL_MS = 5000;
+/** A poll that takes longer than this is abandoned and retried. */
+const TIMEOUT_MS = 10_000;
 
 /**
  * Polls /api/stats with a visibility guard: a background tab would otherwise
@@ -22,7 +24,10 @@ export function useStats() {
 
   const fetchOnce = useCallback(async () => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(
+      () => controller.abort(new Error(`Server took more than ${TIMEOUT_MS / 1000}s to answer`)),
+      TIMEOUT_MS,
+    );
     try {
       const res = await fetch('/api/stats', {
         cache: 'no-store',
@@ -39,7 +44,10 @@ export function useStats() {
     } catch (err) {
       if (aborted.current) return;
       failureCount.current += 1;
-      setError(err instanceof Error ? err : new Error(String(err)));
+      // An abort carries the timeout message as its reason; a network drop is
+      // "Failed to fetch". Either way the banner gets a sentence a person can read.
+      const reason = controller.signal.aborted ? controller.signal.reason : err;
+      setError(reason instanceof Error ? reason : new Error(String(reason)));
     } finally {
       clearTimeout(timeout);
     }

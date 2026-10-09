@@ -61,7 +61,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   // Re-read every poll interval so a hung request (no error, no data) still turns stale.
   const now = useNow(5000);
   const stale = isStale(data !== null, error, lastOkAt, now);
-  const { history, range, setRange, maxSpanMs, loading: historyLoading } = useHistory();
+  const { history, range, setRange, maxSpanMs, loading: historyLoading, pendingRange } = useHistory();
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [hostMode, setHostMode] = useState<HostMode>(readStoredHostMode);
@@ -282,6 +282,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                   ready={!historyLoading}
                   persisted={history?.storage?.persisted}
                   persistError={history?.storage?.error}
+                  pending={pendingRange}
                 />
               </Section>
             )}

@@ -2,14 +2,18 @@ import { type JSX } from 'react';
 import { useNow } from '../hooks/useNow';
 import { formatAgo, formatClock, zoneLabel } from '../lib/format';
 
-/** How old the last good reading may get before the UI calls it stale. Four missed 5s polls. */
+/** How old the last good reading may get before the UI calls it stale. Several missed 5s polls. */
 export const STALE_MS = 20_000;
 
-/** True when there is data on screen but it no longer reflects the server. */
-export function isStale(hasData: boolean, error: Error | null, lastOkAt: number | null, now: number): boolean {
-  if (!hasData) return false;
-  if (error) return true;
-  return lastOkAt !== null && now - lastOkAt > STALE_MS;
+/**
+ * True when there is data on screen but it no longer reflects the server. Age
+ * decides, not a single failed poll: one slow answer (a busy network, a long
+ * history download alongside it) must not flash "connection lost" over data
+ * that is still seconds old. `error` only matters once the data is old too.
+ */
+export function isStale(hasData: boolean, _error: Error | null, lastOkAt: number | null, now: number): boolean {
+  if (!hasData || lastOkAt === null) return false;
+  return now - lastOkAt > STALE_MS;
 }
 
 function ago(lastOkAt: number, now: number): string {

@@ -22,6 +22,8 @@ interface ResourceTrendsProps {
   readonly ready: boolean;
   readonly persisted?: boolean | undefined;
   readonly persistError?: string | null | undefined;
+  /** A chosen range still loading (see useHistory). */
+  readonly pending?: TimeRangeId | null | undefined;
 }
 
 type TrendKey = 'cpu' | 'ram' | 'disk';
@@ -55,6 +57,7 @@ export function ResourceTrends({
   ready,
   persisted,
   persistError,
+  pending,
 }: ResourceTrendsProps): JSX.Element {
   const [focus, setFocus] = useState<Focus>('all');
   const times = useMemo(() => samples.map((s) => s.t), [samples]);
@@ -99,6 +102,7 @@ export function ResourceTrends({
           ready={ready}
           persisted={persisted}
           persistError={persistError}
+          pending={pending}
         />
       </div>
 
