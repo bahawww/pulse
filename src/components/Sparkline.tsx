@@ -1,4 +1,5 @@
 import { type JSX, useMemo } from 'react';
+import { monotonePath } from '../lib/curve';
 
 interface SparklineProps {
   readonly values: readonly number[];
@@ -44,9 +45,8 @@ export function Sparkline({ values, color, max, label }: SparklineProps): JSX.El
     });
     if (current.length > 0) segments.push(current);
 
-    const linePath = segments
-      .map((seg) => seg.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(''))
-      .join('');
+    // Smoothed, but monotone between samples: no invented peaks or dips.
+    const linePath = segments.map((seg) => monotonePath(seg)).join('');
 
     const areaPath = segments
       .filter((seg) => seg.length > 1)
@@ -54,7 +54,7 @@ export function Sparkline({ values, color, max, label }: SparklineProps): JSX.El
         const first = seg[0];
         const last = seg[seg.length - 1];
         if (!first || !last) return '';
-        const top = seg.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join('');
+        const top = monotonePath(seg);
         return `${top}L${last.x.toFixed(2)},${H}L${first.x.toFixed(2)},${H}Z`;
       })
       .join('');

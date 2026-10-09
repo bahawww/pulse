@@ -1,5 +1,6 @@
 import { type JSX, type PointerEvent as ReactPointerEvent, type ReactNode, useMemo, useState } from 'react';
 import type { HistorySample, SystemMetrics } from '../shared/contract';
+import { fitScale, monotonePath } from '../lib/curve';
 import { formatClock } from '../lib/format';
 import { formatUptime } from '../lib/urls';
 import { AnimatedNumber } from './AnimatedNumber';
@@ -34,13 +35,11 @@ export function PulseHero({ tone, statusText, system, samples, freshness }: Puls
     const values = recent.map((s) => s.cpu);
     if (values.length < 2) return null;
 
-    // Scale to the data with headroom, never below 25%, so a quiet host reads as quiet.
-    const peak = Math.max(...values);
-    const ceiling = Math.max(25, Math.ceil((peak * 1.3) / 5) * 5);
+    const { lo, hi } = fitScale(values);
     const x = (i: number) => (i / (values.length - 1)) * W;
-    const y = (v: number) => TOP + (1 - Math.min(v, ceiling) / ceiling) * (H - TOP - BOTTOM);
+    const y = (v: number) => TOP + (1 - (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo)) * (H - TOP - BOTTOM);
 
-    const line = values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+    const line = monotonePath(values.map((v, i) => ({ x: x(i), y: y(v) })));
     const last = values[values.length - 1] ?? 0;
     const first = recent[0];
     const end = recent[recent.length - 1];
@@ -48,17 +47,18 @@ export function PulseHero({ tone, statusText, system, samples, freshness }: Puls
 
     return {
       line,
-      area: `${line} L${W} ${H - BOTTOM} L0 ${H - BOTTOM} Z`,
-      ceiling,
+      area: `${line}L${W},${H - BOTTOM}L0,${H - BOTTOM}Z`,
+      lo,
+      hi,
       last,
       values,
       times: recent.map((s) => s.t),
       /** Point i as percentages of the plot box, for HTML overlays. */
       at: (i: number) => ({ left: (x(i) / W) * 100, top: (y(values[i] ?? 0) / H) * 100 }),
       minutes,
-      midY: (y(ceiling / 2) / H) * 100,
-      topY: (y(ceiling) / H) * 100,
-      baseY: (y(0) / H) * 100,
+      midY: (y((lo + hi) / 2) / H) * 100,
+      topY: (y(hi) / H) * 100,
+      baseY: (y(lo) / H) * 100,
     };
   }, [samples]);
 
@@ -162,9 +162,9 @@ export function PulseHero({ tone, statusText, system, samples, freshness }: Puls
                 )}
               </div>
               <div className="trace-axis" aria-hidden="true">
-                <span style={{ top: `${trace.topY}%` }}>{trace.ceiling}%</span>
-                <span style={{ top: `${trace.midY}%` }}>{trace.ceiling / 2}%</span>
-                <span style={{ top: `${trace.baseY}%` }}>0</span>
+                <span style={{ top: `${trace.topY}%` }}>{trace.hi}%</span>
+                <span style={{ top: `${trace.midY}%` }}>{+((trace.lo + trace.hi) / 2).toFixed(1)}%</span>
+                <span style={{ top: `${trace.baseY}%` }}>{trace.lo}%</span>
               </div>
             </>
           )}
