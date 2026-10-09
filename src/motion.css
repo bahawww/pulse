@@ -649,6 +649,10 @@ html[data-vt='filter']::view-transition-new(*):only-child {
   transform-origin: top left;
 }
 
+.select-pop.is-up {
+  transform-origin: bottom left;
+}
+
 .pop > :is(.menu-item, p, div, ul) {
   animation: item-in 360ms var(--ease-out) backwards;
   animation-delay: calc(40ms + var(--n, 0) * 26ms);

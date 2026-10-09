@@ -1,4 +1,4 @@
-import { type JSX, type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import { CheckIcon } from './icons';
 
 interface SelectOption {
@@ -19,6 +19,9 @@ interface SelectMenuProps {
  */
 export function SelectMenu({ label, value, options, onChange }: SelectMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
+  // Where the list opens: below the button unless there is clearly more room
+  // above, and never taller than the room it has, so it stays on screen.
+  const [place, setPlace] = useState<{ up: boolean; maxHeight: number }>({ up: false, maxHeight: 360 });
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = options.find((o) => o.value === value);
@@ -44,8 +47,30 @@ export function SelectMenu({ label, value, options, onChange }: SelectMenuProps)
   }, [open]);
 
   useEffect(() => {
-    if (open) wrapRef.current?.querySelector<HTMLButtonElement>('.menu-item.is-selected')?.focus();
+    if (!open) return;
+    const row = wrapRef.current?.querySelector<HTMLButtonElement>('.menu-item.is-selected');
+    if (!row) return;
+    // Focus without scrolling the page (that made the page jump on open); bring
+    // the row into view inside the list only.
+    row.focus({ preventScroll: true });
+    const list = row.closest<HTMLElement>('.select-pop');
+    if (list) list.scrollTop = row.offsetTop - list.clientHeight / 2 + row.offsetHeight / 2;
   }, [open]);
+
+  const toggle = () => {
+    if (!open) {
+      const box = triggerRef.current?.getBoundingClientRect();
+      if (box) {
+        const margin = 12;
+        const gap = 8;
+        const below = window.innerHeight - box.bottom - gap - margin;
+        const above = box.top - gap - margin;
+        const up = below < 240 && above > below;
+        setPlace({ up, maxHeight: Math.max(160, Math.min(420, up ? above : below)) });
+      }
+    }
+    setOpen((o) => !o);
+  };
 
   /** Arrow keys move focus between rows, like a native listbox. */
   const onListKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -66,14 +91,20 @@ export function SelectMenu({ label, value, options, onChange }: SelectMenuProps)
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
       >
         {current?.label ?? value}
       </button>
       {open && (
         <>
           <div className="pop-backdrop" aria-hidden="true" onClick={() => setOpen(false)} />
-          <div className="pop select-pop" role="listbox" aria-label={label} onKeyDown={onListKey}>
+          <div
+            className={`pop select-pop${place.up ? ' is-up' : ''}`}
+            role="listbox"
+            aria-label={label}
+            onKeyDown={onListKey}
+            style={{ maxHeight: place.maxHeight } as CSSProperties}
+          >
             {options.map((o) => (
               <button
                 key={o.value}

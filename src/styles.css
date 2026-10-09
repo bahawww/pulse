@@ -1997,6 +1997,12 @@ kbd {
   font-size: 13px;
 }
 
+/* Opened upward when there is more room above the button (SelectMenu). */
+.select-pop.is-up {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
 .log-list {
   display: flex;
   flex-direction: column;
@@ -2501,13 +2507,6 @@ kbd {
     display: none;
   }
 
-  .pop {
-    position: fixed;
-    top: 56px;
-    left: 12px;
-    right: 12px;
-    width: auto;
-  }
 }
 
 .page {
@@ -4346,5 +4345,32 @@ html[data-go] .side-kbd {
     background: var(--bg);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+}
+
+/* ---------- Dropdowns on phones -------------------------------------------
+   One rule for every menu opened from the top bar (alerts, views, link
+   target): it hangs from the bar itself, full width with a 12px margin, the
+   same place every time. The anchors go static so the sticky top bar is the
+   containing block; no fixed pixel offset to drift out of sync with the bar.
+   Menus inside the page (select menus) stay under their own button. */
+@media (max-width: 640px) {
+  .topbar .pop-anchor {
+    position: static;
+  }
+
+  .topbar .pop,
+  .topbar .nav-pop {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 100px);
+    transform-origin: top center;
+  }
+
+  .pop.select-pop {
+    max-width: calc(100vw - 24px);
   }
 }
