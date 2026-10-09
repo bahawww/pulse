@@ -3801,13 +3801,6 @@ html[data-go] .side-kbd {
 }
 
 /* Freshness label ("Updated 4s ago") in the hero and footer. */
-.pulse-fresh {
-  margin-top: 10px;
-  padding-left: 30px;
-  color: var(--text-3);
-  font-size: 13px;
-}
-
 .fresh {
   display: inline-flex;
   flex-wrap: wrap;

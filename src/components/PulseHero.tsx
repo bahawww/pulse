@@ -1,4 +1,4 @@
-import { type JSX, type PointerEvent as ReactPointerEvent, type ReactNode, useMemo, useState } from 'react';
+import { type JSX, type PointerEvent as ReactPointerEvent, useMemo, useState } from 'react';
 import type { HistorySample, SystemMetrics } from '../shared/contract';
 import { fitScale, monotonePath } from '../lib/curve';
 import { formatClock } from '../lib/format';
@@ -13,8 +13,6 @@ interface PulseHeroProps {
   readonly statusText: string;
   readonly system: SystemMetrics | null;
   readonly samples: readonly HistorySample[];
-  /** "Updated 4s ago", rendered under the status line. */
-  readonly freshness?: ReactNode;
 }
 
 const W = 1000;
@@ -28,7 +26,7 @@ const MAX_POINTS = 240;
  * trace from the same history the trend charts use. The newest reading carries
  * the only moving element on the page.
  */
-export function PulseHero({ tone, statusText, system, samples, freshness }: PulseHeroProps): JSX.Element {
+export function PulseHero({ tone, statusText, system, samples }: PulseHeroProps): JSX.Element {
   const [hover, setHover] = useState<number | null>(null);
   const trace = useMemo(() => {
     const recent = samples.slice(-MAX_POINTS).filter((s) => Number.isFinite(s.cpu));
@@ -72,7 +70,6 @@ export function PulseHero({ tone, statusText, system, samples, freshness }: Puls
             <span className={`lamp ${lamp}`} aria-hidden="true" />
             {statusText}
           </h1>
-          {freshness && <p className="pulse-fresh">{freshness}</p>}
         </div>
         {!system && (
           <div className="pulse-facts" aria-hidden="true">

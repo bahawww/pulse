@@ -251,7 +251,6 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                   <PulseHero
                     tone={status.tone === 'is-crit' ? 'is-crit' : status.tone === 'is-warn' ? 'is-warn' : ''}
                     statusText={status.text}
-                    freshness={<Freshness lastOkAt={lastOkAt} stale={stale} />}
                     system={system}
                     samples={samples}
                   />
@@ -371,8 +370,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
           </div>
 
           <footer className="footer">
-            {/* Overview already shows it under the hero status. */}
-            {view !== 'overview' && <Freshness lastOkAt={lastOkAt} stale={stale} />}
+            <Freshness lastOkAt={lastOkAt} stale={stale} />
             <div className="footer-keys">
               {SERVICES.map((s) => (
                 <span key={s.id}>
