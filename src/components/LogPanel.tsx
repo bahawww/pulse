@@ -51,7 +51,7 @@ export function LogPanel() {
       .then((body: { units: string[] }) => {
         setUnits(body.units);
         // Default to this dashboard's own unit, the likeliest one to matter.
-        setUnit((current) => current || 'vps-dashboard.service');
+        setUnit((current) => current || 'pulse.service');
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;

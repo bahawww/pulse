@@ -1,5 +1,5 @@
 [Unit]
-Description=VPS Landing Dashboard & Service Portal (Port 80)
+Description=Pulse VPS Dashboard & Service Portal (Port 80)
 After=network.target
 
 [Service]

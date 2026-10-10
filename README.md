@@ -66,15 +66,15 @@ The list of service cards is in `src/shared/contract.ts` (`SERVICES`). Edit it t
 
 ## Run as a service
 
-[`deploy/vps-dashboard.service`](deploy/vps-dashboard.service) is a systemd unit template. To install it:
+[`deploy/pulse.service`](deploy/pulse.service) is a systemd unit template. To install it:
 
 1. Set `User` and the node path in the template.
 2. Install and start it:
 
 ```bash
-sudo cp deploy/vps-dashboard.service /etc/systemd/system/
+sudo cp deploy/pulse.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now vps-dashboard
+sudo systemctl enable --now pulse
 curl -s http://127.0.0.1/api/health
 ```
 
