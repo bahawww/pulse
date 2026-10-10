@@ -1,4 +1,4 @@
-import { type JSX, type MutableRefObject, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -17,13 +17,29 @@ import {
   FONT_FAMILY,
   FONT_SIZE,
   selectCommandLine,
+  targetLabel,
   xtermTheme,
   type CellRange,
   type Mods,
   type Prefs,
   type SearchOpts,
+  type Target,
 } from './model';
+import { Icon } from './panels';
 import { JumpPill, ScrollRail } from './rail';
+import type { Dir } from './split';
+
+/**
+ * Flow control. xterm parses output on the main thread; when more than HIGH
+ * bytes are written and not yet drawn, the server is asked to pause the pty,
+ * and to resume once xterm is back under LOW. Ctrl+C stays instant during a flood.
+ */
+const HIGH = 256 * 1024;
+const LOW = 32 * 1024;
+/** Size changes reach the server at most this often while a divider is dragged. */
+const RESIZE_MS = 60;
+
+const encoder = new TextEncoder();
 
 export type Link = 'connecting' | 'live' | 'reconnecting' | 'offline' | 'exited' | 'elsewhere';
 
@@ -83,8 +99,18 @@ interface ViewProps {
   readonly shown: boolean;
   readonly focused: boolean;
   readonly current: boolean;
-  /** Tile layout: each window gets its own title strip. */
-  readonly tiled: boolean;
+  /** Split view with more than one window on screen: each gets its own title strip. */
+  readonly framed: boolean;
+  /** Shown alone by Alt+Z. */
+  readonly zoomed: boolean;
+  /** Where the window sits in the split view. */
+  readonly style?: CSSProperties;
+  /** A remote host instead of a shell here. */
+  readonly target?: Target;
+  /** True for keys the workspace handles (window and tool shortcuts); xterm drops them. */
+  readonly ownsKey: (e: KeyboardEvent) => boolean;
+  readonly onSplit: (dir: Dir) => void;
+  readonly onPaneZoom: () => void;
   readonly onFocus: () => void;
   readonly onClose: () => void;
   readonly onSid: (id: number, sid: string | undefined) => void;
@@ -128,7 +154,7 @@ function searchOptions(opts: SearchOpts, scheme: TermScheme): ISearchOptions {
 
 /** One xterm bound to its own server shell. Reconnects on its own and reattaches by id. */
 export function TerminalView(props: ViewProps): JSX.Element {
-  const { id, title, fontSize, prefs, scheme, registry, shown, focused, current, tiled, onFocus } = props;
+  const { id, title, fontSize, prefs, scheme, registry, shown, focused, current, framed, zoomed, onFocus } = props;
   const host = useRef<HTMLDivElement>(null);
   const win = useRef<HTMLElement>(null);
   const term = useRef<Terminal | null>(null);
@@ -224,10 +250,48 @@ export function TerminalView(props: ViewProps): JSX.Element {
       // Typed before the shell first answers: held, then sent on connect.
       let everConnected = false;
       let pending = '';
+      // Server speaks binary frames (newer servers say so in hello); else JSON input.
+      let binary = false;
       const send = (msg: object) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+      const sendInput = (data: string) => {
+        if (ws?.readyState !== WebSocket.OPEN) return;
+        if (binary) ws.send(encoder.encode(data));
+        else ws.send(JSON.stringify({ type: 'input', data }));
+      };
       const input = (data: string) => {
-        if (connected) send({ type: 'input', data });
+        if (connected) sendInput(data);
         else if (!everConnected && pending.length < EARLY_MAX) pending += data;
+      };
+
+      // ---- flow control: bytes handed to xterm and not yet parsed
+      let backlog = 0;
+      let held = false;
+      const write = (chunk: Uint8Array | string) => {
+        const size = typeof chunk === 'string' ? chunk.length : chunk.byteLength;
+        backlog += size;
+        t.write(chunk, () => {
+          backlog -= size;
+          if (held && backlog < LOW) {
+            held = false;
+            send({ type: 'resume' });
+          }
+        });
+        if (!held && backlog > HIGH) {
+          held = true;
+          send({ type: 'pause' });
+        }
+      };
+
+      // ---- size: xterm refits every frame during a drag; the pty hears about it less often
+      let sizeTimer: ReturnType<typeof setTimeout> | undefined;
+      let sentSize = '';
+      const sendSize = () => {
+        clearTimeout(sizeTimer);
+        sizeTimer = undefined;
+        const size = `${t.cols}x${t.rows}`;
+        if (size === sentSize || !connected) return;
+        sentSize = size;
+        send({ type: 'resize', cols: t.cols, rows: t.rows });
       };
 
       // ---- search: the addon highlights and steps; findAll feeds the rail ticks
@@ -317,10 +381,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
         // In a full-screen program (alternate screen: vim, less, htop) it stays the program's.
         // Ctrl+[ is not caught here and always sends Esc to the shell.
         if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && t.buffer.active.type === 'normal') return false;
-        if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Backquote') return false;
-        if (e.key === 'F1') return false;
-        if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^(n|w|s|ArrowLeft|ArrowRight|[1-9])$/i.test(e.key)) return false;
-        if (e.ctrlKey && e.shiftKey && (e.key === 'f' || e.key === 'F')) return false;
+        if (live.current.ownsKey(e)) return false;
         if (replacing() && !e.altKey && !e.metaKey) {
           if (e.key === 'Backspace' || e.key === 'Delete') {
             dropSelection();
@@ -374,13 +435,38 @@ export function TerminalView(props: ViewProps): JSX.Element {
         if (fresh) sid = undefined;
         const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const q = new URLSearchParams({ cols: String(t.cols), rows: String(t.rows) });
+        const target = live.current.target;
         if (sid) q.set('sid', sid);
+        else if (target) {
+          q.set('proto', target.proto);
+          q.set('host', target.host);
+          q.set('port', String(target.port));
+          if (target.user) q.set('user', target.user);
+          if (target.legacy) q.set('legacy', '1');
+        }
         const socket = new WebSocket(`${proto}://${window.location.host}/api/terminal?${q}`);
+        socket.binaryType = 'arraybuffer';
         ws = socket;
         connected = false;
+        binary = false;
+        // A new socket starts with nothing queued on either side.
+        held = false;
+        sentSize = '';
         let gotReplay = false;
+        if (!sid && target) note(`Connecting to ${target.proto === 'ssh' ? 'SSH' : 'Telnet'} ${targetLabel(target)}…`, 90);
         socket.onmessage = (e) => {
-          let msg: { t?: string; d?: string; sid?: string; resumed?: boolean; mode?: string; pid?: number; code?: number; ts?: number };
+          if (e.data instanceof ArrayBuffer) {
+            const bytes = new Uint8Array(e.data);
+            write(bytes);
+            if (gotReplay) {
+              gotReplay = false;
+              // Full-screen apps repaint for the current size once the replay is in.
+              setTimeout(() => send({ type: 'redraw' }), 60);
+            }
+            if (!live.current.current || document.hidden) live.current.onActivity(id);
+            return;
+          }
+          let msg: { t?: string; d?: string; sid?: string; resumed?: boolean; mode?: string; pid?: number; code?: number; ts?: number; bin?: boolean };
           try {
             msg = JSON.parse(String(e.data));
           } catch {
@@ -388,10 +474,11 @@ export function TerminalView(props: ViewProps): JSX.Element {
           }
           if (msg.t === 'hello' && msg.sid) {
             connected = true;
+            binary = msg.bin === true;
             retries = 0;
             everConnected = true;
             if (pending) {
-              send({ type: 'input', data: pending });
+              sendInput(pending);
               pending = '';
             }
             if (sid && !msg.resumed) note('[previous shell has ended — this is a new one]', 90);
@@ -402,10 +489,10 @@ export function TerminalView(props: ViewProps): JSX.Element {
             }
             sid = msg.sid;
             live.current.onSid(id, sid);
-            report({ link: 'live', mode: msg.mode ?? '', pid: typeof msg.pid === 'number' ? msg.pid : null, since: Date.now() });
-            send({ type: 'resize', cols: t.cols, rows: t.rows });
+            report({ link: 'live', mode: target ? target.proto : (msg.mode ?? ''), pid: typeof msg.pid === 'number' ? msg.pid : null, since: Date.now() });
+            sendSize();
           } else if (msg.t === 'o' && msg.d) {
-            t.write(msg.d);
+            write(msg.d);
             if (gotReplay) {
               gotReplay = false;
               // Full-screen apps repaint for the current size once the replay is in.
@@ -416,7 +503,9 @@ export function TerminalView(props: ViewProps): JSX.Element {
             if (restarting) return;
             ending = true;
             report({ link: 'exited', latency: null });
-            note(`[process exited${msg.code ? ` with ${msg.code}` : ''} — press Enter for a new shell]`);
+            const remote = live.current.target;
+            if (remote) note(`[connection to ${targetLabel(remote)} closed${msg.code ? ` (${msg.code})` : ''} — press Enter to connect again]`);
+            else note(`[process exited${msg.code ? ` with ${msg.code}` : ''} — press Enter for a new shell]`);
           } else if (msg.t === 'pong' && typeof msg.ts === 'number') {
             const ms = Math.max(0, Math.round(performance.now() - msg.ts));
             if (ms !== status.latency) report({ latency: ms });
@@ -434,8 +523,9 @@ export function TerminalView(props: ViewProps): JSX.Element {
             connect(true);
             return;
           }
-          if (ending || ev.code === 4401 || ev.code === 1011) {
+          if (ending || ev.code === 4401 || ev.code === 1011 || (!everConnected && ev.code === 1006 && retries >= 2)) {
             if (ev.code === 4401) note('[logged out]', 31);
+            else if (!everConnected && !ending) note('[could not connect — press Enter to try again]', 31);
             if (!ending) report({ link: 'offline' });
             sid = undefined;
             live.current.onSid(id, undefined);
@@ -494,7 +584,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
       t.textarea?.addEventListener('paste', onPaste, true);
       const resize = t.onResize(({ cols, rows }) => {
         report({ size: `${cols}×${rows}` });
-        send({ type: 'resize', cols, rows });
+        if (!sizeTimer) sizeTimer = setTimeout(sendSize, RESIZE_MS);
       });
       report({ size: `${t.cols}×${t.rows}` });
       const titleSub = t.onTitleChange((s) => live.current.onTitle(id, s));
@@ -532,6 +622,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
         registry.current.delete(id);
         fitRef.current = null;
         clearTimeout(retryTimer);
+        clearTimeout(sizeTimer);
         clearInterval(ping);
         cancelAnimationFrame(fitFrame);
         el.removeEventListener('wheel', onWheel, { capture: true });
@@ -636,7 +727,8 @@ export function TerminalView(props: ViewProps): JSX.Element {
   return (
     <section
       ref={win}
-      className={`tw-win${shown ? '' : ' is-off'}${current ? ' is-current' : ''} is-${link}`}
+      className={`tw-win${shown ? '' : ' is-off'}${current ? ' is-current' : ''}${framed ? ' is-framed' : ''} is-${link}`}
+      style={props.style}
       aria-label={title}
       onMouseDown={onFocus}
       onContextMenu={(e) => {
@@ -647,19 +739,25 @@ export function TerminalView(props: ViewProps): JSX.Element {
         setMenu({ x: Math.min(e.clientX - box.left, box.width - 220), y: Math.min(e.clientY - box.top, box.height - 300) });
       }}
     >
-      {tiled && (
-        <header className="tw-win-head">
+      {(framed || zoomed) && (
+        <header className="tw-win-head" onDoubleClick={props.onPaneZoom}>
           <span className={`tw-led is-${link}`} aria-hidden="true" />
+          {props.target && <span className="tw-proto">{props.target.proto === 'ssh' ? 'SSH' : 'TEL'}</span>}
           <span className="tw-win-title">{title}</span>
-          <button
-            type="button"
-            className="tw-win-x"
-            aria-label={`Close ${title}`}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={props.onClose}
-          >
-            ×
-          </button>
+          <span className="tw-win-tools" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+            <button type="button" className="tw-win-x" aria-label="Split right" title="Split right (Alt+\\)" onClick={() => props.onSplit('row')}>
+              <Icon.splitRight size={14} />
+            </button>
+            <button type="button" className="tw-win-x" aria-label="Split down" title="Split down (Alt+-)" onClick={() => props.onSplit('col')}>
+              <Icon.splitDown size={14} />
+            </button>
+            <button type="button" className={`tw-win-x${zoomed ? ' is-on' : ''}`} aria-pressed={zoomed} aria-label={zoomed ? 'Unzoom' : 'Zoom'} title="Zoom (Alt+Z)" onClick={props.onPaneZoom}>
+              {zoomed ? <Icon.shrink size={14} /> : <Icon.expand size={14} />}
+            </button>
+            <button type="button" className="tw-win-x" aria-label={`Close ${title}`} title="Close (Alt+W)" onClick={props.onClose}>
+              <Icon.close size={14} />
+            </button>
+          </span>
         </header>
       )}
       <div className="tw-stage">

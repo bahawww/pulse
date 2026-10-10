@@ -1,4 +1,4 @@
-import { type CSSProperties, type JSX, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { copyToClipboard } from '../../lib/urls';
 import { prefersReducedMotion } from '../../lib/motion';
 import { useNow } from '../../hooks/useNow';
@@ -13,34 +13,71 @@ import {
   formatElapsed,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
+  keyAction,
   NO_MODS,
+  parseQuick,
+  readConns,
   readPrefs,
   readSnippets,
   readStoredSize,
+  readView,
   readWins,
   resolveScheme,
   SHORTCUTS,
   shortTitle,
+  storeConns,
   storePrefs,
   storeSize,
   storeSnippets,
+  storeView,
   storeWins,
+  targetLabel,
+  touchConn,
   useSiteTheme,
+  type Action,
+  type Conn,
   type KeyDef,
-  type Layout,
   type Mods,
   type Prefs,
   type SearchOpts,
   type Snippet,
+  type Target,
+  type ViewState,
   type Win,
 } from './model';
 import { Icon, KeyButton, Popover, ShortcutSheet, SnippetsPanel, ThemePanel } from './panels';
+import { CommandPalette, type Command } from './palette';
+import { ConnectPanel, protoBadge } from './remote';
+import { autoDir, equalize, ids, insert, layout, neighbor, nudge, preset, PRESETS, remove, resizeAt, swap, sync, type Dir, type Preset, type Rect, type Side } from './split';
 import { LINK_LABEL, TerminalView, type Port, type SearchResult, type WinStatus } from './TerminalView';
+import { SCHEMES } from '../../lib/termThemes';
 import '@xterm/xterm/css/xterm.css';
 import '../../terminal.css';
 import { formatClock, formatDay } from '../../shared/time';
 
-type Panel = 'none' | 'themes' | 'snippets' | 'more' | 'tabs';
+type Panel = 'none' | 'themes' | 'snippets' | 'more' | 'tabs' | 'connect' | 'layout';
+
+const PRESET_NAME: Record<Preset, string> = { grid: 'Grid', columns: 'Columns', rows: 'Rows', main: 'Main and stack' };
+
+/** Half the gap between panes in split view, in px. */
+const GAP = 4;
+const FULL: Rect = { x: 0, y: 0, w: 1, h: 1 };
+
+/** A pane's box from its fractions, with a gap on every side that touches another pane. */
+function paneStyle(r: Rect): CSSProperties {
+  const l = r.x > 0.0001 ? GAP : 0;
+  const rt = r.x + r.w < 0.9999 ? GAP : 0;
+  const t = r.y > 0.0001 ? GAP : 0;
+  const b = r.y + r.h < 0.9999 ? GAP : 0;
+  return {
+    left: `calc(${r.x * 100}% + ${l}px)`,
+    top: `calc(${r.y * 100}% + ${t}px)`,
+    width: `calc(${r.w * 100}% - ${l + rt}px)`,
+    height: `calc(${r.h * 100}% - ${t + b}px)`,
+  };
+}
+
+const SIDE: Record<string, Side> = { Left: 'left', Right: 'right', Up: 'up', Down: 'down' };
 
 interface WorkspaceProps {
   readonly open: boolean;
@@ -49,7 +86,7 @@ interface WorkspaceProps {
 }
 
 /** Footer hints, least important first: narrow screens drop them from the left (terminal.css). */
-const FOOTER_ORDER = ['Alt+W', 'Alt+1…9', 'Alt+N', 'Alt+S', 'Ctrl+Shift+F', 'Esc', 'F1'];
+const FOOTER_ORDER = ['Alt+W', 'Alt+\\', 'Alt+N', 'Alt+O', 'Alt+Enter', 'Ctrl+Shift+P', 'Esc', 'F1'];
 const FOOTER_KEYS = SHORTCUTS.flatMap((g) => g.items.filter((s) => s.footer)).sort(
   (a, b) => FOOTER_ORDER.indexOf(a.keys) - FOOTER_ORDER.indexOf(b.keys),
 );
@@ -66,7 +103,14 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   const [titles, setTitles] = useState<Readonly<Record<number, string>>>({});
   const [statuses, setStatuses] = useState<Readonly<Record<number, WinStatus>>>({});
   const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
-  const [layout, setLayout] = useState<Layout>('tabs');
+  const [view, setView] = useState<ViewState>(readView);
+  const [conns, setConnsState] = useState<readonly Conn[]>(readConns);
+  const [cmd, setCmd] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
+  /** The window before the current one, for Alt+0. */
+  const last = useRef<number | null>(null);
+  const presetAt = useRef(-1);
   const [full, setFull] = useState(false);
   const [compact, setCompact] = useState(() => window.matchMedia(COMPACT_QUERY).matches);
   const [chosenSize, setChosenSize] = useState<number | null>(readStoredSize);
@@ -105,6 +149,21 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   const now = useNow(30_000);
 
   const fontSize = chosenSize ?? (compact ? COMPACT_FONT_SIZE : FONT_SIZE);
+
+  // ---- split view: the tree always holds exactly the open windows
+  const aspect = useCallback(() => {
+    const el = body.current;
+    return el && el.clientHeight > 0 ? el.clientWidth / el.clientHeight : 16 / 9;
+  }, []);
+  const winIds = useMemo(() => wins.map((w) => w.id), [wins]);
+  const tree = useMemo(() => sync(view.tree, winIds, aspect()), [view.tree, winIds, aspect]);
+  const splitOn = view.mode === 'split' && !compact && wins.length > 1;
+  const zoomed = splitOn && view.zoom;
+  const { panes, dividers } = useMemo(() => layout(tree), [tree]);
+  const splitRef = useRef(splitOn);
+  splitRef.current = splitOn;
+  const ownsKey = useCallback((e: KeyboardEvent) => keyAction(e, splitRef.current) !== null, []);
+  useEffect(() => storeView({ mode: view.mode, tree, zoom: view.zoom }), [view.mode, view.zoom, tree]);
   const scheme = useMemo(() => resolveScheme(prefs.scheme, siteTheme), [prefs.scheme, siteTheme]);
   const status = statuses[active];
 
@@ -122,6 +181,11 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
     setSnippetsState(list);
     storeSnippets(list);
   };
+
+  const setConns = useCallback((list: readonly Conn[]) => {
+    setConnsState(list);
+    storeConns(list);
+  }, []);
 
   const flash = useCallback((msg: string) => setToast(msg), []);
   useEffect(() => {
@@ -221,7 +285,10 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   }, [open]);
 
   const activate = useCallback((id: number) => {
-    setActive(id);
+    setActive((cur) => {
+      if (cur !== id) last.current = cur;
+      return id;
+    });
     setBusy((b) => {
       if (!b.has(id)) return b;
       const n = new Set(b);
@@ -231,14 +298,35 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   }, []);
 
   // A new window takes the smallest number not in use, so closing Shell 2 and
-  // opening another gives Shell 2 again, not Shell 4.
-  const add = useCallback(() => {
-    const used = new Set(wins.map((w) => w.id));
-    let id = 1;
-    while (used.has(id)) id += 1;
-    setWins([...wins, { id }]);
-    activate(id);
-  }, [wins, activate]);
+  // opening another gives Shell 2 again, not Shell 4. In the split tree it goes
+  // beside the current window: `dir` when asked (split right, split down), else
+  // whichever way the current pane has more room.
+  const add = useCallback(
+    (opts: { readonly target?: Target; readonly name?: string; readonly dir?: Dir } = {}) => {
+      const used = new Set(wins.map((w) => w.id));
+      let id = 1;
+      while (used.has(id)) id += 1;
+      setWins([...wins, { id, target: opts.target, name: opts.name?.trim() || undefined }]);
+      setView((v) => {
+        const base = sync(v.tree, wins.map((w) => w.id), aspect());
+        const all = ids(base);
+        const anchor = all.includes(active) ? active : all.at(-1);
+        const dir = opts.dir ?? (anchor === undefined ? 'row' : autoDir(base, anchor, aspect()));
+        return { mode: opts.dir ? 'split' : v.mode, zoom: false, tree: anchor === undefined ? insert(null, 0, id, dir) : insert(base, anchor, id, dir) };
+      });
+      activate(id);
+    },
+    [wins, active, activate, aspect],
+  );
+
+  /** Opens a window on a remote host and remembers the connection. */
+  const connectTo = useCallback(
+    (t: Target, name = '') => {
+      setConns(touchConn(conns, t, name));
+      add({ target: t, name });
+    },
+    [conns, add, setConns],
+  );
 
   const close = useCallback(
     (id: number) => {
@@ -250,11 +338,16 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
         return;
       }
       setWins(rest);
+      setView((v) => ({ ...v, tree: remove(v.tree, id) }));
       setStatuses((s) => {
         const { [id]: _gone, ...keep } = s;
         return keep;
       });
-      if (active === id) activate(rest[rest.length - 1]?.id ?? active);
+      if (active === id) {
+        // Back to the window used before this one, if it is still open.
+        const back = rest.find((w) => w.id === last.current) ?? rest[rest.length - 1];
+        activate(back?.id ?? active);
+      }
     },
     [wins, active, onEmpty, activate],
   );
@@ -294,7 +387,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
     setRenaming(null);
   };
 
-  const tabLabel = (w: Win): string => w.name || shortTitle(titles[w.id] ?? '') || `Shell ${w.id}`;
+  const tabLabel = (w: Win): string =>
+    w.name || (w.target ? targetLabel(w.target) : shortTitle(titles[w.id] ?? '')) || `Shell ${w.id}`;
   const activeWin = wins.find((w) => w.id === active);
 
   // ---- output: copy or save everything in the active window
@@ -410,8 +504,212 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
 
   const togglePanel = (p: Panel) => setPanel((cur) => (cur === p ? 'none' : p));
 
-  const cols = Math.ceil(Math.sqrt(wins.length));
-  const tiled = layout === 'tile' && !compact && wins.length > 1;
+  // ---- split view actions
+
+  const setMode = useCallback(
+    (mode: ViewState['mode']) => {
+      setView((v) => ({ ...v, mode, zoom: false }));
+      requestAnimationFrame(focusActive);
+    },
+    [focusActive],
+  );
+
+  const applyPreset = useCallback(
+    (kind: Preset) => {
+      presetAt.current = PRESETS.indexOf(kind);
+      setView({ mode: 'split', zoom: false, tree: preset(winIds, kind) });
+      flash(`Layout: ${PRESET_NAME[kind]}`);
+      requestAnimationFrame(focusActive);
+    },
+    [winIds, flash, focusActive],
+  );
+
+  const split = useCallback((dir: Dir) => add({ dir }), [add]);
+
+  const toggleZoom = useCallback(() => {
+    if (!splitOn) {
+      flash(wins.length > 1 ? 'Zoom works in split view (Alt+Enter)' : 'Only one window open');
+      return;
+    }
+    setView((v) => ({ ...v, zoom: !v.zoom }));
+  }, [splitOn, wins.length, flash]);
+
+  /** Every keyboard action, from keyAction() in model.ts. */
+  const act = (a: Action): void => {
+    switch (a) {
+      case 'new':
+        return add();
+      case 'close':
+        return close(active);
+      case 'rename':
+        if (!compact) setRenaming(active);
+        return;
+      case 'prev':
+        return step(-1);
+      case 'next':
+        return step(1);
+      case 'last':
+        if (last.current !== null && wins.some((w) => w.id === last.current)) activate(last.current);
+        return;
+      case 'moveLeft':
+      case 'moveRight': {
+        const i = wins.findIndex((w) => w.id === active);
+        const j = i + (a === 'moveLeft' ? -1 : 1);
+        if (i < 0 || j < 0 || j >= wins.length) return;
+        const next = [...wins];
+        [next[i], next[j]] = [next[j] as Win, next[i] as Win];
+        setWins(next);
+        return;
+      }
+      case 'toggleSplit':
+        if (compact) {
+          flash('Split view needs a wider screen');
+          return;
+        }
+        if (wins.length < 2) return add({ dir: autoDir(tree, active, aspect()) });
+        return setMode(view.mode === 'split' ? 'tabs' : 'split');
+      case 'splitRight':
+        return split('row');
+      case 'splitDown':
+        return split('col');
+      case 'zoom':
+        return toggleZoom();
+      case 'layout':
+        if (wins.length < 2) {
+          flash('Open a second window first (Alt+\\)');
+          return;
+        }
+        return applyPreset(PRESETS[(presetAt.current + 1) % PRESETS.length] ?? 'grid');
+      case 'swap': {
+        const order = ids(tree);
+        const other = order[(order.indexOf(active) + 1) % order.length];
+        if (tree && other !== undefined && other !== active) setView((v) => ({ ...v, tree: swap(tree, active, other) }));
+        return;
+      }
+      case 'broadcast':
+        if (wins.length < 2) flash('Broadcast needs two or more windows');
+        else setBroadcast((b) => !b);
+        return;
+      case 'focusLeft':
+      case 'focusRight':
+      case 'focusUp':
+      case 'focusDown': {
+        const to = neighbor(panes, active, SIDE[a.slice(5)] ?? 'left');
+        if (to !== null) activate(to);
+        return;
+      }
+      case 'growLeft':
+      case 'growRight':
+      case 'growUp':
+      case 'growDown':
+        if (tree) setView((v) => ({ ...v, tree: nudge(tree, active, SIDE[a.slice(4)] ?? 'left') }));
+        return;
+      case 'palette':
+        setPanel('none');
+        setCmd((c) => !c);
+        return;
+      case 'connect':
+        return togglePanel('connect');
+      case 'find':
+        return openFind();
+      case 'snippets':
+        return togglePanel('snippets');
+      case 'sheet':
+        setSheet((x) => !x);
+        return;
+      case 'hide':
+        return hide();
+      case 'textUp':
+        return resizeText(1);
+      case 'textDown':
+        return resizeText(-1);
+      case 'textReset':
+        return resetText();
+      default: {
+        const n = Number(a.slice(4));
+        const w = wins[n - 1];
+        if (w) activate(w.id);
+      }
+    }
+  };
+
+  // ---- divider drag: pointer position to a fraction of the split it divides
+
+  const dragDivider = (d: (typeof dividers)[number], e: ReactPointerEvent<HTMLDivElement>) => {
+    const box = body.current?.getBoundingClientRect();
+    if (!box || e.button !== 0) return;
+    e.preventDefault();
+    const bar = e.currentTarget;
+    bar.setPointerCapture(e.pointerId);
+    setDragging(true);
+    const move = (ev: PointerEvent) => {
+      const f = d.dir === 'row' ? (ev.clientX - box.left) / box.width : (ev.clientY - box.top) / box.height;
+      const p = d.dir === 'row' ? (f - d.span.x) / d.span.w : (f - d.span.y) / d.span.h;
+      setView((v) => (v.tree ? { ...v, tree: resizeAt(sync(v.tree, winIds, aspect()) ?? v.tree, d.path, d.i, p) } : v));
+    };
+    const up = () => {
+      bar.removeEventListener('pointermove', move);
+      bar.removeEventListener('pointerup', up);
+      bar.removeEventListener('pointercancel', up);
+      setDragging(false);
+      focusActive();
+    };
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', up);
+    bar.addEventListener('pointercancel', up);
+  };
+
+  // ---- command palette: every action, window, connection, snippet and scheme
+
+  const commands = (): Command[] => {
+    const c: Command[] = [];
+    const item = (group: string, id: string, title: string, run: () => void, keys?: string, icon?: JSX.Element, detail?: string) =>
+      c.push({ id: `${group}:${id}`, group, title, run, keys, icon, detail });
+    item('Window', 'new', 'New window', () => add(), 'Alt+N', <Icon.plus size={14} />);
+    if (!compact) {
+      item('Window', 'right', 'Split right', () => split('row'), 'Alt+\\', <Icon.splitRight size={14} />);
+      item('Window', 'down', 'Split down', () => split('col'), 'Alt+-', <Icon.splitDown size={14} />);
+      item('Window', 'mode', view.mode === 'split' ? 'Show one window at a time (tabs)' : 'Split view: every window on screen', () => act('toggleSplit'), 'Alt+Enter', <Icon.tile size={14} />);
+      if (splitOn) item('Window', 'zoom', zoomed ? 'Unzoom' : 'Zoom this window', toggleZoom, 'Alt+Z', <Icon.zoom size={14} />);
+      if (wins.length > 1) for (const p of PRESETS) item('Layout', p, PRESET_NAME[p], () => applyPreset(p), undefined, <Icon.tile size={14} />);
+    }
+    if (wins.length > 1) item('Window', 'broadcast', broadcast ? 'Stop typing into every window' : 'Type into every window at once', () => setBroadcast((b) => !b), 'Ctrl+Shift+B', <Icon.broadcast size={14} />);
+    item('Window', 'rename', 'Rename window', () => act('rename'), 'Alt+R', <Icon.edit size={14} />);
+    item('Window', 'close', 'Close window', () => close(active), 'Alt+W', <Icon.close size={14} />);
+    wins.forEach((w, i) =>
+      item('Go to', `w${w.id}`, tabLabel(w), () => activate(w.id), i < 9 ? `Alt+${i + 1}` : undefined, w.target ? <Icon.router size={14} /> : <Icon.command size={14} />, w.target ? `${w.target.proto} ${targetLabel(w.target)}` : undefined),
+    );
+    item('Connect', 'panel', 'Connect to a router or server…', () => setPanel('connect'), 'Alt+O', <Icon.router size={14} />);
+    for (const k of conns) item('Connect', k.id, k.name || targetLabel(k), () => connectTo(k, k.name), undefined, <Icon.router size={14} />, `${k.proto} ${targetLabel(k)}${k.legacy ? ' · legacy' : ''}`);
+    for (const sn of snippets) item('Snippet', sn.id, sn.label || sn.command, () => onInput(active, `${sn.command}
+`), undefined, <Icon.bolt size={14} />, sn.command);
+    item('Shell', 'find', 'Find in scrollback', openFind, 'Ctrl+Shift+F', <Icon.search size={14} />);
+    item('Shell', 'clear', 'Clear screen and scrollback', () => ports.current.get(active)?.clear(), undefined, <Icon.eraser size={14} />);
+    item('Shell', 'restart', activeWin?.target ? 'Reconnect' : 'Restart shell', () => ports.current.get(active)?.restart(), undefined, <Icon.restart size={14} />);
+    item('Shell', 'copy', 'Copy all output', copyAll, undefined, <Icon.copy size={14} />);
+    item('Shell', 'save', 'Save output as .txt', saveAll, undefined, <Icon.download size={14} />);
+    item('View', 'bigger', 'Bigger text', () => resizeText(1), 'Ctrl+=', <Icon.text size={14} />);
+    item('View', 'smaller', 'Smaller text', () => resizeText(-1), 'Ctrl+-', <Icon.text size={14} />);
+    item('View', 'reset', 'Reset text size', resetText, 'Ctrl+0', <Icon.text size={14} />);
+    if (document.fullscreenEnabled) item('View', 'full', full ? 'Exit fullscreen' : 'Fullscreen', toggleFullscreen, undefined, <Icon.expand size={14} />);
+    item('View', 'scheme-site', 'Colour scheme: Dashboard (auto)', () => setPrefs({ scheme: 'site' }), undefined, <Icon.palette size={14} />);
+    for (const sc of SCHEMES) item('View', `scheme-${sc.id}`, `Colour scheme: ${sc.name}`, () => setPrefs({ scheme: sc.id }), undefined, <Icon.palette size={14} />);
+    item('View', 'keys', 'Keyboard shortcuts', () => setSheet(true), 'F1', <Icon.keyboard size={14} />);
+    item('View', 'hide', 'Back to dashboard', hide, 'Esc', <Icon.down size={14} />);
+    return c;
+  };
+
+  const fromQuery = useCallback(
+    (q: string): Command[] => {
+      const out: Command[] = [];
+      const t = /@|^(ssh|telnet)\b|^\d{1,3}(\.\d{1,3}){3}/i.test(q) ? parseQuick(q) : null;
+      if (t) out.push({ id: 'quick', group: 'Connect', title: `Connect to ${targetLabel(t)}`, detail: `${t.proto} · port ${t.port}`, icon: <Icon.router size={14} />, run: () => connectTo(t) });
+      out.push({ id: 'run', group: 'Run', title: q, detail: 'Run in the current window', icon: <Icon.command size={14} />, last: true, run: () => onInput(active, `${q}\r`) });
+      return out;
+    },
+    [connectTo, onInput, active],
+  );
+
   const live = status?.link === 'live';
   const broadcasting = broadcast && wins.length > 1;
 
@@ -441,7 +739,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   return (
     <div
       ref={root}
-      className={`tw${open ? '' : ' is-hidden'}${closing ? ' is-closing' : ''}${compact ? ' is-compact' : ''}${scheme.dark ? ' is-term-dark' : ' is-term-light'}${broadcasting ? ' is-broadcast' : ''}`}
+      className={`tw${open ? '' : ' is-hidden'}${closing ? ' is-closing' : ''}${compact ? ' is-compact' : ''}${scheme.dark ? ' is-term-dark' : ' is-term-light'}${broadcasting ? ' is-broadcast' : ''}${dragging ? ' is-dragging' : ''}`}
       style={rootStyle}
       role="dialog"
       aria-label="Terminal"
@@ -459,6 +757,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
             return;
           }
         }
+        if (cmd) return;
         // Escape first closes the workspace's own layers. Then, at the normal screen, it goes
         // back to the dashboard. In a full-screen program (vim, less) it belongs to the program,
         // and TerminalView lets it through to the shell instead.
@@ -475,34 +774,14 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
           focusActive();
           return;
         }
-        if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Backquote') {
-          e.preventDefault();
-          hide();
-          return;
-        }
-        if (e.key === 'F1') {
-          e.preventDefault();
-          setSheet((s) => !s);
-          return;
-        }
-        if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
-          e.preventDefault();
-          openFind();
-          return;
-        }
-        // Window shortcuts. xterm is told to ignore these keys, so the shell never sees them.
-        if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-        const key = e.key.toLowerCase();
-        if (key === 'n') add();
-        else if (key === 'w') close(active);
-        else if (key === 's') togglePanel('snippets');
-        else if (e.key === 'ArrowLeft') step(-1);
-        else if (e.key === 'ArrowRight') step(1);
-        else if (/^[1-9]$/.test(e.key)) {
-          const w = wins[Number(e.key) - 1];
-          if (w) activate(w.id);
-        } else return;
+        // Workspace shortcuts. xterm drops the same keys (ownsKey), so the shell never sees them.
+        // Text fields in panels keep their own Ctrl keys (select all, undo, zoom-free typing).
+        const inField =
+          (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) && !e.target.classList.contains('xterm-helper-textarea');
+        const a = keyAction(e.nativeEvent, splitOn);
+        if (!a || (inField && !e.altKey && a !== 'palette' && a !== 'sheet')) return;
         e.preventDefault();
+        act(a);
       }}
     >
       <header className="tw-bar">
@@ -596,6 +875,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
                     onAuxClick={(e) => e.button === 1 && close(w.id)}
                   >
                     <span className={`tw-led is-${statuses[w.id]?.link ?? 'connecting'}`} aria-hidden="true" />
+                    {w.target && <span className="tw-proto">{protoBadge(w.target.proto)}</span>}
                     <span className="tw-tab-text">{tabLabel(w)}</span>
                     {i < 9 && <kbd className="tw-tab-kbd">{i + 1}</kbd>}
                   </button>
@@ -605,7 +885,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
                 </button>
               </div>
             ))}
-            <button type="button" className="tw-tab-add" onClick={add} aria-label="New window" title="New window (Alt+N)">
+            <button type="button" className="tw-tab-add" onClick={() => add()} aria-label="New window" title="New window (Alt+N)">
               <Icon.plus size={14} />
             </button>
           </div>
@@ -613,23 +893,71 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
 
         <div className="tw-tools">
           {compact &&
-            toolButton('add', 'New window', 'New window', <Icon.plus />, add)}
+            toolButton('add', 'New window', 'New window', <Icon.plus />, () => add())}
           {toolButton('find', 'Find', 'Find in scrollback (Ctrl+Shift+F)', <Icon.search />, find.open ? closeFind : openFind, find.open)}
           <div className="tw-pop-wrap">
             {toolButton('snip', 'Snippets', 'Snippets (Alt+S)', <Icon.bolt />, () => togglePanel('snippets'), panel === 'snippets', 'snippets')}
             {panel === 'snippets' && <SnippetsPanel list={snippets} onChange={setSnippets} onUse={useSnippet} onClose={closePanel} />}
           </div>
-          {!compact && wins.length > 1 &&
-            toolButton(
-              'layout',
-              layout === 'tabs' ? 'Show side by side' : 'Show one at a time',
-              layout === 'tabs' ? 'Show all windows side by side' : 'Show one window at a time',
-              layout === 'tabs' ? <Icon.tile /> : <Icon.tabs />,
-              () => setLayout((l) => (l === 'tabs' ? 'tile' : 'tabs')),
-              layout === 'tile',
-            )}
-          {!compact && wins.length > 1 &&
-            toolButton('broadcast', 'Type into every window', broadcast ? 'Broadcasting: typing goes to every window' : 'Type into every window at once', <Icon.broadcast />, () => setBroadcast((b) => !b), broadcast)}
+          <div className="tw-pop-wrap">
+            {toolButton('connect', 'Connect', 'Connect to a router or server: SSH, Telnet (Alt+O)', <Icon.router />, () => togglePanel('connect'), panel === 'connect', 'connect')}
+            {panel === 'connect' && <ConnectPanel list={conns} onChange={setConns} onConnect={connectTo} onClose={closePanel} />}
+          </div>
+          {!compact && (
+            <div className="tw-pop-wrap">
+              {toolButton('layout', 'Layout', 'Split view and layouts (Alt+Enter, Alt+G)', splitOn ? <Icon.tile /> : <Icon.splitRight />, () => togglePanel('layout'), panel === 'layout' || splitOn, 'layout')}
+              {panel === 'layout' && (
+                <Popover id="layout" label="Layout" onClose={closePanel} className="tw-pop-layout">
+                  <div className="tw-pop-head">View</div>
+                  <div className="tw-seg" role="group" aria-label="View">
+                    <button type="button" className={`tw-chip${!splitOn ? ' is-on' : ''}`} aria-pressed={!splitOn} onClick={() => setMode('tabs')}>
+                      <Icon.tabs size={14} /> Tabs
+                    </button>
+                    <button
+                      type="button"
+                      className={`tw-chip${splitOn ? ' is-on' : ''}`}
+                      aria-pressed={splitOn}
+                      onClick={() => (wins.length < 2 ? split(autoDir(tree, active, aspect())) : setMode('split'))}
+                    >
+                      <Icon.tile size={14} /> Split
+                    </button>
+                  </div>
+                  <div className="tw-pop-head">Layouts</div>
+                  <div className="tw-layouts">
+                    {PRESETS.map((p) => (
+                      <button key={p} type="button" className="tw-layout" disabled={wins.length < 2} onClick={() => applyPreset(p)} title={PRESET_NAME[p]}>
+                        <span className={`tw-layout-pic is-${p}`} aria-hidden="true">
+                          <i />
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                        <span>{PRESET_NAME[p]}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="tw-menu-list" role="menu">
+                    <button type="button" role="menuitem" onClick={() => { setPanel('none'); split('row'); }}>
+                      <Icon.splitRight /> Split right <kbd>Alt+\\</kbd>
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => { setPanel('none'); split('col'); }}>
+                      <Icon.splitDown /> Split down <kbd>Alt+-</kbd>
+                    </button>
+                    <button type="button" role="menuitem" disabled={!splitOn} onClick={() => { setPanel('none'); toggleZoom(); }}>
+                      <Icon.zoom /> {zoomed ? 'Unzoom' : 'Zoom this window'} <kbd>Alt+Z</kbd>
+                    </button>
+                    <button type="button" role="menuitemcheckbox" aria-checked={broadcast} disabled={wins.length < 2} onClick={() => { setPanel('none'); setBroadcast((b) => !b); }}>
+                      <Icon.broadcast /> Type into every window {broadcast ? '· on' : ''} <kbd>Ctrl+Shift+B</kbd>
+                    </button>
+                  </div>
+                  <p className="tw-pop-foot">
+                    <kbd>Alt+Arrows</kbd> move between windows · <kbd>Alt+Shift+Arrows</kbd> resize · drag a divider, double-click to even out
+                  </p>
+                </Popover>
+              )}
+            </div>
+          )}
+          {!compact && toolButton('cmd', 'Command palette', 'Command palette (Ctrl+Shift+P)', <Icon.command />, () => act('palette'), cmd)}
           {!compact && (
             <div className="tw-size" role="group" aria-label="Text size">
               <button type="button" className="tw-size-btn" onClick={() => resizeText(-1)} disabled={fontSize <= MIN_FONT_SIZE} aria-label="Smaller text" title="Smaller text (Ctrl+wheel)">
@@ -652,6 +980,18 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
             {panel === 'more' && (
               <Popover id="more" label="More" onClose={closePanel} className="tw-pop-menu">
                 <div className="tw-menu-list" role="menu">
+                  {compact && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setPanel('none');
+                        setCmd(true);
+                      }}
+                    >
+                      <Icon.command /> All commands
+                    </button>
+                  )}
                   <button type="button" role="menuitem" onClick={copyAll}>
                     <Icon.copy /> Copy all output
                   </button>
@@ -679,7 +1019,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
                       focusActive();
                     }}
                   >
-                    <Icon.restart /> Restart shell
+                    <Icon.restart /> {activeWin?.target ? 'Reconnect' : 'Restart shell'}
                   </button>
                   {compact && (
                     <>
@@ -834,23 +1174,38 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
         </div>
       )}
 
-      <div className={`tw-body${tiled ? ' is-tile' : ''}`} style={tiled ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } : undefined}>
-        {wins.map((w) => (
+      <div ref={body} className={`tw-body${splitOn ? ' is-split' : ''}${zoomed ? ' is-zoomed' : ''}`}>
+        {wins.map((w) => {
+          const r = splitOn && !zoomed ? panes.get(w.id) : undefined;
+          const shown = r ? true : w.id === active;
+          return (
           <TerminalView
             key={w.id}
             id={w.id}
             title={tabLabel(w)}
             sid={w.sid}
+            target={w.target}
+            style={paneStyle(r ?? FULL)}
+            framed={!!r}
+            zoomed={zoomed && w.id === active}
+            ownsKey={ownsKey}
+            onSplit={(dir) => {
+              activate(w.id);
+              add({ dir });
+            }}
+            onPaneZoom={() => {
+              activate(w.id);
+              toggleZoom();
+            }}
             fontSize={fontSize}
             prefs={prefs}
             scheme={scheme}
             registry={ports}
             modsRef={modsRef}
             onModsUsed={modsUsed}
-            shown={tiled || w.id === active}
-            focused={open && w.id === active}
+            shown={shown}
+            focused={open && !cmd && w.id === active}
             current={w.id === active}
-            tiled={tiled}
             onFocus={() => activate(w.id)}
             onClose={() => close(w.id)}
             onSid={onSid}
@@ -864,7 +1219,26 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
             onCopied={onCopied}
             takeEarly={takeEarly}
           />
-        ))}
+          );
+        })}
+        {splitOn &&
+          !zoomed &&
+          dividers.map((d) => (
+            <div
+              key={d.key}
+              className={`tw-divider is-${d.dir}`}
+              role="separator"
+              aria-orientation={d.dir === 'row' ? 'vertical' : 'horizontal'}
+              title="Drag to resize, double-click to even out"
+              style={
+                d.dir === 'row'
+                  ? { left: `${d.at * 100}%`, top: `${d.span.y * 100}%`, height: `${d.span.h * 100}%` }
+                  : { top: `${d.at * 100}%`, left: `${d.span.x * 100}%`, width: `${d.span.w * 100}%` }
+              }
+              onPointerDown={(e) => dragDivider(d, e)}
+              onDoubleClick={() => tree && setView((v) => ({ ...v, tree: equalize(tree, d.path) }))}
+            />
+          ))}
       </div>
 
       <footer className="tw-foot">
@@ -876,12 +1250,17 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
         {status?.latency != null && <span>{status.latency} ms</span>}
         {status?.size && <span>{status.size}</span>}
         {!compact && status?.renderer && <span title={status.renderer === 'GPU' ? 'WebGL renderer' : 'DOM renderer (no WebGL)'}>{status.renderer}</span>}
+        {splitOn && (
+          <button type="button" className="tw-foot-chip" onClick={() => (zoomed ? toggleZoom() : setMode('tabs'))} title={zoomed ? 'Unzoom (Alt+Z)' : 'Back to tabs (Alt+Enter)'}>
+            {zoomed ? `Zoomed · 1 of ${wins.length}` : `Split · ${wins.length} windows`}
+          </button>
+        )}
         <span className="tw-foot-gap" />
         {!compact && (
           <span className="tw-foot-keys" aria-label="Keyboard shortcuts">
             {FOOTER_KEYS.map((s) => (
               <span key={s.keys}>
-                <kbd>{s.keys}</kbd> {s.keys === 'F1' ? 'all shortcuts' : s.does.replace(/ \(.*\)$/, '').toLowerCase()}
+                <kbd>{s.keys}</kbd> {s.short ?? s.does.toLowerCase()}
               </span>
             ))}
           </span>
@@ -920,6 +1299,16 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
         </div>
       )}
 
+      {cmd && (
+        <CommandPalette
+          commands={commands()}
+          fromQuery={fromQuery}
+          onClose={() => {
+            setCmd(false);
+            requestAnimationFrame(focusActive);
+          }}
+        />
+      )}
       {sheet && (
         <ShortcutSheet
           onClose={() => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ITheme, Terminal } from '@xterm/xterm';
 import { SCHEMES, SCHEME_IDS, SITE_SCHEME, type TermScheme } from '../../lib/termThemes';
+import { parseTree, type Node } from './split';
 
 // ------------------------------------------------------------------ windows and prefs
 
@@ -10,9 +11,12 @@ export interface Win {
   readonly name?: string;
   /** Server shell id, so a reload or dropped connection reattaches the same shell. */
   readonly sid?: string;
+  /** A remote host (router, switch, server) instead of a shell on this machine. */
+  readonly target?: Target;
 }
 
-export type Layout = 'tabs' | 'tile';
+/** Tabs: one window at a time. Split: every window on screen, arranged by a tree. */
+export type Mode = 'tabs' | 'split';
 export type CursorStyle = 'bar' | 'block' | 'underline';
 
 export interface Prefs {
@@ -63,6 +67,10 @@ const PREFS_KEY = 'vps_term_prefs';
 const SNIPPETS_KEY = 'vps_term_snippets';
 /** Per browser tab, so a reload reattaches this tab's shells and no other's. */
 const WINS_KEY = 'vps_term_wins';
+/** Per browser tab too: tabs or split, the split tree and the zoomed window. */
+const VIEW_KEY = 'vps_term_view';
+/** Saved remote connections. Never a password: those are typed into the session. */
+const CONNS_KEY = 'vps_term_conns';
 
 export function store(key: string, value: string | null, session = false): void {
   try {
@@ -117,7 +125,12 @@ export function readWins(): readonly Win[] {
     const ok = Array.isArray(raw)
       ? raw
           .filter((w) => Number.isInteger(w?.id) && w.id > 0)
-          .map((w) => ({ id: w.id, name: typeof w.name === 'string' ? w.name : undefined, sid: typeof w.sid === 'string' ? w.sid : undefined }))
+          .map((w) => ({
+            id: w.id,
+            name: typeof w.name === 'string' ? w.name : undefined,
+            sid: typeof w.sid === 'string' ? w.sid : undefined,
+            target: checkTarget(w.target) ?? undefined,
+          }))
       : [];
     if (ok.length > 0) return ok;
   } catch {
@@ -128,6 +141,155 @@ export function readWins(): readonly Win[] {
 
 export function storeWins(wins: readonly Win[] | null): void {
   store(WINS_KEY, wins === null ? null : JSON.stringify(wins), true);
+}
+
+export interface ViewState {
+  readonly mode: Mode;
+  readonly tree: Node | null;
+  readonly zoom: boolean;
+}
+
+export function readView(): ViewState {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(VIEW_KEY) ?? '{}') as Partial<Record<keyof ViewState, unknown>>;
+    return { mode: raw.mode === 'split' ? 'split' : 'tabs', tree: parseTree(raw.tree), zoom: raw.zoom === true };
+  } catch {
+    return { mode: 'tabs', tree: null, zoom: false };
+  }
+}
+
+export function storeView(v: ViewState | null): void {
+  store(VIEW_KEY, v === null ? null : JSON.stringify(v), true);
+}
+
+// ------------------------------------------------------------------ remote targets
+
+export type Proto = 'ssh' | 'telnet';
+
+export interface Target {
+  readonly proto: Proto;
+  readonly host: string;
+  readonly port: number;
+  readonly user: string;
+  /** Old key exchange, host key and cipher algorithms, for routers that never got updates. */
+  readonly legacy: boolean;
+}
+
+/** A saved connection: a target plus a name and when it was last opened. */
+export interface Conn extends Target {
+  readonly id: string;
+  readonly name: string;
+  readonly used: number;
+}
+
+export const DEFAULT_PORT: Record<Proto, number> = { ssh: 22, telnet: 23 };
+
+// Same patterns as the server (src/server/terminal.ts); it checks again.
+const HOST_RE = /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})?)*\.?|[0-9A-Fa-f:.]{2,45})$/;
+const USER_RE = /^[A-Za-z0-9_][A-Za-z0-9._@+-]{0,63}$/;
+
+export const validHost = (h: string): boolean => h.length <= 253 && HOST_RE.test(h);
+export const validUser = (u: string): boolean => u === '' || USER_RE.test(u);
+
+export function checkTarget(v: unknown): Target | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  const proto = o.proto === 'telnet' ? 'telnet' : o.proto === 'ssh' ? 'ssh' : null;
+  const host = typeof o.host === 'string' ? o.host.trim() : '';
+  const user = typeof o.user === 'string' ? o.user.trim() : '';
+  const port = Number(o.port);
+  if (!proto || !validHost(host) || !validUser(user) || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { proto, host, port, user, legacy: o.legacy === true };
+}
+
+/**
+ * What a person types into quick connect: `admin@192.168.88.1`, `ssh -p 2222 root@sw1`,
+ * `telnet 10.0.0.1 2323`, `ssh://admin@router:22`, `router:8022`. SSH unless it says telnet.
+ */
+export function parseQuick(input: string): Target | null {
+  let s = input.trim();
+  if (!s) return null;
+  let proto: Proto = 'ssh';
+  const scheme = /^(ssh|telnet):\/\//i.exec(s);
+  if (scheme) {
+    proto = (scheme[1] ?? 'ssh').toLowerCase() as Proto;
+    s = s.slice(scheme[0].length).replace(/\/+$/, '');
+  } else {
+    const word = /^(ssh|telnet)\s+/i.exec(s);
+    if (word) {
+      proto = (word[1] ?? 'ssh').toLowerCase() as Proto;
+      s = s.slice(word[0].length);
+    }
+  }
+  let port: number | null = null;
+  let user = '';
+  const flagPort = /(?:^|\s)-p\s*(\d{1,5})(?=\s|$)/.exec(s);
+  if (flagPort) {
+    port = Number(flagPort[1]);
+    s = s.replace(flagPort[0], ' ');
+  }
+  const flagUser = /(?:^|\s)-l\s*(\S+)(?=\s|$)/.exec(s);
+  if (flagUser) {
+    user = flagUser[1] ?? '';
+    s = s.replace(flagUser[0], ' ');
+  }
+  const parts = s.trim().split(/\s+/);
+  let host = parts[0] ?? '';
+  if (parts[1] && /^\d{1,5}$/.test(parts[1])) port = Number(parts[1]);
+  else if (parts.length > 1) return null;
+  const at = host.lastIndexOf('@');
+  if (at > 0) {
+    user = host.slice(0, at);
+    host = host.slice(at + 1);
+  }
+  // [v6]:port, or host:port (one colon only, so a bare IPv6 address stays whole).
+  const bracket = /^\[([0-9A-Fa-f:.]+)\](?::(\d{1,5}))?$/.exec(host);
+  if (bracket) {
+    host = bracket[1] ?? '';
+    if (bracket[2]) port = Number(bracket[2]);
+  } else if ((host.match(/:/g) ?? []).length === 1) {
+    const [h, p] = host.split(':');
+    if (!p || !/^\d{1,5}$/.test(p)) return null;
+    host = h ?? '';
+    port = Number(p);
+  }
+  return checkTarget({ proto, host, port: port ?? DEFAULT_PORT[proto], user, legacy: false });
+}
+
+/** `admin@router`, plus the port when it is not the protocol's usual one. */
+export function targetLabel(t: Target): string {
+  const port = t.port === DEFAULT_PORT[t.proto] ? '' : `:${t.port}`;
+  return `${t.user ? `${t.user}@` : ''}${t.host}${port}`;
+}
+
+export const sameTarget = (a: Target, b: Target): boolean =>
+  a.proto === b.proto && a.host.toLowerCase() === b.host.toLowerCase() && a.port === b.port && a.user === b.user;
+
+export function readConns(): readonly Conn[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(CONNS_KEY) ?? '[]') as unknown[];
+    if (!Array.isArray(list)) return [];
+    return list.flatMap((v) => {
+      const t = checkTarget(v);
+      if (!t) return [];
+      const o = v as Record<string, unknown>;
+      return [{ ...t, id: typeof o.id === 'string' ? o.id : newId(), name: typeof o.name === 'string' ? o.name.slice(0, 40) : '', used: typeof o.used === 'number' ? o.used : 0 }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function storeConns(list: readonly Conn[]): void {
+  store(CONNS_KEY, JSON.stringify(list));
+}
+
+/** Records a connection as just used: updates the saved one, or saves it (the newest 30 are kept). */
+export function touchConn(list: readonly Conn[], t: Target, name = ''): readonly Conn[] {
+  const now = Date.now();
+  const found = list.find((c) => sameTarget(c, t));
+  const next = found ? list.map((c) => (c === found ? { ...c, legacy: t.legacy, used: now } : c)) : [...list, { ...t, id: newId(), name, used: now }];
+  return [...next].sort((a, b) => b.used - a.used).slice(0, 30);
 }
 
 // ------------------------------------------------------------------ snippets
@@ -177,28 +339,50 @@ export interface Shortcut {
   readonly does: string;
   /** Shown in the desktop footer, not only in the full list. */
   readonly footer?: boolean;
+  /** The footer's one or two words for it. */
+  readonly short?: string;
 }
 
-/** One list for the footer hints, the shortcut sheet and the handler comments. */
+/** One list for the footer hints, the shortcut sheet and the command palette. */
 export const SHORTCUTS: readonly { readonly group: string; readonly items: readonly Shortcut[] }[] = [
   {
     group: 'Windows',
     items: [
-      { keys: 'Alt+N', does: 'New window', footer: true },
-      { keys: 'Alt+W', does: 'Close window', footer: true },
-      { keys: 'Alt+1…9', does: 'Go to window', footer: true },
-      { keys: 'Alt+← / Alt+→', does: 'Previous / next window' },
-      { keys: 'Esc', does: 'Back to dashboard (shells keep running)', footer: true },
+      { keys: 'Alt+N', does: 'New window', footer: true, short: 'new' },
+      { keys: 'Alt+W', does: 'Close window', footer: true, short: 'close' },
+      { keys: 'Alt+1…9', does: 'Go to window' },
+      { keys: 'Alt+0', does: 'Back to the last window' },
+      { keys: 'Alt+← / Alt+→', does: 'Previous / next window (tabs)' },
+      { keys: 'Alt+Shift+← / →', does: 'Move the tab left / right (tabs)' },
+      { keys: 'Alt+R', does: 'Rename window' },
+      { keys: 'Esc', does: 'Back to dashboard (shells keep running)', footer: true, short: 'dashboard' },
       { keys: 'Ctrl+`', does: 'Back to dashboard, also inside vim or less' },
+    ],
+  },
+  {
+    group: 'Split view',
+    items: [
+      { keys: 'Alt+Enter', does: 'Split view on / off: every window on screen', footer: true, short: 'split view' },
+      { keys: 'Alt+\\', does: 'Split right: new window beside this one', footer: true, short: 'split' },
+      { keys: 'Alt+-', does: 'Split down: new window below this one' },
+      { keys: 'Alt+Arrows', does: 'Move to the window on that side' },
+      { keys: 'Alt+Shift+Arrows', does: 'Move the divider' },
+      { keys: 'Alt+Z', does: 'Zoom: this window alone, again to go back' },
+      { keys: 'Alt+G', does: 'Next layout: grid, columns, rows, main and stack' },
+      { keys: 'Alt+X', does: 'Swap with the next window' },
+      { keys: 'Ctrl+Shift+B', does: 'Type into every window at once' },
     ],
   },
   {
     group: 'Tools',
     items: [
-      { keys: 'Ctrl+Shift+F', does: 'Find in scrollback', footer: true },
-      { keys: 'Alt+S', does: 'Snippets', footer: true },
-      { keys: 'F1', does: 'This list', footer: true },
+      { keys: 'Ctrl+Shift+P', does: 'Command palette: every action, window and connection', footer: true, short: 'commands' },
+      { keys: 'Alt+O', does: 'Connect to a router or server (SSH, Telnet)', footer: true, short: 'connect' },
+      { keys: 'Ctrl+Shift+F', does: 'Find in scrollback' },
+      { keys: 'Alt+S', does: 'Snippets' },
+      { keys: 'Ctrl+= / Ctrl+- / Ctrl+0', does: 'Text size, reset' },
       { keys: 'Ctrl+wheel', does: 'Text size' },
+      { keys: 'F1', does: 'This list', footer: true, short: 'all shortcuts' },
     ],
   },
   {
@@ -214,6 +398,85 @@ export const SHORTCUTS: readonly { readonly group: string; readonly items: reado
     ],
   },
 ];
+
+/** Everything the workspace does from the keyboard. */
+export type Action =
+  | 'new' | 'close' | 'rename' | 'prev' | 'next' | 'last' | 'moveLeft' | 'moveRight'
+  | 'toggleSplit' | 'splitRight' | 'splitDown' | 'zoom' | 'layout' | 'swap' | 'broadcast'
+  | 'focusLeft' | 'focusRight' | 'focusUp' | 'focusDown'
+  | 'growLeft' | 'growRight' | 'growUp' | 'growDown'
+  | 'palette' | 'connect' | 'find' | 'snippets' | 'sheet' | 'hide'
+  | 'textUp' | 'textDown' | 'textReset'
+  | `goto${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
+
+const ARROW: Record<string, 'Left' | 'Right' | 'Up' | 'Down'> = { ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'Up', ArrowDown: 'Down' };
+
+/**
+ * The workspace action for a key press, or null when the key belongs to the shell.
+ * One function for both sides: the workspace runs the action and xterm drops the key.
+ * Keys are read by `code`, so they work on any keyboard layout and with macOS Option.
+ * Alt letters that readline uses (B, F, D, T, U, L, C, Y, P, dot) are left alone.
+ */
+export function keyAction(e: KeyboardEvent, split: boolean): Action | null {
+  if (e.metaKey) return null;
+  const { altKey: alt, ctrlKey: ctrl, shiftKey: shift, code } = e;
+  if (e.key === 'F1' && !alt && !ctrl) return 'sheet';
+  if (ctrl && !alt && code === 'Backquote') return 'hide';
+  if (ctrl && shift && !alt) {
+    if (code === 'KeyP') return 'palette';
+    if (code === 'KeyF') return 'find';
+    if (code === 'KeyB') return 'broadcast';
+    return null;
+  }
+  if (ctrl && !shift && !alt) {
+    if (code === 'Equal' || code === 'NumpadAdd') return 'textUp';
+    if (code === 'Minus' || code === 'NumpadSubtract') return 'textDown';
+    if (code === 'Digit0' || code === 'Numpad0') return 'textReset';
+    return null;
+  }
+  if (!alt || ctrl) return null;
+  const arrow = ARROW[code];
+  if (arrow) {
+    if (shift) {
+      if (split) return `grow${arrow}`;
+      return arrow === 'Left' ? 'moveLeft' : arrow === 'Right' ? 'moveRight' : null;
+    }
+    if (split) return `focus${arrow}`;
+    return arrow === 'Left' ? 'prev' : arrow === 'Right' ? 'next' : null;
+  }
+  if (shift) return null;
+  const digit = /^Digit([0-9])$/.exec(code)?.[1];
+  if (digit) return digit === '0' ? 'last' : (`goto${digit}` as Action);
+  switch (code) {
+    case 'KeyN':
+      return 'new';
+    case 'KeyW':
+      return 'close';
+    case 'KeyR':
+      return 'rename';
+    case 'KeyS':
+      return 'snippets';
+    case 'KeyO':
+      return 'connect';
+    case 'KeyZ':
+      return 'zoom';
+    case 'KeyG':
+      return 'layout';
+    case 'KeyX':
+      return 'swap';
+    case 'Enter':
+    case 'NumpadEnter':
+      return 'toggleSplit';
+    case 'Backslash':
+    case 'IntlBackslash':
+      return 'splitRight';
+    case 'Minus':
+    case 'NumpadSubtract':
+      return 'splitDown';
+    default:
+      return null;
+  }
+}
 
 // ------------------------------------------------------------------ touch key bar
 

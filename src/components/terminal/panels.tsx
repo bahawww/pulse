@@ -131,6 +131,40 @@ export const Icon = {
       <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
     </svg>
   ),
+  splitRight: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M12 4v16" />
+    </svg>
+  ),
+  splitDown: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 12h18" />
+    </svg>
+  ),
+  zoom: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <rect x="7" y="8" width="10" height="8" rx="1" />
+    </svg>
+  ),
+  plug: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <path d="M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0zM12 17v5" />
+    </svg>
+  ),
+  router: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <rect x="2" y="13" width="20" height="8" rx="2" />
+      <path d="M6 17h.01M10 17h.01M15 9a4 4 0 0 0-6 0M18 6a8 8 0 0 0-12 0M12 13v-1" />
+    </svg>
+  ),
+  command: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <path d="m4 17 6-6-6-6M12 19h8" />
+    </svg>
+  ),
   close: ({ size = 14 }) => (
     <svg {...svg(size)}>
       <path d="M6 6l12 12M18 6 6 18" />
