@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { postJson, setCsrf } from '../lib/csrf';
+import { SESSION_CHECK_EVENT, useStreamLive } from '../lib/stream';
 
 export interface AuthUser {
   readonly name: string;
@@ -19,7 +21,10 @@ export interface AuthHandle {
 
 const RECHECK_MS = 60_000;
 
-/** Who is logged in, from the server's session cookie. Rechecked so an expired login shows the login page. */
+/**
+ * Who is logged in, from the server's session cookie. The live stream tells
+ * the page when the session ends; the timed recheck runs only while it is down.
+ */
 export function useAuth(): AuthHandle {
   const [state, setState] = useState<AuthState>({ status: 'loading' });
 
@@ -27,9 +32,11 @@ export function useAuth(): AuthHandle {
     try {
       const res = await fetch('/api/auth/me', { cache: 'no-store' });
       if (res.ok) {
-        const body = (await res.json()) as { user: AuthUser };
+        const body = (await res.json()) as { user: AuthUser; csrf?: string };
+        setCsrf(body.csrf);
         setState({ status: 'authed', user: body.user });
       } else {
+        setCsrf(null);
         setState({ status: 'anon' });
       }
     } catch {
@@ -37,16 +44,24 @@ export function useAuth(): AuthHandle {
     }
   }, []);
 
+  const live = useStreamLive();
+
   useEffect(() => {
     void check();
-    const id = setInterval(() => void check(), RECHECK_MS);
     const onFocus = () => void check();
     window.addEventListener('focus', onFocus);
+    window.addEventListener(SESSION_CHECK_EVENT, onFocus);
     return () => {
-      clearInterval(id);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener(SESSION_CHECK_EVENT, onFocus);
     };
   }, [check]);
+
+  useEffect(() => {
+    if (live) return;
+    const id = setInterval(() => void check(), RECHECK_MS);
+    return () => clearInterval(id);
+  }, [check, live]);
 
   const login = useCallback(async (username: string, password: string): Promise<string | null> => {
     try {
@@ -55,8 +70,9 @@ export function useAuth(): AuthHandle {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      const body = (await res.json().catch(() => ({}))) as { user?: AuthUser; error?: string };
+      const body = (await res.json().catch(() => ({}))) as { user?: AuthUser; error?: string; csrf?: string };
       if (res.ok && body.user) {
+        setCsrf(body.csrf);
         setState({ status: 'authed', user: body.user });
         return null;
       }
@@ -68,8 +84,9 @@ export function useAuth(): AuthHandle {
 
   const logout = useCallback(async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await postJson('/api/auth/logout');
     } finally {
+      setCsrf(null);
       setState({ status: 'anon' });
     }
   }, []);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { subscribe, useStreamLive } from '../lib/stream';
 
 /**
  * Generic polling hook for the slow-moving panels.
@@ -22,10 +23,15 @@ export interface PolledState<T> {
   readonly refresh: () => void;
 }
 
+/**
+ * With `event`, the server pushes new values over /api/stream: the path is
+ * fetched once, then only re-fetched on the interval while the stream is down.
+ */
 export function usePolled<T>(
   path: string,
   intervalMs: number,
   enabled = true,
+  event?: string,
 ): PolledState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -42,6 +48,19 @@ export function usePolled<T>(
   const refresh = useCallback(() => {
     setNonce((n) => n + 1);
   }, []);
+
+  const live = useStreamLive();
+  const pushed = live && event !== undefined;
+
+  useEffect(() => {
+    if (!event || !enabled) return;
+    return subscribe(event, (body) => {
+      setData(body as T);
+      setError(null);
+      setReady(true);
+      setLoading(false);
+    });
+  }, [event, enabled]);
 
   useEffect(() => {
     if (!enabled) {
@@ -76,15 +95,17 @@ export function usePolled<T>(
     };
 
     void load();
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') void load();
-    }, intervalMs);
+    const timer = pushed
+      ? undefined
+      : setInterval(() => {
+          if (document.visibilityState === 'visible') void load();
+        }, intervalMs);
 
     return () => {
       controller.abort();
       clearInterval(timer);
     };
-  }, [path, intervalMs, enabled, nonce]);
+  }, [path, intervalMs, enabled, nonce, pushed]);
 
   return { data, error, loading, ready, refresh };
 }

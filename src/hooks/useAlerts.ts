@@ -35,7 +35,8 @@ function readPermission(): DesktopPermission {
 }
 
 export function useAlerts(onNotify: (message: string) => void): AlertsHandle {
-  const state = usePolled<AlertState>('/api/alerts', POLL_MS);
+  // Pushed over /api/stream when an alert changes; polled only while the stream is down.
+  const state = usePolled<AlertState>('/api/alerts', POLL_MS, true, 'alerts');
   const [desktop, setDesktop] = useState<DesktopPermission>(readPermission);
   // null until the first successful poll, so alerts already firing at page load
   // are recorded as seen rather than announced.

@@ -8,6 +8,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { copyToClipboard } from '../../lib/urls';
+import { ensureCsrf, setCsrf } from '../../lib/csrf';
 import type { TermScheme } from '../../lib/termThemes';
 import {
   applyMods,
@@ -249,6 +250,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
       let restarting = false;
       // Typed before the shell first answers: held, then sent on connect.
       let everConnected = false;
+      let disposed = false;
       let pending = '';
       // Server speaks binary frames (newer servers say so in hello); else JSON input.
       let binary = false;
@@ -430,9 +432,15 @@ export function TerminalView(props: ViewProps): JSX.Element {
 
       const note = (msg: string, color = 33) => t.write(`\r\n\x1b[${color}m${msg}\x1b[0m\r\n`);
 
+      // The upgrade carries the session's CSRF token as a subprotocol (headers cannot be set).
       const connect = (fresh = false) => {
         clearTimeout(retryTimer);
         if (fresh) sid = undefined;
+        void ensureCsrf().then((csrf) => {
+          if (!disposed) openSocket(csrf);
+        });
+      };
+      const openSocket = (csrf: string | null) => {
         const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const q = new URLSearchParams({ cols: String(t.cols), rows: String(t.rows) });
         const target = live.current.target;
@@ -444,7 +452,8 @@ export function TerminalView(props: ViewProps): JSX.Element {
           if (target.user) q.set('user', target.user);
           if (target.legacy) q.set('legacy', '1');
         }
-        const socket = new WebSocket(`${proto}://${window.location.host}/api/terminal?${q}`);
+        const socket = new WebSocket(`${proto}://${window.location.host}/api/terminal?${q}`, csrf ? ['pulse.v1', `pulse.csrf.${csrf}`] : ['pulse.v1']);
+        let helloSeen = false;
         socket.binaryType = 'arraybuffer';
         ws = socket;
         connected = false;
@@ -474,6 +483,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
           }
           if (msg.t === 'hello' && msg.sid) {
             connected = true;
+            helloSeen = true;
             binary = msg.bin === true;
             retries = 0;
             everConnected = true;
@@ -513,6 +523,8 @@ export function TerminalView(props: ViewProps): JSX.Element {
         };
         socket.onclose = (ev) => {
           if (ws !== socket) return;
+          // Refused before hello: the token may be stale (new login, server key change). Fetch it again.
+          if (!helloSeen) setCsrf(null);
           connected = false;
           report({ latency: null });
           if (restarting) {
@@ -618,6 +630,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
       return () => {
         // Closing the window ends its shell. A page unload never gets here, so a
         // reload leaves the shell running for the next page to reattach.
+        disposed = true;
         send({ type: 'kill' });
         registry.current.delete(id);
         fitRef.current = null;

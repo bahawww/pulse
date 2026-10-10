@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { usePolled } from '../hooks/usePolled';
+import { postJson } from '../lib/csrf';
 import type { ActionLogEntry, ActionResult, ActionTarget } from '../shared/contract';
 import { formatClock } from '../lib/format';
 import { TZ_LABEL } from '../shared/time';
@@ -43,7 +44,7 @@ export function ActionsPanel({
   const [result, setResult] = useState<ActionResult | null>(null);
   // The audit log comes from SQLite, so it survives restarts. Refetched after
   // every request, because the log only changes when an action actually ran.
-  const log = usePolled<{ readonly entries: readonly ActionLogEntry[] }>('/api/actions/log', 60_000);
+  const log = usePolled<{ readonly entries: readonly ActionLogEntry[] }>('/api/actions/log', 60_000, true, 'actions');
 
   const targets: Target[] = [
     ...dockerTargets.map<Target>((c) => ({ target: 'docker', name: c.name, label: c.name, running: c.running })),
@@ -53,11 +54,7 @@ export function ActionsPanel({
   async function post(target: Target, action: Verb, token?: string) {
     setBusy(true);
     try {
-      const res = await fetch('/api/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: target.target, name: target.name, action, ...(token ? { confirm: token } : {}) }),
-      });
+      const res = await postJson('/api/action', { target: target.target, name: target.name, action, ...(token ? { confirm: token } : {}) });
       const body = (await res.json()) as ActionResult & { confirmToken?: string };
 
       if (!res.ok) {

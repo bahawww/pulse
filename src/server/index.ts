@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 
 import { SERVICES, type Service, type StatsPayload } from '../shared/contract.js';
 import { checkAllServices } from './probe.js';
@@ -23,6 +24,8 @@ import {
   loginLocked,
   loginSucceeded,
   passwordConfigured,
+  passwordWeak,
+  peerAddress,
   requireSession,
   sameOrigin,
   sessionHash,
@@ -35,6 +38,8 @@ import { readLogs, listUnits } from './logs.js';
 import { checkReachability } from './reachability.js';
 import { getSpend } from './spend.js';
 import { handleUpgrade } from './terminal.js';
+import { CSRF_HEADER, csrfToken, csrfValid } from './csrf.js';
+import { openStream, publish } from './stream.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -90,7 +95,31 @@ async function getStats(): Promise<StatsPayload> {
 const app = express();
 
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// X-Forwarded-* is believed only from loopback, where cloudflared connects from.
+// `1` trusted one hop from anywhere, so a direct client on the LAN or Tailscale
+// could set its own address (rate-limit key) and protocol.
+app.set('trust proxy', 'loopback');
+
+/**
+ * CSP hashes for the inline scripts in the built index.html (the theme
+ * bootstrap), so script-src needs no 'unsafe-inline' and an injected inline
+ * script will not run. Recomputed at start, so editing the script and
+ * rebuilding just works.
+ */
+function inlineScriptHashes(): string[] {
+  try {
+    const html = fs.readFileSync(path.join(CLIENT_DIR, 'index.html'), 'utf8');
+    const out: string[] = [];
+    for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)) {
+      const body = m[1] ?? '';
+      if (body.trim()) out.push(`'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+const SCRIPT_HASHES = inlineScriptHashes();
 
 app.use(
   helmet({
@@ -100,7 +129,8 @@ app.use(
         defaultSrc: ["'self'"],
         // Cloudflare Web Analytics injects its beacon into proxied HTML. Allow
         // only that host (script) and its collector (connect); nothing else.
-        scriptSrc: ["'self'", "'unsafe-inline'", 'https://static.cloudflareinsights.com'],
+        scriptSrc: ["'self'", ...SCRIPT_HASHES, 'https://static.cloudflareinsights.com'],
+        scriptSrcAttr: ["'none'"],
         // Vite emits modulepreload + stylesheet links from 'self'; fonts come
         // from Google's CDN.
         styleSrc: ["'self'", "'unsafe-inline'"],
@@ -109,6 +139,8 @@ app.use(
         connectSrc: ["'self'", 'https://cloudflareinsights.com'],
         objectSrc: ["'none'"],
         frameAncestors: ["'self'"],
+        workerSrc: ["'self'"],
+        manifestSrc: ["'self'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
         upgradeInsecureRequests: null,
@@ -130,7 +162,8 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-app.use(compression());
+// Not for the event stream: a gzip layer may hold events back until a buffer fills.
+app.use(compression({ filter: (req, res) => req.path !== '/api/stream' && compression.filter(req, res) }));
 
 // Body parsing is only needed for the action endpoint, but it is mounted here
 // with a tight size cap: an unauthenticated POST that can stream a large body is
@@ -182,6 +215,48 @@ const apiLimiter = rateLimit({
 const OPEN_API = new Set(['/health', '/auth/login', '/auth/me']);
 app.use('/api', requireSession(OPEN_API));
 
+// API answers are per-session and live; no proxy or browser cache may keep one.
+app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
+/**
+ * CSRF gate for every state-changing API call:
+ *  1. same origin (Origin / Sec-Fetch-Site), always;
+ *  2. a JSON body when there is one (a cross-site HTML form cannot send JSON);
+ *  3. the session's CSRF token in X-CSRF-Token, for everything but the login
+ *     itself (no session exists yet; 1 and SameSite=Strict cover it).
+ */
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  if (!UNSAFE_METHODS.has(req.method)) {
+    next();
+    return;
+  }
+  if (!sameOrigin(req)) {
+    console.warn(`[csrf] cross-site ${req.method} ${req.originalUrl} from ${peerAddress(req)} origin=${req.headers.origin ?? '-'}`);
+    res.status(403).json({ error: 'cross-site request refused', code: 'origin' });
+    return;
+  }
+  const length = Number(req.headers['content-length'] ?? 0);
+  if ((length > 0 || req.headers['transfer-encoding']) && !req.is('application/json')) {
+    res.status(415).json({ error: 'JSON body required' });
+    return;
+  }
+  if (req.path === '/auth/login') {
+    next();
+    return;
+  }
+  const hash = (res.locals.sessionHash as string | undefined) ?? sessionHash(req);
+  if (!hash || !csrfValid(hash, req.get(CSRF_HEADER))) {
+    console.warn(`[csrf] bad or missing token on ${req.method} ${req.originalUrl} from ${peerAddress(req)}`);
+    res.status(403).json({ error: 'security token missing or expired, reload the page', code: 'csrf' });
+    return;
+  }
+  next();
+});
+
 const loginLimiter = rateLimit({
   windowMs: 15 * 60_000,
   limit: 30, // coarse backstop; the per-client lockout in session.ts is the real control
@@ -191,22 +266,16 @@ const loginLimiter = rateLimit({
 });
 
 app.get('/api/auth/me', (req: Request, res: Response) => {
-  res.setHeader('Cache-Control', 'no-store');
   const hash = sessionHash(req);
   const user = hash ? userOf(hash) : null;
-  if (!user) {
+  if (!hash || !user) {
     res.status(401).json({ error: 'login required' });
     return;
   }
-  res.json({ user });
+  res.json({ user, csrf: csrfToken(hash) });
 });
 
 app.post('/api/auth/login', loginLimiter, (req: Request, res: Response) => {
-  res.setHeader('Cache-Control', 'no-store');
-  if (!sameOrigin(req)) {
-    res.status(403).json({ error: 'cross-site request refused' });
-    return;
-  }
   if (!passwordConfigured()) {
     res.status(503).json({ error: 'no admin password configured on the server' });
     return;
@@ -225,25 +294,29 @@ app.post('/api/auth/login', loginLimiter, (req: Request, res: Response) => {
     return;
   }
   loginSucceeded(key);
-  const { token, maxAgeSeconds } = createSession(req);
+  // A login always starts a fresh session, so a cookie planted before login is never promoted.
+  const old = sessionHash(req);
+  if (old) destroy(old);
+  const { token, hash, maxAgeSeconds } = createSession(req);
   setCookie(res, req, token, maxAgeSeconds);
   console.log(`[auth] ${ADMIN_USER} logged in from ${key}`);
-  res.json({ user: { name: ADMIN_USER, role: 'admin' } });
+  res.json({ user: { name: ADMIN_USER, role: 'admin' }, csrf: csrfToken(hash) });
 });
 
 app.post('/api/auth/logout', (req: Request, res: Response) => {
-  if (!sameOrigin(req)) {
-    res.status(403).json({ error: 'cross-site request refused' });
-    return;
-  }
   const hash = sessionHash(req);
   if (hash) destroy(hash);
   clearCookie(res, req);
   res.json({ ok: true });
 });
 
+// Open to anyone, so it says only "up": no pid, uptime or version to fingerprint.
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', uptime: process.uptime(), pid: process.pid });
+  res.json({ status: 'ok' });
+});
+
+app.get('/api/stream', (req: Request, res: Response) => {
+  openStream(req, res, res.locals.sessionHash as string);
 });
 
 app.get('/api/stats', apiLimiter, (_req: Request, res: Response) => {
@@ -445,6 +518,7 @@ app.post('/api/action', actionLimiter, (req: Request, res: Response) => {
         res.status(500).json({ error: 'action failed' });
         return;
       }
+      if (result.ok && !result.confirmToken) publish('actions', { entries: recentActions(50) });
       res.status(result.ok ? 200 : 400).json(result);
     })
     .catch(() => res.status(500).json({ error: 'action failed' }));
@@ -525,6 +599,11 @@ const server = app.listen(PORT, HOST, () => {
 
   if (!passwordConfigured()) {
     console.warn('[vps-dashboard] NO ADMIN_PASSWORD set — nobody can log in, the API stays locked');
+  } else if (passwordWeak()) {
+    console.warn('[vps-dashboard] ADMIN_PASSWORD is shorter than 12 characters — use a longer one');
+  }
+  if (SCRIPT_HASHES.length === 0 && fs.existsSync(CLIENT_DIR)) {
+    console.warn('[vps-dashboard] no inline script hashes found; the theme bootstrap will be blocked by CSP');
   }
   const channel = channelStatus();
   console.log(
@@ -628,6 +707,9 @@ const sampler = setInterval(() => {
       // Alerts run on the same tick as the samples they judge, so an alert can
       // never fire on data that was never recorded.
       const { fired } = evaluate(DEFAULT_RULES, payload.system, latency, Date.now());
+      // Push to open tabs: telemetry every tick, alerts only when they change.
+      publish('stats', payload);
+      publish('alerts', snapshot(DEFAULT_RULES, channelStatus()), true);
       for (const event of fired) {
         void notify(event).catch((err: unknown) =>
           console.error('[vps-dashboard] alert notify:', err),

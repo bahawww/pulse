@@ -5,7 +5,7 @@
  * the page itself: navigations always go to the network, so a new deploy shows
  * up at once. If the server cannot be reached, a small offline page is shown
  * instead of a blank screen. */
-const CACHE = 'pulse-v15';
+const CACHE = 'pulse-v16';
 const OFFLINE = '/offline.html';
 
 self.addEventListener('install', (event) => {

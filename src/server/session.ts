@@ -68,6 +68,11 @@ export function passwordConfigured(): boolean {
   return PASSWORD_DIGEST !== null;
 }
 
+/** A password this short falls to an online guess run far sooner than the lockout suggests. */
+export function passwordWeak(): boolean {
+  return PASSWORD.length > 0 && PASSWORD.length < 12;
+}
+
 /** Both fields are always compared, so timing does not reveal which was wrong. */
 export function verifyLogin(username: unknown, password: unknown): boolean {
   if (!PASSWORD_DIGEST || typeof username !== 'string' || typeof password !== 'string') return false;
@@ -76,18 +81,19 @@ export function verifyLogin(username: unknown, password: unknown): boolean {
   return userOk && passOk;
 }
 
-export function createSession(req: IncomingMessage): { token: string; maxAgeSeconds: number } {
+export function createSession(req: IncomingMessage): { token: string; hash: string; maxAgeSeconds: number } {
   const token = randomBytes(32).toString('base64url');
   const now = Date.now();
-  sessions.set(sha256(token).toString('hex'), {
+  const hash = sha256(token).toString('hex');
+  sessions.set(hash, {
     user: ADMIN_USER,
     created: now,
     expires: now + TTL_MS,
-    ip: String(req.headers['cf-connecting-ip'] ?? req.socket.remoteAddress ?? ''),
+    ip: peerAddress(req),
     ua: String(req.headers['user-agent'] ?? '').slice(0, 200),
   });
   persist();
-  return { token, maxAgeSeconds: TTL_MS / 1000 };
+  return { token, hash, maxAgeSeconds: TTL_MS / 1000 };
 }
 
 function cookieToken(header: string | undefined): string | null {
@@ -143,15 +149,37 @@ export function clearCookie(res: Response, req: Request): void {
   setCookie(res, req, '', 0);
 }
 
-/** Blocks cross-site POSTs. SameSite=Strict already does most of this. */
-export function sameOrigin(req: Request): boolean {
+/**
+ * Strict same-origin check for state-changing requests. Browsers send Origin on
+ * every POST and Sec-Fetch-Site on every request; either one from another site
+ * refuses the request, and a request with neither is refused too (no browser
+ * page sends that, so it is a script with a stolen cookie or a misconfigured proxy).
+ */
+export function sameOrigin(req: IncomingMessage): boolean {
+  const site = req.headers['sec-fetch-site'];
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return false;
   const origin = req.headers.origin;
-  if (typeof origin !== 'string') return true;
+  if (typeof origin !== 'string') return typeof site === 'string';
   try {
     return new URL(origin).host === req.headers.host;
   } catch {
     return false;
   }
+}
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/**
+ * The real client address. Cloudflare's CF-Connecting-IP is believed only when
+ * the connection itself comes from loopback (cloudflared runs on this host).
+ * Anyone reaching port 80 directly (LAN, Tailscale) could otherwise send a new
+ * fake address with every login attempt and never hit the lockout.
+ */
+export function peerAddress(req: IncomingMessage): string {
+  const peer = req.socket.remoteAddress ?? '';
+  const cf = req.headers['cf-connecting-ip'];
+  if (LOOPBACK.has(peer) && typeof cf === 'string' && cf.length > 0 && cf.length <= 45) return cf;
+  return peer || '?';
 }
 
 /** Gate for every API route except the few that must work logged out. */
@@ -177,8 +205,7 @@ const MAX_FAILS = 5;
 const fails = new Map<string, { n: number; since: number }>();
 
 export function clientKey(req: Request): string {
-  const cf = req.headers['cf-connecting-ip'];
-  return (typeof cf === 'string' && cf) || req.ip || req.socket.remoteAddress || '?';
+  return peerAddress(req);
 }
 
 export function loginLocked(key: string): boolean {

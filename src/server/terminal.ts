@@ -7,7 +7,8 @@ import type { Duplex } from 'node:stream';
 import pty from 'node-pty';
 import { WebSocketServer, type WebSocket } from 'ws';
 
-import { isValid, onSessionEnd, sessionHash } from './session.js';
+import { csrfValid, WS_PROTOCOL, wsToken } from './csrf.js';
+import { isValid, onSessionEnd, peerAddress, sessionHash } from './session.js';
 
 /**
  * Browser terminal: WebSocket <-> node-pty.
@@ -25,6 +26,9 @@ import { isValid, onSessionEnd, sessionHash } from './session.js';
  *    login page is the only password prompt; this file has none of its own.
  *  - The Origin header must match Host, which stops cross-site WebSocket
  *    hijacking from a page the operator happens to visit.
+ *  - The upgrade must carry the session's CSRF token as a subprotocol
+ *    (`pulse.csrf.<token>`, see csrf.ts). The server answers with `pulse.v1`
+ *    only, so the token is never echoed back.
  *  - Logging out, or the session expiring, kills that login's shells.
  *  - The SSH key only works from loopback (authorized_keys `from=`), and the
  *    server host key is pinned through a known_hosts file written from
@@ -77,7 +81,11 @@ const HIGH_WATER = 1024 * 1024;
 const LOW_WATER = 128 * 1024;
 const PATH = '/api/terminal';
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: 64 * 1024,
+  handleProtocols: (offered) => (offered.has(WS_PROTOCOL) ? WS_PROTOCOL : false),
+});
 
 /** A remote host this shell connects to instead of a login shell. */
 export interface Target {
@@ -389,12 +397,13 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
     return;
   }
   const deny = (status: string, why: string): void => {
-    console.warn(`[terminal] denied ${req.socket.remoteAddress} origin=${req.headers.origin} host=${req.headers.host}: ${why}`);
+    console.warn(`[terminal] denied ${peerAddress(req)} origin=${req.headers.origin} host=${req.headers.host}: ${why}`);
     reject(socket, status);
   };
   if (!originAllowed(req)) return deny('403 Forbidden', 'origin does not match host');
   const login = sessionHash(req);
   if (!login) return deny('401 Unauthorized', 'no valid login session');
+  if (!csrfValid(login, wsToken(req.headers['sec-websocket-protocol']))) return deny('403 Forbidden', 'missing or bad CSRF token');
 
   const sid = url.searchParams.get('sid');
   const existing = sid ? shells.get(sid) : undefined;
@@ -405,7 +414,7 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
   const target = resumable ? null : parseTarget(url.searchParams);
   if (typeof target === 'string') return deny('400 Bad Request', target);
 
-  wss.handleUpgrade(req, socket, head, (ws) => attach(ws, login, resumable, cols, rows, target, req.socket.remoteAddress ?? '?'));
+  wss.handleUpgrade(req, socket, head, (ws) => attach(ws, login, resumable, cols, rows, target, peerAddress(req)));
 }
 
 function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: number, rows: number, target: Target | null, peer: string): void {

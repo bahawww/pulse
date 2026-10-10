@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { StatsPayload } from '../shared/contract';
+import { subscribe, useStreamLive } from '../lib/stream';
 
 const POLL_INTERVAL_MS = 5000;
 /** A poll that takes longer than this is abandoned and retried. */
 const TIMEOUT_MS = 10_000;
 
 /**
- * Polls /api/stats with a visibility guard: a background tab would otherwise
- * keep 4 service probes alive every 5s forever. Also backs off on failure so a
- * downed backend doesn't produce a tight retry loop.
+ * Live telemetry. The server pushes each sample over /api/stream (SSE); this
+ * hook only polls /api/stats while that stream is down, with a visibility
+ * guard and backoff so a downed backend doesn't produce a tight retry loop.
  */
 export function useStats() {
   const [data, setData] = useState<StatsPayload | null>(null);
@@ -21,6 +22,18 @@ export function useStats() {
   const aborted = useRef(false);
   // Bumped on manual refresh so the polling effect re-runs immediately.
   const [manualRefresh, setManualRefresh] = useState(0);
+  const live = useStreamLive();
+
+  useEffect(
+    () =>
+      subscribe('stats', (payload) => {
+        setData(payload as StatsPayload);
+        setError(null);
+        setLastOkAt(Date.now());
+        failureCount.current = 0;
+      }),
+    [],
+  );
 
   const fetchOnce = useCallback(async () => {
     const controller = new AbortController();
@@ -55,6 +68,13 @@ export function useStats() {
 
   useEffect(() => {
     aborted.current = false;
+    // Pushed: nothing to poll. A manual refresh still fetches once.
+    if (live) {
+      if (manualRefresh > 0) void fetchOnce();
+      return () => {
+        aborted.current = true;
+      };
+    }
 
     const schedule = (delay: number) => {
       timer.current = setTimeout(async () => {
@@ -83,7 +103,7 @@ export function useStats() {
       if (timer.current) clearTimeout(timer.current);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [fetchOnce, manualRefresh]);
+  }, [fetchOnce, manualRefresh, live]);
 
   const refresh = useCallback(() => setManualRefresh((n) => n + 1), []);
 

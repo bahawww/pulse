@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TIME_RANGES, type HistoryPayload, type TimeRangeId } from '../shared/contract';
+import { subscribe, useStreamLive } from '../lib/stream';
 
 /**
  * Polls /api/history for the trend charts, scoped to a chosen time range.
@@ -87,18 +88,29 @@ export function useHistory(intervalMs?: number) {
     }
   }, [rangeDef.ms, rangeDef.id]);
 
+  const live = useStreamLive();
+
+  // Refetch on the range's cadence. While the stream is up, the server's own
+  // sample ticks drive it (a new sample is the only reason the chart changes);
+  // a timer stands in only while the stream is down.
   useEffect(() => {
     void fetchHistory();
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') void fetchHistory();
-    }, cadence);
+    let last = Date.now();
+    const due = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - last < cadence - 500) return;
+      last = Date.now();
+      void fetchHistory();
+    };
+    const stop = live ? subscribe('stats', due) : undefined;
+    const timer = live ? undefined : setInterval(due, cadence);
 
     return () => {
       inflight.current?.abort();
       inflight.current = null;
+      stop?.();
       clearInterval(timer);
     };
-  }, [fetchHistory, cadence]);
+  }, [fetchHistory, cadence, live]);
 
   return {
     history,

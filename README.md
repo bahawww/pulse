@@ -103,6 +103,10 @@ cat ~/.ssh/dashboard_terminal.pub >> ~/.ssh/authorized_keys
   - Every action needs a confirmation token.
 - **System units need polkit.** Controlling system units as a non-root user needs a polkit rule that allows that user to manage those units.
 - **Plain HTTP.** The dashboard has full control of the box. Don't expose it on the open internet without TLS in front of it. Prefer Tailscale or a tunnel.
+- **CSRF.** Every state-changing request needs the same origin, a JSON body and a per-session CSRF token; the terminal sends the token as a WebSocket subprotocol.
+- **Sandbox.** Install `deploy/hardening.conf` as a drop-in (`/etc/systemd/system/pulse.service.d/`) to lock the service down further.
+
+Details and the audit log: [SECURITY.md](SECURITY.md). How the pieces fit: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Scripts
 
