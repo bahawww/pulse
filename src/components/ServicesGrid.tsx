@@ -5,14 +5,7 @@ import { subdomainFor } from '../lib/site';
 import { transition } from '../lib/motion';
 import { Bone, BoneLines, Loading } from './Skeleton';
 import { ArrowUpRightIcon, CopyIcon, LinkIcon, ServiceIconGlyph } from './icons';
-
-/** Each service keeps one categorical colour for its whole life on the page. */
-const SERVICE_COLOR: Readonly<Record<string, string>> = {
-  hermes: 'var(--s-mem)',
-  '9router': 'var(--s-disk)',
-  opencode: 'var(--s-tx)',
-  novnc: 'var(--s-cpu)',
-};
+import { SERVICE_COLOR } from '../lib/serviceColor';
 
 interface ServicesGridProps {
   readonly data: StatsPayload | null;
@@ -22,7 +15,7 @@ interface ServicesGridProps {
 
 /**
  * Application launcher: category tabs, one card per service, live status from
- * the probe. Number keys 1-4 open a service; see App for the key handling.
+ * the probe. Number keys 1-5 open a service; see App for the key handling.
  */
 export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): JSX.Element {
   const [category, setCategory] = useState<CategoryFilter>('all');

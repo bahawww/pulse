@@ -160,7 +160,7 @@ html.theme-switching *::after {
 }
 
 .rail-link:hover svg {
-  transform: rotate(-10deg);
+  transform: rotate(-3deg);
 }
 
 .menu-item:hover,
@@ -1321,4 +1321,21 @@ html[data-go] .side-kbd {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Service tiles sit in one hairline grid: no lift or slide, just a press and a glyph nudge. */
+.lamps .lamp-row:hover {
+  transform: none;
+}
+
+.lamps .lamp-row:active {
+  transform: scale(0.985);
+}
+
+.lamps .lamp-row .lamp-chip {
+  transition: transform var(--spring-wobbly-dur) var(--spring-wobbly);
+}
+
+.lamps .lamp-row:hover .lamp-chip {
+  transform: scale(1.08);
 }

@@ -388,7 +388,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   }, [onHide]);
 
   // Opening: take focus at once so keys never land on the dashboard behind
-  // (where "/", "[" and 1-4 are shortcuts). The active shell pulls focus to
+  // (where "/", "[" and 1-5 are shortcuts). The active shell pulls focus to
   // itself as soon as its xterm is ready; until then keys are queued (early).
   // Layout effect: focus moves before the first paint, so no key slips past.
   useLayoutEffect(() => {

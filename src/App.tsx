@@ -126,7 +126,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   );
 
   // Keyboard: Ctrl/Cmd+K toggles the palette, "/" opens it, "[" hides or shows
-  // the sidebar, G then a letter opens a view, 1-4 open a service. Typing in a
+  // the sidebar, G then a letter opens a view, 1-5 open a service. Typing in a
   // field or an open menu never triggers a shortcut.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

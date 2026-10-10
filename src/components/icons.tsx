@@ -333,6 +333,7 @@ const REGISTRY: Record<ServiceIcon, (props: IconProps) => JSX.Element> = {
   activity: ActivityIcon,
   monitor: MonitorIcon,
   terminal: TerminalIcon,
+  server: ServerIcon,
 };
 
 export function ServiceIconGlyph({ icon, size = 28 }: { icon: ServiceIcon; size?: number }): JSX.Element {

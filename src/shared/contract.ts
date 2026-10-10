@@ -26,7 +26,7 @@ export interface ServiceCategoryMeta {
   readonly themeClass: string;
 }
 
-export type ServiceIcon = 'bot' | 'network' | 'activity' | 'monitor' | 'terminal';
+export type ServiceIcon = 'bot' | 'network' | 'activity' | 'monitor' | 'terminal' | 'server';
 
 export interface Service extends ServiceCategoryMeta {
   readonly status: ServiceStatus;
@@ -466,6 +466,19 @@ export const SERVICES: readonly ServiceCategoryMeta[] = [
     icon: 'monitor',
     themeClass: 'icon-theme-novnc',
   },
+  {
+    id: 'coolify',
+    name: 'Coolify',
+    keyNumber: '5',
+    description:
+      'Self-hosted PaaS that deploys apps, databases and services from Git or Docker images. Runs as containers; admin login required.',
+    port: 8000,
+    path: '/',
+    category: 'Deployment',
+    badge: 'PaaS',
+    icon: 'server',
+    themeClass: 'icon-theme-coolify',
+  },
 ] as const;
 
 /** Services whose Cloudflare path differs from the local port path. */
@@ -486,6 +499,7 @@ export const CATEGORY_FILTERS = [
   { id: 'AI Agents', label: 'AI Agents' },
   { id: 'AI Infrastructure', label: 'AI Gateway' },
   { id: 'Remote Access', label: 'Remote GUI' },
+  { id: 'Deployment', label: 'Deploy' },
 ] as const;
 
 export type CategoryFilter = (typeof CATEGORY_FILTERS)[number]['id'];

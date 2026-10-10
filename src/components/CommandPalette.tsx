@@ -4,6 +4,7 @@ import { SERVICES, type StatsPayload } from '../shared/contract';
 import { buildServiceUrl, copyToClipboard, isSubdomainMode, type HostMode } from '../lib/urls';
 import { VIEWS, shortcutLabel } from '../lib/views';
 import { CopyIcon, RefreshIcon, SearchIcon, ServiceIconGlyph, TerminalIcon, ViewIcon } from './icons';
+import { SERVICE_COLOR } from '../lib/serviceColor';
 
 interface PaletteProps {
   readonly open: boolean;
@@ -31,13 +32,6 @@ interface PaletteItem {
   readonly keywords: string;
   readonly run: () => void;
 }
-
-const SERVICE_COLOR: Readonly<Record<string, string>> = {
-  hermes: 'var(--s-mem)',
-  '9router': 'var(--s-disk)',
-  opencode: 'var(--s-tx)',
-  novnc: 'var(--s-cpu)',
-};
 
 /**
  * Command palette (Ctrl+K or "/"). Filters services, copy-URL actions and the

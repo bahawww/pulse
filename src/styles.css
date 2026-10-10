@@ -3472,9 +3472,12 @@ kbd {
   box-shadow: 0 0 0 3px var(--crit-soft);
 }
 
+/* One panel: a status line across the top, then a tile per service. Each tile
+   draws its own right and bottom hairline; the panel clips the outer edge. */
 .lamps {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  /* Never more than five across, so a wide screen fills the row instead of leaving a hole. */
+  grid-template-columns: repeat(auto-fit, minmax(max(210px, calc(100% / 5.01)), 1fr));
   margin: 0;
   padding: 0;
   list-style: none;
@@ -3485,30 +3488,81 @@ kbd {
 }
 
 .lamps li {
-  border-top: 1px solid var(--line);
-  margin-top: -1px;
+  box-shadow: 1px 1px 0 0 var(--line);
+}
+
+.lamps-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.lamps-summary-text {
+  flex: 1;
+  min-width: 0;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.lamps-summary-ms {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 .lamp-row {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
   width: 100%;
-  padding: 14px 18px;
+  height: 100%;
+  padding: 16px 18px 15px;
   border: 0;
-  background: none;
+  background-color: transparent;
   color: var(--text);
   text-align: left;
 }
 
 .lamp-row:hover {
-  background: var(--surface-2);
+  background-color: var(--surface-2);
+}
+
+.lamp-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.lamp-chip {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--c, var(--text-2));
+  background: color-mix(in srgb, var(--c, var(--text-2)) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c, var(--text-2)) 22%, transparent);
+}
+
+.lamp-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .lamp-name {
-  flex: 1;
-  min-width: 0;
-  font-weight: 550;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
 .lamp-port,
@@ -3519,9 +3573,22 @@ kbd {
 }
 
 .lamp-ms {
-  min-width: 56px;
-  text-align: right;
   color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.lamp-row.is-down {
+  background-color: var(--crit-soft);
+}
+
+.lamp-row.is-down .lamp-ms {
+  color: var(--crit-text);
+}
+
+.lamp-row.is-down .lamp-chip {
+  color: var(--text-3);
+  background: var(--surface-3);
+  box-shadow: none;
 }
 
 /* Small print in the instrument strip wraps instead of being cut by the panel edge. */
@@ -3831,6 +3898,10 @@ html[data-go] .side-kbd {
 
 /* Lamps list while waiting for the first reading. */
 .lamps .bone-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
   padding: 16px 18px;
   border-top: 0;
 }
