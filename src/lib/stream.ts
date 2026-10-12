@@ -19,6 +19,10 @@ let refs = 0;
 let closeTimer: ReturnType<typeof setTimeout> | undefined;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let failures = 0;
+/** Client clock at the last message of any kind, including the server's ping. */
+let lastMessageAt = 0;
+/** The server pings every 25 s; this much silence means the stream is dead without telling us. */
+const SILENT_MS = 70_000;
 
 /** Fired on window when the server says the session ended, or the stream is refused. */
 export const SESSION_CHECK_EVENT = 'pulse:session-check';
@@ -31,6 +35,7 @@ function setLive(next: boolean): void {
 
 function attach(es: EventSource, event: string): void {
   es.addEventListener(event, (e) => {
+    lastMessageAt = Date.now();
     let data: unknown;
     try {
       data = JSON.parse((e as MessageEvent<string>).data);
@@ -45,6 +50,8 @@ function open(): void {
   if (source || typeof EventSource === 'undefined') return;
   const es = new EventSource('/api/stream');
   source = es;
+  lastMessageAt = Date.now();
+  attach(es, 'ping');
   for (const event of listeners.keys()) attach(es, event);
   es.addEventListener('bye', () => {
     close();
@@ -65,6 +72,25 @@ function open(): void {
     clearTimeout(retryTimer);
     if (refs > 0) retryTimer = setTimeout(open, Math.min(60_000, 2000 * 2 ** Math.min(failures, 5)));
   };
+}
+
+/** Drops the current EventSource and opens a fresh one, without flipping `live` off for long. */
+function reconnect(): void {
+  if (refs === 0) return;
+  source?.close();
+  source = null;
+  open();
+}
+
+if (typeof document !== 'undefined') {
+  // A tab left idle can have its socket killed by a NAT or proxy with no error
+  // event. Check on return and on a timer, and reconnect if it went quiet.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && source && Date.now() - lastMessageAt > 30_000) reconnect();
+  });
+  setInterval(() => {
+    if (source && document.visibilityState === 'visible' && Date.now() - lastMessageAt > SILENT_MS) reconnect();
+  }, 10_000);
 }
 
 function close(): void {

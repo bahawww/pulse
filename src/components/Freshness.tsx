@@ -2,8 +2,8 @@ import { type JSX } from 'react';
 import { useNow } from '../hooks/useNow';
 import { formatAgo, formatClock, zoneLabel } from '../lib/format';
 
-/** How old the last good reading may get before the UI calls it stale. Several missed 5s polls. */
-export const STALE_MS = 20_000;
+/** How old the last good reading may get before the UI calls it stale. Many missed 5s samples, so a brief idle or blip does not alarm. */
+export const STALE_MS = 60_000;
 
 /**
  * True when there is data on screen but it no longer reflects the server. Age

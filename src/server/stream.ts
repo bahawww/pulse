@@ -34,7 +34,8 @@ function write(res: Response, event: string, data: string): void {
 }
 
 const heartbeat = setInterval(() => {
-  for (const c of clients) c.res.write(': ping\n\n');
+  // A named event, not a comment: the client's watchdog can only see events.
+  for (const c of clients) write(c.res, 'ping', '{}');
 }, HEARTBEAT_MS);
 heartbeat.unref();
 

@@ -71,8 +71,14 @@ export function useStats() {
     // Pushed: nothing to poll. A manual refresh still fetches once.
     if (live) {
       if (manualRefresh > 0) void fetchOnce();
+      // Back from idle: refetch at once instead of waiting for the next push.
+      const onReturn = () => {
+        if (document.visibilityState === 'visible' && !aborted.current) void fetchOnce();
+      };
+      document.addEventListener('visibilitychange', onReturn);
       return () => {
         aborted.current = true;
+        document.removeEventListener('visibilitychange', onReturn);
       };
     }
 
