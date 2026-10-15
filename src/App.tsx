@@ -12,19 +12,14 @@ import type { AuthUser } from './hooks/useAuth';
 import type { InstallHandle } from './hooks/useInstall';
 import { buildServiceUrl, readStoredHostMode, storeHostMode, type HostMode } from './lib/urls';
 import { CommandPalette, Toast } from './components/CommandPalette';
-import { ContainerHistory } from './components/ContainerHistory';
-import { DeepTelemetry } from './components/DeepTelemetry';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Freshness, isStale, StaleBanner } from './components/Freshness';
 import { FilesystemPanel } from './components/FilesystemPanel';
-import { LatencyHistory } from './components/LatencyHistory';
 import { LogPanel } from './components/LogPanel';
 import { Navbar } from './components/Navbar';
 import { PulseHero } from './components/PulseHero';
 import { ServiceLamps } from './components/ServiceLamps';
-import { ProcessHistory } from './components/ProcessHistory';
 import { ReachabilityPanel } from './components/ReachabilityPanel';
-import { ResourceTrends } from './components/ResourceTrends';
 import { ServicesGrid } from './components/ServicesGrid';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { GoHint } from './components/GoHint';
@@ -37,6 +32,10 @@ import { ActionsPanel } from './components/ActionsPanel';
 
 type TerminalModule = typeof import('./components/TerminalWorkspace');
 const loadTerminal = (): Promise<TerminalModule> => import('./components/TerminalWorkspace');
+type ChartsModule = typeof import('./components/ChartViews');
+const loadCharts = (): Promise<ChartsModule> => import('./components/ChartViews');
+/** Views drawn with TimeChart; they wait on the chart chunk. */
+const CHART_VIEWS: ReadonlySet<string> = new Set(['trends', 'hardware', 'workload', 'capacity']);
 
 interface ToastState {
   readonly text: string;
@@ -106,11 +105,26 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       .then((m) => setWorkspace(() => m.TerminalWorkspace))
       .catch(() => undefined);
   }, []);
+  // Same for the chart views (uPlot): the overview never needs them.
+  const [Charts, setCharts] = useState<ChartsModule | null>(null);
+  const fetchCharts = useCallback(() => {
+    void loadCharts()
+      .then((m) => setCharts(m))
+      .catch(() => undefined);
+  }, []);
   useEffect(() => {
+    const fetchIdle = () => {
+      fetchCharts();
+      fetchTerminal();
+    };
     const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
-    if (w.requestIdleCallback) w.requestIdleCallback(fetchTerminal);
-    else window.setTimeout(fetchTerminal, 1500);
-  }, [fetchTerminal]);
+    if (w.requestIdleCallback) w.requestIdleCallback(fetchIdle);
+    else window.setTimeout(fetchIdle, 1500);
+  }, [fetchCharts, fetchTerminal]);
+  // Landed on (or jumped to) a chart view before the idle fetch finished: fetch now.
+  useEffect(() => {
+    if (CHART_VIEWS.has(view) && !Charts) fetchCharts();
+  }, [view, Charts, fetchCharts]);
   // Opened before the idle fetch finished: fetch now.
   useEffect(() => {
     if (terminal !== 'never' && !Workspace) fetchTerminal();
@@ -272,9 +286,9 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {view === 'trends' && (
+            {view === 'trends' && Charts && (
               <Section title="Trends" hint="last window, drag to pan and zoom">
-                <ResourceTrends
+                <Charts.ResourceTrends
                   samples={samples}
                   range={range}
                   onRangeChange={setRange}
@@ -287,7 +301,8 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {!system && view in VIEW_SKELETONS && (
+            {/* Trends needs only the chart chunk; the rest also wait for the first stats. */}
+            {((!Charts && CHART_VIEWS.has(view)) || (!system && view !== 'trends')) && view in VIEW_SKELETONS && (
               <Section title={VIEW_SKELETONS[view]!.title} hint={VIEW_SKELETONS[view]!.hint}>
                 <Loading what={VIEW_SKELETONS[view]!.title}>
                   <div className="grid">
@@ -301,26 +316,26 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {view === 'hardware' && system && (
+            {view === 'hardware' && system && Charts && (
               <Section title="Hardware" hint="cores, memory, network and disks">
-                <DeepTelemetry system={system} samples={samples} />
+                <Charts.DeepTelemetry system={system} samples={samples} />
               </Section>
             )}
 
-            {view === 'workload' && system && (
+            {view === 'workload' && system && Charts && (
               <Section title="Workload" hint="what is running and how much it uses">
                 <div className="grid">
                   <div className="span-7">
-                    <ProcessHistory processes={system.processes} samples={samples} />
+                    <Charts.ProcessHistory processes={system.processes} samples={samples} />
                   </div>
                   <div className="span-5">
-                    <ContainerHistory containers={system.docker.filter((c) => !isHiddenContainer(c.name))} samples={samples} />
+                    <Charts.ContainerHistory containers={system.docker.filter((c) => !isHiddenContainer(c.name))} samples={samples} />
                   </div>
                 </div>
               </Section>
             )}
 
-            {view === 'capacity' && system && (
+            {view === 'capacity' && system && Charts && (
               <Section title="Capacity" hint="what could run out">
                 <div className="grid">
                   <div className="span-5">
@@ -331,7 +346,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                     />
                   </div>
                   <div className="span-7">
-                    <LatencyHistory samples={samples} services={latencyServices} />
+                    <Charts.LatencyHistory samples={samples} services={latencyServices} />
                   </div>
                 </div>
               </Section>
@@ -456,6 +471,11 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
 const VIEW_SKELETONS: Partial<
   Record<string, { title: string; hint: string; cards: { span: string; rows?: number; chart?: number }[] }>
 > = {
+  trends: {
+    title: 'Trends',
+    hint: 'last window, drag to pan and zoom',
+    cards: [{ span: 'span-12', chart: 260 }],
+  },
   hardware: {
     title: 'Hardware',
     hint: 'cores, memory, network and disks',
