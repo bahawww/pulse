@@ -1,0 +1,68 @@
+/* ==========================================================================
+   Tailwind, hybrid. Loaded after styles.css and motion.css.
+
+   - For new components only. Existing components keep their CSS.
+   - No preflight: the reset would restyle every existing element.
+   - Prefix `tw:` (tw:flex, tw:hover:bg-surface-2). Without it, utilities named
+     grid, grow, table and truncate collide with existing classes.
+   - Utilities live in @layer utilities, so any unlayered rule in styles.css
+     beats them. Do not mix utilities into elements styled by styles.css.
+   - Colours, radii, fonts and easings point at the tokens in styles.css and
+     motion.css, so the light theme and the springs carry over. The stock
+     Tailwind palette is off: tw:bg-red-500 does not exist, use tw:bg-crit.
+   - Keyframes, springs with overshoot and view transitions stay in motion.css.
+   ========================================================================== */
+
+@layer theme, utilities;
+@import 'tailwindcss/theme.css' layer(theme) prefix(tw);
+@import 'tailwindcss/utilities.css' layer(utilities) prefix(tw);
+
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  /* fg, not text: tw:text-fg reads better than tw:text-text. */
+  --color-fg: var(--text);
+  --color-fg-2: var(--text-2);
+  --color-fg-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-ok: var(--ok);
+  --color-ok-text: var(--ok-text);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-serious: var(--serious);
+  --color-serious-soft: var(--serious-soft);
+  --color-crit: var(--crit);
+  --color-crit-text: var(--crit-text);
+  --color-crit-soft: var(--crit-soft);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-lg);
+
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-mono);
+
+  /* tw:ease-snappy etc. Pair with the matching duration, e.g. tw:duration-380. */
+  --ease-snappy: var(--spring-snappy);
+  --ease-bouncy: var(--spring-bouncy);
+  --ease-soft: var(--spring-soft);
+
+  /* styles.css also breaks at 1100px. */
+  --breakpoint-wide: 1100px;
+}
+
+/* The app is dark unless html has data-theme="light" (useTheme). */
+@custom-variant dark (&:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *));
+@custom-variant light (&:where(:root[data-theme='light'], :root[data-theme='light'] *));

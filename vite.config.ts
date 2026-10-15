@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // Dev server proxies /api to the Express backend so the SPA and API share an
 // origin. In production Express serves dist/client directly — no proxy needed.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     outDir: 'dist/client',
     emptyOutDir: true,

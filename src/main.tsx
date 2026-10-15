@@ -18,6 +18,7 @@ import '@fontsource/jetbrains-mono/latin-500.css';
 import '@fontsource/jetbrains-mono/latin-700.css';
 import './styles.css';
 import './motion.css';
+import './tailwind.css';
 
 /** Matches the .login.is-leaving fade in styles.css (browsers without View Transitions). */
 const LEAVE_MS = 420;

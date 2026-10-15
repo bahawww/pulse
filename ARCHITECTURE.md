@@ -51,7 +51,8 @@ flowchart LR
 | `src/hooks/` | Data hooks: `useStats`, `useHistory`, `useAlerts`, `usePolled`, `useAuth`. |
 | `src/lib/stream.ts`, `csrf.ts` | The tab's one EventSource, and the CSRF token holder with `postJson`. |
 | `src/components/` | Views and panels. `components/terminal/` is the terminal, loaded as its own chunk. |
-| `src/styles.css`, `motion.css`, `terminal.css` | Plain CSS on design tokens; no CSS framework. |
+| `src/styles.css`, `motion.css`, `terminal.css` | Plain CSS on design tokens. |
+| `src/tailwind.css` | Tailwind v4 for new components only: `tw:` prefix, no preflight, theme mapped to the tokens. |
 | `deploy/` | Unit template, hardening drop-in, health-ping cron script. |
 
 ## Data flow
@@ -105,8 +106,12 @@ tree (`split.ts`), so re-arranging never remounts a shell.
 - **SQLite through `node:sqlite`.** No native addon, no separate database
   process, one file to back up. Without Node 22 the app runs on in-memory
   history and says so in the UI.
-- **No CSS framework.** Tokens in `styles.css` drive both themes. The design
-  system is published separately as a Claude Design System artifact.
+- **Hybrid CSS.** Tokens in `styles.css` drive both themes. Existing components
+  keep plain CSS; new ones may use Tailwind utilities (`tw:` prefix, no
+  preflight, colours/radii/fonts/springs mapped to the tokens). Utilities sit in
+  a cascade layer, so plain CSS always wins: never mix the two on one element.
+  Keyframes and view transitions stay in `motion.css`. The design system is
+  published separately as a Claude Design System artifact.
 - **One process, no queue.** Everything the server does is bounded per tick or
   per request; nothing needs a worker.
 
