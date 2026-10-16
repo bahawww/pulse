@@ -1,6 +1,6 @@
 import http from 'node:http';
 import net from 'node:net';
-import { SERVICES, type ServiceCategoryMeta, type ServiceStatus } from '../shared/contract.js';
+import type { ServiceCategoryMeta, ServiceStatus } from '../shared/contract.js';
 
 const PROBE_TIMEOUT_MS = 1500;
 
@@ -90,7 +90,10 @@ export async function checkServiceStatus(
   }
 }
 
-export async function checkAllServices(host = '127.0.0.1'): Promise<Map<string, ServiceStatus>> {
-  const results = await Promise.all(SERVICES.map((s) => checkServiceStatus(s, host)));
+export async function checkAllServices(
+  services: readonly ServiceCategoryMeta[],
+  host = '127.0.0.1',
+): Promise<Map<string, ServiceStatus>> {
+  const results = await Promise.all(services.map((s) => checkServiceStatus(s, host)));
   return new Map(results.map((r) => [r.id, { online: r.online, statusCode: r.statusCode, latency: r.latency }]));
 }

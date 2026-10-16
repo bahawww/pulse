@@ -1,5 +1,5 @@
-import { SUBDOMAIN_PATHS, type ServiceCategoryMeta } from '../shared/contract';
-import { BASE_DOMAIN, TAILSCALE_HOST, subdomainFor } from './site';
+import { SUBDOMAIN_PATHS, type ServiceCategoryMeta, type ServiceSource } from '../shared/contract';
+import { BASE_DOMAIN, TAILSCALE_HOST, hasSubdomainLabel, subdomainFor } from './site';
 
 /** 'auto', 'localhost', a direct host such as the Tailscale IP, or BASE_DOMAIN for subdomain mode. */
 export type HostMode = string;
@@ -25,14 +25,28 @@ export const HOST_OPTIONS: readonly { value: HostMode; label: string; hint: stri
  * This VPS is NAT'd, so direct port links only work from inside the LAN or over
  * Tailscale — the subdomain mode is the only path that resolves publicly.
  */
-export function buildServiceUrl(service: ServiceCategoryMeta, hostMode: HostMode): string {
-  if (isSubdomainMode(hostMode)) {
+type LinkTarget = ServiceCategoryMeta & { readonly source?: ServiceSource };
+
+export function buildServiceUrl(service: LinkTarget, hostMode: HostMode): string {
+  if (usesSubdomain(service, hostMode)) {
     const subdomain = subdomainFor(service.id);
     const path = service.id in SUBDOMAIN_PATHS ? SUBDOMAIN_PATHS[service.id] ?? '' : service.path;
     return `https://${subdomain}${path}`;
   }
-  const host = hostMode === 'auto' ? window.location.hostname || '127.0.0.1' : hostMode;
+  // A scanned service has no tunnel route unless VITE_SUBDOMAINS gives it one:
+  // in subdomain mode it goes direct, over Tailscale when that is configured.
+  const host = isSubdomainMode(hostMode)
+    ? TAILSCALE_HOST || window.location.hostname || '127.0.0.1'
+    : hostMode === 'auto'
+      ? window.location.hostname || '127.0.0.1'
+      : hostMode;
   return `http://${host}:${service.port}${service.path}`;
+}
+
+/** Subdomain mode, and this service has a subdomain: curated ones always, scanned ones when named in VITE_SUBDOMAINS. */
+export function usesSubdomain(service: LinkTarget, hostMode: HostMode): boolean {
+  if (!isSubdomainMode(hostMode)) return false;
+  return !service.source || service.source === 'curated' || hasSubdomainLabel(service.id);
 }
 
 export function isSubdomainMode(hostMode: HostMode): boolean {

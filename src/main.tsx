@@ -6,6 +6,7 @@ import { LoginPage } from './components/LoginPage';
 import { type AuthState, useAuth } from './hooks/useAuth';
 import { useInstall } from './hooks/useInstall';
 import { canTransition, prefersReducedMotion, transition } from './lib/motion';
+import { setViewRole } from './lib/views';
 import { installPointerEffects } from './lib/pointer';
 // Self-hosted fonts, latin subset only: no third-party request, and they work offline.
 import '@fontsource/inter/latin-400.css';
@@ -61,6 +62,8 @@ function Root() {
   const { leaving, morph } = useLeaving(state.status);
   if (state.status === 'loading') return null;
   if (state.status === 'anon' || leaving) return <LoginPage login={login} leaving={leaving} fadeOut={leaving && !morph} />;
+  // Before App renders: its sidebar, palette and shortcuts read the narrowed view list.
+  setViewRole(state.user.role);
   return <App user={state.user} onLogout={() => void logout()} install={install} />;
 }
 

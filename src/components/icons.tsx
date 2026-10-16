@@ -149,6 +149,25 @@ export function CopyIcon({ size = 16 }: IconProps): JSX.Element {
   );
 }
 
+export function EyeIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+export function EyeOffIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M10.6 5.1A9.9 9.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-2.4 3.4M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  );
+}
+
 export function PanelLeftIcon({ size = 15 }: IconProps): JSX.Element {
   return (
     <svg {...base(size)}>
@@ -199,9 +218,87 @@ export function ViewIcon({ view, size = 18 }: { readonly view: string; readonly 
       return <NetworkIcon size={size} />;
     case 'logs-and-control':
       return <SlidersIcon size={size} />;
+    case 'files':
+      return <FolderIcon size={size} />;
+    case 'users':
+      return <UsersIcon size={size} />;
     default:
       return <TerminalIcon size={size} />;
   }
+}
+
+export function FolderIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" />
+    </svg>
+  );
+}
+
+export function FolderPlusIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" />
+      <path d="M12 11v5M9.5 13.5h5" />
+    </svg>
+  );
+}
+
+export function FileIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z" />
+      <path d="M14 3v5h5" />
+    </svg>
+  );
+}
+
+export function UploadIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+    </svg>
+  );
+}
+
+export function DownloadIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M12 4v12M7 11l5 5 5-5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+    </svg>
+  );
+}
+
+export function PencilIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" />
+    </svg>
+  );
+}
+
+export function TrashIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a1.5 1.5 0 0 0 1.5 1.4h7a1.5 1.5 0 0 0 1.5-1.4L18 7M9 7V4.5A.5.5 0 0 1 9.5 4h5a.5.5 0 0 1 .5.5V7" />
+    </svg>
+  );
+}
+
+export function UsersIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1M16 4.2a3.5 3.5 0 0 1 0 6.6M18 14.2a5 5 0 0 1 3 4.8v1" />
+    </svg>
+  );
+}
+
+export function HomeIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M4 11l8-7 8 7v8.5a.5.5 0 0 1-.5.5H15v-6H9v6H4.5a.5.5 0 0 1-.5-.5z" />
+    </svg>
+  );
 }
 
 export function CheckIcon({ className, size = 16 }: IconProps): JSX.Element {
@@ -334,6 +431,7 @@ const REGISTRY: Record<ServiceIcon, (props: IconProps) => JSX.Element> = {
   monitor: MonitorIcon,
   terminal: TerminalIcon,
   server: ServerIcon,
+  boxes: BoxesIcon,
 };
 
 export function ServiceIconGlyph({ icon, size = 28 }: { icon: ServiceIcon; size?: number }): JSX.Element {

@@ -32,7 +32,7 @@ export function dockerSocketAvailable(): boolean {
 }
 
 /** Minimal JSON GET against the Docker unix socket. */
-function dockerGet<T>(path: string): Promise<T | null> {
+export function dockerGet<T>(path: string): Promise<T | null> {
   return new Promise((resolve) => {
     const req = http.request(
       {

@@ -43,6 +43,27 @@ export function Navbar({
   const menuRef = useRef<HTMLDivElement>(null);
   const [navOpen, setNavOpen] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setProfileOpen(false);
+      }
+    };
+    const onDown = (e: MouseEvent) => {
+      if (e.target instanceof Node && !profileRef.current?.contains(e.target)) setProfileOpen(false);
+    };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, [profileOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -181,15 +202,60 @@ export function Navbar({
             </span>
           </button>
 
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={onLogout}
-            title={`Signed in as ${user.name}. Click to log out.`}
-            aria-label={`Log out ${user.name}`}
-          >
-            <LogoutGlyph />
-          </button>
+          {/* Profile: who is signed in, and the only way out (logout lives here). */}
+          <div className="pop-anchor" ref={profileRef}>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setProfileOpen((open) => !open)}
+              aria-haspopup="menu"
+              aria-expanded={profileOpen}
+              aria-label={`Profile: ${user.name}`}
+              title={`Signed in as ${user.name}`}
+            >
+              <span
+                aria-hidden="true"
+                className="tw:flex tw:size-[22px] tw:items-center tw:justify-center tw:rounded-full tw:bg-accent tw:text-[11px] tw:font-semibold tw:text-accent-ink tw:uppercase"
+              >
+                {user.name.slice(0, 1)}
+              </span>
+            </button>
+            {profileOpen && (
+              <>
+                <div className="pop-backdrop" aria-hidden="true" onClick={() => setProfileOpen(false)} />
+                <div className="pop" role="menu" aria-label="Profile" style={{ width: 260 }}>
+                  <div className="tw:flex tw:items-center tw:gap-3 tw:px-2.5 tw:pt-1.5 tw:pb-3">
+                    <span
+                      aria-hidden="true"
+                      className="tw:flex tw:size-9 tw:shrink-0 tw:items-center tw:justify-center tw:rounded-full tw:bg-accent tw:text-[15px] tw:font-semibold tw:text-accent-ink tw:uppercase"
+                    >
+                      {user.name.slice(0, 1)}
+                    </span>
+                    <span className="tw:flex tw:min-w-0 tw:flex-col tw:gap-1">
+                      <span className="tw:truncate tw:text-[14px] tw:font-medium tw:text-fg">{user.name}</span>
+                      <span className={`pill ${user.role === 'superadmin' ? 'is-warn' : ''}`} style={{ alignSelf: 'flex-start' }}>
+                        {user.role}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="tw:border-t tw:border-line tw:pt-1.5">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="menu-item"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        onLogout();
+                      }}
+                    >
+                      <LogoutGlyph />
+                      <span className="menu-item-label">Log out</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Last on purpose: on phones this is the top-right corner. */}
           <div className="pop-anchor nav-toggle" ref={navRef}>

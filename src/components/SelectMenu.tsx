@@ -11,13 +11,16 @@ interface SelectMenuProps {
   readonly value: string;
   readonly options: readonly SelectOption[];
   readonly onChange: (value: string) => void;
+  readonly disabled?: boolean;
+  /** Tooltip on the button, e.g. why it is disabled. */
+  readonly title?: string;
 }
 
 /**
  * Dropdown in the page's own style. A native <select> opens an OS popup that
  * ignores the theme, so this uses the same popover and rows as the navbar menus.
  */
-export function SelectMenu({ label, value, options, onChange }: SelectMenuProps): JSX.Element {
+export function SelectMenu({ label, value, options, onChange, disabled = false, title }: SelectMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
   // Where the list opens: below the button unless there is clearly more room
   // above, and never taller than the room it has, so it stays on screen.
@@ -91,6 +94,8 @@ export function SelectMenu({ label, value, options, onChange }: SelectMenuProps)
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
+        title={title}
         onClick={toggle}
       >
         {current?.label ?? value}

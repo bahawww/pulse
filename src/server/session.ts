@@ -3,14 +3,19 @@ import fs from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
+import { roleAtLeast, type Role } from '../shared/contract.js';
+import { authenticate } from './users.js';
 
 /**
  * Login and sessions.
  *
- * One user (ADMIN_USER, default `admin`), role admin. The password comes from ADMIN_PASSWORD (or
- * TERMINAL_PASSWORD, the name it had before the login page existed) and is only
- * ever compared by digest. With no password configured nobody can log in; the
- * dashboard fails closed rather than open.
+ * Accounts live in MySQL (users.ts), each with a role: viewer, operator or
+ * admin. The env account (ADMIN_USER, default `admin`, password from
+ * ADMIN_PASSWORD or the older TERMINAL_PASSWORD) seeds the first admin row and
+ * stays as a break-glass login used only while the database is unreachable,
+ * so a stopped MySQL container cannot lock the owner out of the box. With
+ * neither a database nor a password nobody can log in; the dashboard fails
+ * closed rather than open.
  *
  * Sessions are server-side. The cookie holds a random token; only its SHA-256
  * is kept (in memory and in data/sessions.json), so a leaked file cannot be
@@ -30,6 +35,9 @@ const FILE = path.join(process.env.DASHBOARD_DATA_DIR ?? path.join(process.cwd()
 
 interface Record {
   readonly user: string;
+  readonly role: Role;
+  /** Row id in `users`; null for the break-glass env login. */
+  readonly userId: number | null;
   readonly created: number;
   expires: number;
   readonly ip: string;
@@ -46,7 +54,8 @@ function sha256(s: string): Buffer {
 function load(): void {
   try {
     const raw = JSON.parse(fs.readFileSync(FILE, 'utf8')) as Array<[string, Record]>;
-    for (const [hash, rec] of raw) if (rec.expires > Date.now()) sessions.set(hash, rec);
+    // Records from before roles existed have no role: drop them, the user logs in again.
+    for (const [hash, rec] of raw) if (rec.expires > Date.now() && rec.role) sessions.set(hash, rec);
   } catch {
     /* no file yet, or unreadable: start with no sessions */
   }
@@ -64,8 +73,14 @@ function persist(): void {
 
 load();
 
+/** True when the env break-glass account can log in. */
 export function passwordConfigured(): boolean {
   return PASSWORD_DIGEST !== null;
+}
+
+/** The env account's password, for seeding the first admin row. */
+export function envAdminPassword(): string {
+  return PASSWORD;
 }
 
 /** A password this short falls to an online guess run far sooner than the lockout suggests. */
@@ -74,19 +89,45 @@ export function passwordWeak(): boolean {
 }
 
 /** Both fields are always compared, so timing does not reveal which was wrong. */
-export function verifyLogin(username: unknown, password: unknown): boolean {
-  if (!PASSWORD_DIGEST || typeof username !== 'string' || typeof password !== 'string') return false;
+function verifyEnvLogin(username: string, password: string): boolean {
+  if (!PASSWORD_DIGEST) return false;
   const userOk = timingSafeEqual(sha256(username), USER_DIGEST);
   const passOk = timingSafeEqual(sha256(password), PASSWORD_DIGEST);
   return userOk && passOk;
 }
 
-export function createSession(req: IncomingMessage): { token: string; hash: string; maxAgeSeconds: number } {
+export interface LoginUser {
+  readonly id: number | null;
+  readonly name: string;
+  readonly role: Role;
+  /** True when the database was down and the env account let this login in. */
+  readonly breakGlass: boolean;
+}
+
+/**
+ * The account for these credentials, or null. The database decides whenever
+ * it answers; the env account is tried only when it cannot be reached.
+ */
+export async function verifyLogin(username: unknown, password: unknown): Promise<LoginUser | null> {
+  if (typeof username !== 'string' || typeof password !== 'string') return null;
+  if (username.length > 64) return null;
+  try {
+    const user = await authenticate(username, password);
+    return user ? { id: user.id, name: user.username, role: user.role, breakGlass: false } : null;
+  } catch (err) {
+    console.warn('[auth] user database unreachable:', err instanceof Error ? err.message : err);
+    return verifyEnvLogin(username, password) ? { id: null, name: ADMIN_USER, role: 'superadmin', breakGlass: true } : null;
+  }
+}
+
+export function createSession(req: IncomingMessage, user: LoginUser): { token: string; hash: string; maxAgeSeconds: number } {
   const token = randomBytes(32).toString('base64url');
   const now = Date.now();
   const hash = sha256(token).toString('hex');
   sessions.set(hash, {
-    user: ADMIN_USER,
+    user: user.name,
+    role: user.role,
+    userId: user.id,
     created: now,
     expires: now + TTL_MS,
     ip: peerAddress(req),
@@ -123,9 +164,21 @@ export function isValid(hash: string): boolean {
   return true;
 }
 
-export function userOf(hash: string): { name: string; role: 'admin' } | null {
+export function userOf(hash: string): { id: number | null; name: string; role: Role } | null {
   const rec = sessions.get(hash);
-  return rec ? { name: rec.user, role: 'admin' } : null;
+  return rec ? { id: rec.userId, name: rec.user, role: rec.role } : null;
+}
+
+/** Ends every session of one account: after a role change, disable, password reset or delete. */
+export function destroyUserSessions(userId: number): number {
+  let n = 0;
+  for (const [hash, rec] of sessions) {
+    if (rec.userId === userId) {
+      destroy(hash);
+      n += 1;
+    }
+  }
+  return n;
 }
 
 export function destroy(hash: string): void {
@@ -195,6 +248,26 @@ export function requireSession(open: ReadonlySet<string>) {
       return;
     }
     res.locals.sessionHash = hash;
+    next();
+  };
+}
+
+/**
+ * Gate for routes that need more than a login. Mount after requireSession,
+ * which leaves the session hash in res.locals.
+ */
+export function requireRole(min: Role) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const hash = (res.locals.sessionHash as string | undefined) ?? sessionHash(req);
+    const user = hash ? userOf(hash) : null;
+    if (!user) {
+      res.status(401).json({ error: 'login required' });
+      return;
+    }
+    if (!roleAtLeast(user.role, min)) {
+      res.status(403).json({ error: `needs the ${min} role`, code: 'role' });
+      return;
+    }
     next();
   };
 }

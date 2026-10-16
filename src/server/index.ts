@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 
-import { SERVICES, type Service, type StatsPayload } from '../shared/contract.js';
+import type { Service, StatsPayload } from '../shared/contract.js';
 import { checkAllServices } from './probe.js';
 import { getSystemSnapshot } from './collect/index.js';
 import { record, query, getHistory, historyStats, maxSpanMs, rehydrate } from './history.js';
@@ -20,12 +20,15 @@ import {
   clientKey,
   createSession,
   destroy,
+  destroyUserSessions,
+  envAdminPassword,
   loginFailed,
   loginLocked,
   loginSucceeded,
   passwordConfigured,
   passwordWeak,
   peerAddress,
+  requireRole,
   requireSession,
   sameOrigin,
   sessionHash,
@@ -39,7 +42,12 @@ import { checkReachability } from './reachability.js';
 import { getSpend } from './spend.js';
 import { handleUpgrade } from './terminal.js';
 import { CSRF_HEADER, csrfToken, csrfValid } from './csrf.js';
+import { onServicesChange, rescan, serviceList, setHidden, startDiscovery } from './discover.js';
+import { registerFileRoutes, UPLOAD_PATH } from './files.js';
 import { openStream, publish } from './stream.js';
+import { closeDb, dbConfigured, dbError, migrate } from './db.js';
+import { registerUserRoutes } from './userRoutes.js';
+import { ensureSuperadmin } from './users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,9 +67,10 @@ let cache: { payload: StatsPayload; expires: number } | null = null;
 let inFlight: Promise<StatsPayload> | null = null;
 
 async function buildPayload(): Promise<StatsPayload> {
-  const [statuses, system] = await Promise.all([checkAllServices(), getSystemSnapshot()]);
+  const { visible, hidden } = serviceList();
+  const [statuses, system] = await Promise.all([checkAllServices(visible), getSystemSnapshot()]);
 
-  const services: Service[] = SERVICES.map((service) => {
+  const services: Service[] = visible.map((service) => {
     const status = statuses.get(service.id);
     return {
       ...service,
@@ -69,8 +78,13 @@ async function buildPayload(): Promise<StatsPayload> {
     };
   });
 
-  return { services, system };
+  return { services, hiddenServices: hidden, system };
 }
+
+// A scan or a hide changes the list: the next poll rebuilds it.
+onServicesChange(() => {
+  cache = null;
+});
 
 async function getStats(): Promise<StatsPayload> {
   const now = Date.now();
@@ -240,7 +254,10 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
     return;
   }
   const length = Number(req.headers['content-length'] ?? 0);
-  if ((length > 0 || req.headers['transfer-encoding']) && !req.is('application/json')) {
+  // A file upload's body is the file itself. A cross-site form cannot send
+  // application/octet-stream either, and the token below is still required.
+  const rawUpload = req.path === UPLOAD_PATH && req.is('application/octet-stream') !== false;
+  if ((length > 0 || req.headers['transfer-encoding']) && !req.is('application/json') && !rawUpload) {
     res.status(415).json({ error: 'JSON body required' });
     return;
   }
@@ -276,8 +293,15 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
 });
 
 app.post('/api/auth/login', loginLimiter, (req: Request, res: Response) => {
-  if (!passwordConfigured()) {
-    res.status(503).json({ error: 'no admin password configured on the server' });
+  void login(req, res).catch((err: unknown) => {
+    console.error('[auth] login failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'login failed' });
+  });
+});
+
+async function login(req: Request, res: Response): Promise<void> {
+  if (!passwordConfigured() && !dbConfigured()) {
+    res.status(503).json({ error: 'no user database or admin password configured on the server' });
     return;
   }
   const key = clientKey(req);
@@ -286,7 +310,8 @@ app.post('/api/auth/login', loginLimiter, (req: Request, res: Response) => {
     return;
   }
   const body = req.body as { username?: unknown; password?: unknown };
-  if (!verifyLogin(body.username, body.password)) {
+  const user = await verifyLogin(body.username, body.password);
+  if (!user) {
     loginFailed(key);
     console.warn(`[auth] failed login from ${key}`);
     // Fixed delay: guessing speed must not depend on how fast we answer.
@@ -297,11 +322,11 @@ app.post('/api/auth/login', loginLimiter, (req: Request, res: Response) => {
   // A login always starts a fresh session, so a cookie planted before login is never promoted.
   const old = sessionHash(req);
   if (old) destroy(old);
-  const { token, hash, maxAgeSeconds } = createSession(req);
+  const { token, hash, maxAgeSeconds } = createSession(req, user);
   setCookie(res, req, token, maxAgeSeconds);
-  console.log(`[auth] ${ADMIN_USER} logged in from ${key}`);
-  res.json({ user: { name: ADMIN_USER, role: 'admin' }, csrf: csrfToken(hash) });
-});
+  console.log(`[auth] ${user.breakGlass ? 'break-glass login' : `${user.role}`} ${user.name} logged in from ${key}`);
+  res.json({ user: userOf(hash), csrf: csrfToken(hash) });
+}
 
 app.post('/api/auth/logout', (req: Request, res: Response) => {
   const hash = sessionHash(req);
@@ -495,6 +520,47 @@ const actionLimiter = rateLimit({
   message: { error: 'Too many action requests' },
 });
 
+// File explorer (src/server/files.ts). Reads share the normal limiter; writes
+// get their own, generous enough for a folder of uploads.
+const filesWriteLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many file operations' },
+});
+// The explorer reads and writes anything the dashboard user can, secrets
+// included, so all of it is admin-only.
+app.use('/api/files', requireRole('admin'));
+registerFileRoutes(app, apiLimiter, filesWriteLimiter);
+
+// Accounts (userRoutes.ts). Admin-only; the rows live in MySQL.
+registerUserRoutes(app, apiLimiter, requireRole('admin'), destroyUserSessions, (req) => {
+  const hash = sessionHash(req);
+  return hash ? (userOf(hash)?.id ?? null) : null;
+});
+
+// Auto-scanned services: hide or show one, or scan again now.
+app.post('/api/services/hidden', apiLimiter, requireRole('operator'), (req: Request, res: Response) => {
+  const body = req.body as { id?: unknown; hidden?: unknown };
+  if (typeof body.id !== 'string' || body.id.length > 120 || typeof body.hidden !== 'boolean') {
+    res.status(400).json({ error: 'id and hidden required' });
+    return;
+  }
+  if (!setHidden(body.id, body.hidden)) {
+    res.status(404).json({ error: 'unknown service' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/services/scan', apiLimiter, requireRole('operator'), (_req: Request, res: Response) => {
+  void rescan().then(() => {
+    const { visible, hidden } = serviceList();
+    res.json({ ok: true, visible: visible.length, hidden: hidden.length });
+  });
+});
+
 // Audit trail of executed write actions, newest first. Read-only, so it sits
 // behind the normal read limiter rather than the action one.
 app.get('/api/actions/log', apiLimiter, (_req: Request, res: Response) => {
@@ -502,7 +568,7 @@ app.get('/api/actions/log', apiLimiter, (_req: Request, res: Response) => {
   res.json({ entries: recentActions(50) });
 });
 
-app.post('/api/action', actionLimiter, (req: Request, res: Response) => {
+app.post('/api/action', actionLimiter, requireRole('operator'), (req: Request, res: Response) => {
   const body = req.body as { target?: unknown; name?: unknown; action?: unknown; confirm?: unknown };
 
   void performAction(
@@ -596,6 +662,7 @@ app.use((err: NodeJS.ErrnoException, _req: Request, res: Response, next: NextFun
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`[vps-dashboard] listening on http://${HOST}:${PORT} (client: ${CLIENT_DIR})`);
+  startDiscovery(PORT);
 
   if (!passwordConfigured()) {
     console.warn('[vps-dashboard] NO ADMIN_PASSWORD set — nobody can log in, the API stays locked');
@@ -611,6 +678,30 @@ const server = app.listen(PORT, HOST, () => {
       ? `[vps-dashboard] alerts: telegram channel configured`
       : '[vps-dashboard] alerts: web delivery only (bell, toast, desktop notification while the page is open); telegram not configured',
   );
+});
+
+// User store. Runs the migrations, then makes the env account the one
+// superadmin (created from ADMIN_PASSWORD if missing). Re-checked every few
+// minutes, so a superadmin row deleted or demoted in phpMyAdmin comes back
+// without a restart. A failure only logs: login falls back to the env account
+// until MySQL answers.
+const SUPERADMIN_CHECK_MS = 5 * 60_000;
+async function keepSuperadmin(): Promise<void> {
+  try {
+    const what = await ensureSuperadmin(ADMIN_USER, envAdminPassword());
+    if (what.startsWith('restored') || what.startsWith('created') || what.startsWith('no ')) console.warn(`[users] ${what}`);
+  } catch (err) {
+    console.warn('[users] superadmin check failed:', err instanceof Error ? err.message : err);
+  }
+}
+void migrate().then(async (ok) => {
+  if (!ok) {
+    console.warn(`[vps-dashboard] user database unavailable: ${dbError() ?? 'unknown'} — only the env admin can log in`);
+    return;
+  }
+  await keepSuperadmin();
+  console.log(`[vps-dashboard] user database ready, superadmin ${ADMIN_USER}`);
+  setInterval(() => void keepSuperadmin(), SUPERADMIN_CHECK_MS).unref();
 });
 
 // Browser terminal (WebSocket -> SSH). Has its own, stricter gate in terminal.ts.
@@ -731,6 +822,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     // rather than replaying a recovery log. Safe to call when the store never
     // opened (older runtime), where it is a no-op.
     closeStore();
+    void closeDb();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 8000).unref();
   });

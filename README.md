@@ -2,7 +2,7 @@
 
 A self-hosted dashboard for a single Linux VPS: live telemetry, service links, logs, service control and a browser terminal, all behind one login.
 
-Built with React 19, TypeScript and Vite on the frontend, and an Express 5 API on Node 22.12+. History is stored in `node:sqlite`, so there is no database server to run.
+Built with React 19, TypeScript and Vite on the frontend, and an Express 5 API on Node 22.12+. History is stored in `node:sqlite`. Login accounts are stored in MySQL (optional; without it only the env admin can log in).
 
 ## Features
 
@@ -21,6 +21,7 @@ Built with React 19, TypeScript and Vite on the frontend, and an Express 5 API o
 - **Reachability.** Checks from outside whether the box can actually be reached. Useful behind NAT, where a port bound to `0.0.0.0` can still be unreachable from the internet.
 - **LLM spend.** Optional panel that reads usage from a local 9router database.
 - **Keyboard first.** `Ctrl+K` opens the command palette. `G` then a letter opens a view. `[` toggles the sidebar. `` Ctrl+` `` opens and hides the terminal.
+- **Users and roles.** Several logins, each a viewer, operator or admin, managed in the Users view (G then U) or in phpMyAdmin.
 - Light and dark themes, installable as a PWA, and works on phones.
 
 ## Requirements
@@ -53,7 +54,8 @@ All configuration is environment variables. [`.env.example`](.env.example) lists
 
 | Variable | Purpose |
 |----------|---------|
-| `ADMIN_USER`, `ADMIN_PASSWORD` | The single login. With no password set, nobody can log in. |
+| `ADMIN_USER`, `ADMIN_PASSWORD` | Seeds the first admin when the users table is empty, and logs in only while MySQL is unreachable (break-glass). |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | MySQL for accounts. Unset `DB_PASSWORD` means no user database. |
 | `PORT`, `HOST` | Address the server listens on. |
 | `DASHBOARD_DATA_DIR`, `DASHBOARD_DB` | Where sessions, history and the terminal's known_hosts are kept. Default: `./data`. |
 | `PUBLIC_HOST`, `TAILSCALE_HOST`, `REACHABILITY_CHECKER_URL` | Reachability targets. Unset targets are skipped. |
@@ -62,7 +64,11 @@ All configuration is environment variables. [`.env.example`](.env.example) lists
 | `NINEROUTER_DB` | Path to 9router's SQLite database, for the spend panel. |
 | `VITE_BASE_DOMAIN`, `VITE_SUBDOMAINS`, `VITE_TAILSCALE_HOST` | Service link targets. These are read at **build** time, so run `npm run build` after changing them. |
 
-The list of service cards is in `src/shared/contract.ts` (`SERVICES`). Edit it to match the apps on your box.
+The **Files** view (G then F) browses the server's folders, previews text and images, downloads, uploads (button or drag and drop, up to `FILES_MAX_UPLOAD_MB`, default 2048), creates folders, renames and deletes. It acts as the terminal's SSH user through the same loopback key, so it reaches what that user's shell could, without sudo. The root, top-level folders, the home folder and this app's folder cannot be deleted or renamed from it. Every write is in the action log.
+
+Service cards fill themselves: every minute the server scans for Docker containers that publish a port and host processes listening on all interfaces, and lists each one that answers HTTP (`src/server/discover.ts`). Hide a card with its eye button; the Applications view lists hidden ones so they can come back, and **Rescan** scans immediately. Hidden ids and what was found are kept in `data/services.json`.
+
+For a hand-written name, description, keyboard key or Cloudflare subdomain, add the app to `SERVICES` in `src/shared/contract.ts`; a scanned port matching a curated entry shows as that entry. A scanned service gets a subdomain link only when `VITE_SUBDOMAINS` names its id (for example `docker-beszel-hub=beszel`); otherwise subdomain mode links it over Tailscale.
 
 ## Run as a service
 
@@ -93,9 +99,30 @@ cat ~/.ssh/dashboard_terminal.pub >> ~/.ssh/authorized_keys
 
 `TERMINAL_MODE=local` spawns `$SHELL` directly. It is faster, but the shell inherits the sandbox.
 
+## Users
+
+Accounts live in the MySQL table `users` (schema in `deploy/sql/`, applied at every start). Roles:
+
+| Role | Can |
+|------|-----|
+| viewer | Read telemetry, history, alerts and logs. |
+| operator | Also start, stop and restart services, and rescan or hide service cards. |
+| admin | Also the terminal, the Files view and user management. |
+| superadmin | Everything admin can. Exactly one: the `ADMIN_USER` account. It cannot be deleted, disabled, demoted or renamed, and only its owner can change its password. Pulse restores it at start and every 5 minutes, so a row deleted or edited in phpMyAdmin comes back. |
+
+The terminal and Files are admin-only because both act as the SSH user, who has sudo. Changing, disabling or deleting an account logs it out everywhere. Nobody can change their own role, disable or delete themselves, and the last enabled admin is always kept.
+
+Passwords are scrypt hashes, so phpMyAdmin can edit roles and the `disabled` flag but cannot set a password. Use the Users view or:
+
+```bash
+node scripts/user.mjs list
+node scripts/user.mjs create alice operator
+node scripts/user.mjs passwd alice
+```
+
 ## Security
 
-- **Single login.** The password is compared by digest only. Sessions are stored as hashes, and login is rate limited. Only `/api/health` is public.
+- **Login.** Passwords are scrypt hashes in MySQL (the env break-glass password is compared by digest). Sessions are stored as hashes, and login is rate limited. Only `/api/health` is public. Every route checks the session's role on the server.
 - **Service control is closed.**
   - No shell is used.
   - Only `start`, `stop` and `restart` are allowed.

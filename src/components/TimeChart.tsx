@@ -337,9 +337,11 @@ export function TimeChart({
           show: showTimeAxis,
           grid: { show: false },
           ticks: { show: false },
-          // Zoomed in, ticks are spaced by the window, so show hh:mm:ss.
-          values: (_u, splits) =>
-            splits.map((s) => (model.aligned ? clock(s * 1000) : String(Math.round(s)))),
+          // Seconds only matter on a short window; past 10 minutes hh:mm is enough.
+          values: (_u, splits) => {
+            const span = (splits[splits.length - 1] ?? 0) - (splits[0] ?? 0);
+            return splits.map((s) => (model.aligned ? clock(s * 1000, span < 600) : String(Math.round(s))));
+          },
         },
         {
           stroke: text,
@@ -825,19 +827,19 @@ export function TimeChart({
           title="Reset zoom to full span"
           aria-label="Reset zoom"
         >
-          ⤢
+          <ToolIcon d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
         </button>
         <button type="button" className="spark-btn" onClick={() => viewRef.current?.pan(-0.4)} title="Scroll left" aria-label="Scroll left">
-          ◀
+          <ToolIcon d="M15 18l-6-6 6-6" />
         </button>
         <button type="button" className="spark-btn" onClick={() => viewRef.current?.pan(0.4)} title="Scroll right" aria-label="Scroll right">
-          ▶
+          <ToolIcon d="M9 18l6-6-6-6" />
         </button>
         <button type="button" className="spark-btn" onClick={() => viewRef.current?.zoom(1.6)} title="Zoom out" aria-label="Zoom out">
-          −
+          <ToolIcon d="M5 12h14" />
         </button>
         <button type="button" className="spark-btn" onClick={() => viewRef.current?.zoom(1 / 1.6)} title="Zoom in" aria-label="Zoom in">
-          +
+          <ToolIcon d="M12 5v14M5 12h14" />
         </button>
         {sel && selStats && (
           <div className="spark-sel" role="group" aria-label="Selected range">
@@ -938,9 +940,18 @@ function duration(seconds: number): string {
   return `${sec}s`;
 }
 
-/** hh:mm:ss in UTC+7 for an epoch-ms tick. */
-function clock(ms: number): string {
-  return formatClock(ms);
+/** hh:mm:ss (or hh:mm) in UTC+7 for an epoch-ms tick. */
+function clock(ms: number, seconds = true): string {
+  return formatClock(ms, seconds);
+}
+
+/** Toolbar glyph. SVG, not ◀ ▶: iOS draws those as emoji. */
+function ToolIcon({ d }: { readonly d: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
 }
 
 /** #rgb/#rrggbb + alpha -> rgba(), so a series colour can fill without a token. */

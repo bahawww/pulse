@@ -1,6 +1,6 @@
 import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { SERVICES, isHiddenContainer, type HistorySample } from './shared/contract';
+import { isHiddenContainer, roleAtLeast, type HistorySample, type Service } from './shared/contract';
 import { useNow } from './hooks/useNow';
 import { useStats } from './hooks/useStats';
 import { useHistory } from './hooks/useHistory';
@@ -14,6 +14,8 @@ import { buildServiceUrl, readStoredHostMode, storeHostMode, type HostMode } fro
 import { CommandPalette, Toast } from './components/CommandPalette';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Freshness, isStale, StaleBanner } from './components/Freshness';
+import { FilesPanel } from './components/FilesPanel';
+import { UsersPanel } from './components/UsersPanel';
 import { FilesystemPanel } from './components/FilesystemPanel';
 import { LogPanel } from './components/LogPanel';
 import { Navbar } from './components/Navbar';
@@ -57,6 +59,9 @@ interface AppProps {
 export default function App({ user, onLogout, install }: AppProps): JSX.Element {
   const { theme, toggleTheme } = useTheme();
   const { data, error, refresh, lastOkAt } = useStats();
+  // The number-key handler reads the latest list without re-binding on every poll.
+  const servicesRef = useRef<readonly Service[]>([]);
+  servicesRef.current = data?.services ?? [];
   // Re-read every poll interval so a hung request (no error, no data) still turns stale.
   const now = useNow(5000);
   const stale = isStale(data !== null, error, lastOkAt, now);
@@ -67,11 +72,14 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   // The workspace mounts on first open and is then only hidden, so shells survive.
   const [terminal, setTerminal] = useState<'never' | 'open' | 'hidden'>('never');
   const [toast, setToast] = useState<ToastState>({ text: '', id: 0 });
-  // Logging out asks first (top-bar button and the palette command).
+  // Logging out asks first. The profile menu (top right) is the only way in.
   const [askLogout, setAskLogout] = useState(false);
   const requestLogout = useCallback(() => setAskLogout(true), []);
 
   const notify = useCallback((text: string) => setToast((t) => ({ text, id: t.id + 1 })), []);
+  // The server enforces these too; hiding the controls only saves a 403.
+  const canAct = roleAtLeast(user.role, 'operator');
+  const canShell = roleAtLeast(user.role, 'admin');
 
   // "G then letter" jumps to a view (letters in lib/views.ts). G arms it for
   // GO_WINDOW_MS; the ref drives the key handler, the state shows the hint, and
@@ -159,7 +167,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       // Ctrl+` (the VS Code terminal key) brings the terminal back, or opens it.
       // By key position, so it works on any layout. Not Cmd: on macOS Cmd+`
       // switches windows.
-      if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Backquote') {
+      if (canShell && e.ctrlKey && !e.altKey && !e.metaKey && e.code === 'Backquote') {
         e.preventDefault();
         setPaletteOpen(false);
         setTerminal('open');
@@ -196,7 +204,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
         return;
       }
 
-      const hit = SERVICES.find((s) => s.keyNumber === e.key);
+      const hit = servicesRef.current.find((s) => s.keyNumber !== '' && s.keyNumber === e.key);
       if (hit) {
         e.preventDefault();
         window.open(buildServiceUrl(hit, hostMode), '_blank', 'noopener,noreferrer');
@@ -205,7 +213,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [hostMode, notify, paletteOpen, toggleSidebar, armGo, disarmGo]);
+  }, [hostMode, notify, paletteOpen, toggleSidebar, armGo, disarmGo, canShell]);
 
   const samples = history?.samples ?? NO_SAMPLES;
   const system = data?.system ?? null;
@@ -230,7 +238,12 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     return { tone: 'is-ok', text: 'All systems operational' };
   }, [data, error, stale, offline, degraded, alerts.firing]);
 
-  const latencyServices = useMemo(() => SERVICES.map((s) => ({ id: s.id, label: s.name })), []);
+  // Keyed on the id/name list, so a poll with the same services keeps the chart's input stable.
+  const serviceKey = (data?.services ?? []).map((s) => `${s.id}\u0000${s.name}`).join('\u0001');
+  const latencyServices = useMemo(
+    () => (data?.services ?? []).map((s) => ({ id: s.id, label: s.name })),
+    [serviceKey],
+  );
 
   return (
     <>
@@ -282,12 +295,12 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
 
             {view === 'applications' && (
               <Section title="Applications" hint="launch, status and latency">
-                <ServicesGrid data={data} hostMode={hostMode} onNotify={notify} />
+                <ServicesGrid data={data} hostMode={hostMode} onNotify={notify} onRefresh={refresh} />
               </Section>
             )}
 
             {view === 'trends' && Charts && (
-              <Section title="Trends" hint="last window, drag to pan and zoom">
+              <Section title="Trends" hint="CPU, memory and disk over time">
                 <Charts.ResourceTrends
                   samples={samples}
                   range={range}
@@ -366,11 +379,12 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
             )}
 
             {view === 'logs-and-control' && (
-              <Section title="Logs and control" hint="actions ask for confirmation first">
+              <Section title="Logs and control" hint={canAct ? 'actions ask for confirmation first' : 'read-only for your role'}>
                 <div className="grid">
-                  <div className="span-7">
+                  <div className={canAct ? 'span-7' : 'span-12'}>
                     <LogPanel />
                   </div>
+                  {canAct && (
                   <div className="span-5">
                     <ActionsPanel
                       systemdTargets={(data?.services ?? []).map((svc) => ({ id: svc.id, running: svc.status.online }))}
@@ -379,16 +393,28 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                         .map((c) => ({ id: c.id, name: c.name, running: c.state === 'running' }))}
                     />
                   </div>
+                  )}
                 </div>
               </Section>
             )}
 
+            {view === 'files' && (
+              <Section title="Files" hint="browse, preview, upload and download">
+                <FilesPanel onNotify={notify} />
+              </Section>
+            )}
+
+            {view === 'users' && (
+              <Section title="Users" hint="roles: viewer, operator, admin">
+                <UsersPanel selfId={user.id} onNotify={notify} />
+              </Section>
+            )}
           </div>
 
           <footer className="footer">
             <Freshness lastOkAt={lastOkAt} stale={stale} />
             <div className="footer-keys">
-              {SERVICES.map((s) => (
+              {(data?.services ?? []).filter((s) => s.keyNumber).map((s) => (
                 <span key={s.id}>
                   <kbd>{s.keyNumber}</kbd> {s.name.split(' ')[0]}
                 </span>
@@ -402,9 +428,11 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               <span>
                 <kbd>Ctrl K</kbd> commands
               </span>
-              <span>
-                <kbd>Ctrl `</kbd> terminal
-              </span>
+              {canShell && (
+                <span>
+                  <kbd>Ctrl `</kbd> terminal
+                </span>
+              )}
             </div>
           </footer>
         </main>
@@ -419,8 +447,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
         onToggleTheme={toggleTheme}
         onRefresh={refresh}
         onNotify={notify}
-        onOpenTerminal={() => setTerminal('open')}
-        onLogout={requestLogout}
+        onOpenTerminal={canShell ? () => setTerminal('open') : undefined}
         onInstall={install.canInstall ? install.install : undefined}
       />
 
@@ -473,8 +500,8 @@ const VIEW_SKELETONS: Partial<
 > = {
   trends: {
     title: 'Trends',
-    hint: 'last window, drag to pan and zoom',
-    cards: [{ span: 'span-12', chart: 260 }],
+    hint: 'CPU, memory and disk over time',
+    cards: [{ span: 'span-12', chart: 330 }],
   },
   hardware: {
     title: 'Hardware',

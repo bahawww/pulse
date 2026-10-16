@@ -1417,7 +1417,7 @@ kbd {
   color: inherit;
   font: inherit;
   cursor: pointer;
-  transition: border-color 140ms, background 140ms;
+  transition: border-color 140ms, background 140ms, opacity 140ms;
 }
 
 .stat-btn:hover {
@@ -1457,6 +1457,32 @@ kbd {
   color: var(--text-3);
   font-size: 11px;
   font-family: var(--font-mono);
+}
+
+/* Current value as a bar in the series colour, so a tile reads at a glance. */
+.stat-meter {
+  height: 3px;
+  margin: 2px 0 1px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.stat-meter i {
+  display: block;
+  height: 100%;
+  background: var(--stat-color, var(--accent));
+  transform-origin: left;
+  transition: transform var(--spring-soft-dur) var(--spring-soft);
+}
+
+/* One metric focused: the other tiles step back. */
+.stats.has-focus .stat-btn:not(.is-active) {
+  opacity: 0.55;
+}
+
+.stats.has-focus .stat-btn:not(.is-active):hover {
+  opacity: 0.85;
 }
 
 .trend-rows {
@@ -1525,8 +1551,8 @@ kbd {
 .spark-btn {
   display: inline-grid;
   place-items: center;
-  width: 22px;
-  height: 20px;
+  width: 26px;
+  height: 24px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-2);
@@ -2025,6 +2051,11 @@ kbd {
 
 .select-trigger[aria-expanded='true'] {
   border-color: var(--accent);
+}
+
+.select-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .select-pop {

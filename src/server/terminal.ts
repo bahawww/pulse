@@ -1,14 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import type { IncomingMessage } from 'node:http';
-import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import pty from 'node-pty';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import { csrfValid, WS_PROTOCOL, wsToken } from './csrf.js';
-import { isValid, onSessionEnd, peerAddress, sessionHash } from './session.js';
+import { roleAtLeast } from '../shared/contract.js';
+import { isValid, onSessionEnd, peerAddress, sessionHash, userOf } from './session.js';
+import { HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, writeKnownHosts } from './sshLocal.js';
 
 /**
  * Browser terminal: WebSocket <-> node-pty.
@@ -22,7 +22,7 @@ import { isValid, onSessionEnd, peerAddress, sessionHash } from './session.js';
  *
  * A terminal is a full shell as the SSH user (who has NOPASSWD sudo), so:
  *
- *  - It needs a logged-in session (cookie checked on the upgrade request). The
+ *  - It needs a logged-in admin session (cookie checked on the upgrade request). The
  *    login page is the only password prompt; this file has none of its own.
  *  - The Origin header must match Host, which stops cross-site WebSocket
  *    hijacking from a page the operator happens to visit.
@@ -53,16 +53,7 @@ import { isValid, onSessionEnd, peerAddress, sessionHash } from './session.js';
  * arguments, never through a shell string built from raw input.
  */
 
-const MODE = process.env.TERMINAL_MODE === 'local' ? 'local' : 'ssh';
-const SSH_HOST = process.env.TERMINAL_SSH_HOST ?? '127.0.0.1';
-const SSH_PORT = Number(process.env.TERMINAL_SSH_PORT ?? 22);
-const SSH_USER = process.env.TERMINAL_SSH_USER ?? os.userInfo().username;
-const HOME = process.env.HOME ?? os.homedir();
-const SSH_KEY = process.env.TERMINAL_SSH_KEY ?? `${HOME}/.ssh/dashboard_terminal`;
-const HOST_PUBKEY = process.env.TERMINAL_HOST_PUBKEY ?? '/etc/ssh/ssh_host_ed25519_key.pub';
-const DATA_DIR = process.env.DASHBOARD_DATA_DIR ?? path.join(process.cwd(), 'data');
-const KNOWN_HOSTS = path.join(DATA_DIR, 'terminal_known_hosts');
-const HOST_ALIAS = 'dashboard-local';
+// Loopback login settings (user, key, pinned host key) live in sshLocal.ts.
 
 const MAX_SESSIONS = 24;
 const IDLE_MS = 60 * 60_000;
@@ -185,10 +176,6 @@ export function targetLabel(t: Target): string {
   return `${t.proto} ${t.user ? `${t.user}@` : ''}${t.host}:${t.port}`;
 }
 
-/** POSIX single-quoting, for the command the loopback login runs. */
-function shq(arg: string): string {
-  return `'${arg.replace(/'/g, `'\\''`)}'`;
-}
 
 function originAllowed(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
@@ -205,17 +192,6 @@ function reject(socket: Duplex, status: string): void {
   socket.destroy();
 }
 
-/** known_hosts line pinning this host's ed25519 key under a fixed alias. Null when unreadable. */
-function writeKnownHosts(): boolean {
-  try {
-    const [type, key] = fs.readFileSync(HOST_PUBKEY, 'utf8').trim().split(/\s+/);
-    if (!type || !key) return false;
-    fs.writeFileSync(KNOWN_HOSTS, `${HOST_ALIAS} ${type} ${key}\n`, { mode: 0o600 });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function spawnShell(cols: number, rows: number, target: Target | null): pty.IPty | string {
   const env: Record<string, string> = {
@@ -240,21 +216,11 @@ function spawnShell(cols: number, rows: number, target: Target | null): pty.IPty
   return pty.spawn(
     '/usr/bin/ssh',
     [
-      '-F', '/dev/null',
       '-tt',
-      '-i', SSH_KEY,
-      '-p', String(SSH_PORT),
-      '-o', 'IdentitiesOnly=yes',
-      '-o', 'BatchMode=yes',
-      '-o', 'StrictHostKeyChecking=yes',
-      '-o', `UserKnownHostsFile=${KNOWN_HOSTS}`,
-      '-o', 'GlobalKnownHostsFile=/dev/null',
-      '-o', `HostKeyAlias=${HOST_ALIAS}`,
+      ...loopbackOptions(),
       '-o', 'ServerAliveInterval=30',
-      '-o', 'ConnectTimeout=10',
-      '-o', 'LogLevel=ERROR',
       '-o', 'SendEnv=COLORTERM',
-      `${SSH_USER}@${SSH_HOST}`,
+      LOOPBACK_DEST,
       // A remote target runs as the login's own command, in place of its shell.
       ...(target ? [`exec ${targetArgv(target).map(shq).join(' ')}`] : []),
     ],
@@ -403,6 +369,9 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
   if (!originAllowed(req)) return deny('403 Forbidden', 'origin does not match host');
   const login = sessionHash(req);
   if (!login) return deny('401 Unauthorized', 'no valid login session');
+  // A shell here is the SSH user with NOPASSWD sudo, i.e. root: admins only.
+  const role = userOf(login)?.role;
+  if (!role || !roleAtLeast(role, 'admin')) return deny('403 Forbidden', 'needs the admin role');
   if (!csrfValid(login, wsToken(req.headers['sec-websocket-protocol']))) return deny('403 Forbidden', 'missing or bad CSRF token');
 
   const sid = url.searchParams.get('sid');

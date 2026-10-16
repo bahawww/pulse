@@ -21,6 +21,11 @@ const SUBDOMAIN_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
     .filter((pair): pair is [string, string] => pair.length === 2 && pair[0] !== '' && pair[1] !== ''),
 );
 
+/** True when VITE_SUBDOMAINS names this service (scanned services only get a subdomain this way). */
+export function hasSubdomainLabel(serviceId: string): boolean {
+  return serviceId in SUBDOMAIN_LABELS;
+}
+
 /** Full hostname a service gets in subdomain mode, or null when no base domain is set. */
 export function subdomainFor(serviceId: string): string | null {
   if (!BASE_DOMAIN) return null;

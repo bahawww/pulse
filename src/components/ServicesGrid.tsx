@@ -1,26 +1,63 @@
 import { type CSSProperties, type JSX, useLayoutEffect, useRef, useState } from 'react';
-import { CATEGORY_FILTERS, SERVICES, type CategoryFilter, type Service, type StatsPayload } from '../shared/contract';
-import { buildServiceUrl, copyToClipboard, isSubdomainMode, type HostMode } from '../lib/urls';
+import { categoryFilters, type Service, type ServiceMeta, type StatsPayload } from '../shared/contract';
+import { buildServiceUrl, copyToClipboard, usesSubdomain, type HostMode } from '../lib/urls';
 import { subdomainFor } from '../lib/site';
+import { postJson } from '../lib/csrf';
 import { transition } from '../lib/motion';
 import { Bone, BoneLines, Loading } from './Skeleton';
-import { ArrowUpRightIcon, CopyIcon, LinkIcon, ServiceIconGlyph } from './icons';
+import { ArrowUpRightIcon, CopyIcon, EyeIcon, EyeOffIcon, LinkIcon, RefreshIcon, ServiceIconGlyph } from './icons';
 import { SERVICE_COLOR } from '../lib/serviceColor';
 
 interface ServicesGridProps {
   readonly data: StatsPayload | null;
   readonly hostMode: HostMode;
   readonly onNotify: (message: string) => void;
+  /** Re-fetch the stats after a hide or a scan changed the list. */
+  readonly onRefresh: () => void;
 }
+
+/** Cards drawn while the first stats are on their way. */
+const SKELETON_CARDS = 4;
 
 /**
  * Application launcher: category tabs, one card per service, live status from
- * the probe. Number keys 1-5 open a service; see App for the key handling.
+ * the probe. Curated services plus whatever the server's auto scan found
+ * (src/server/discover.ts); any card can be hidden and shown again. Number
+ * keys 1-9 open a service; see App for the key handling.
  */
-export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): JSX.Element {
-  const [category, setCategory] = useState<CategoryFilter>('all');
+export function ServicesGrid({ data, hostMode, onNotify, onRefresh }: ServicesGridProps): JSX.Element {
   const all = data?.services ?? [];
+  const hidden = data?.hiddenServices ?? [];
+  const filters = categoryFilters(all);
+  const [chosen, setCategory] = useState('all');
+  // A category whose last card was hidden falls back to all.
+  const category = filters.some((f) => f.id === chosen) ? chosen : 'all';
   const visible = category === 'all' ? all : all.filter((s) => s.category === category);
+  const [showHidden, setShowHidden] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  const setHidden = async (service: ServiceMeta, hide: boolean) => {
+    const res = await postJson('/api/services/hidden', { id: service.id, hidden: hide }).catch(() => null);
+    if (!res?.ok) {
+      onNotify(`Could not ${hide ? 'hide' : 'show'} ${service.name}`);
+      return;
+    }
+    onNotify(hide ? `Hid ${service.name}` : `${service.name} is back`);
+    transition('filter', onRefresh);
+  };
+
+  const scan = async () => {
+    setScanning(true);
+    const res = await postJson('/api/services/scan').catch(() => null);
+    setScanning(false);
+    if (!res?.ok) {
+      onNotify('Scan failed');
+      return;
+    }
+    const found = (await res.json().catch(() => ({}))) as { visible?: number };
+    onNotify(`Scan done: ${found.visible ?? '?'} services`);
+    transition('filter', onRefresh);
+  };
 
   // The highlight behind the active tab, measured from the DOM so it can spring
   // from tab to tab (motion.css) instead of each tab lighting up on its own.
@@ -39,7 +76,7 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
 
   /** Switch category inside a View Transition: cards that stay glide to their
    * new place, the rest blur out and in (motion.css, kind "filter"). */
-  const choose = (id: CategoryFilter) => {
+  const choose = (id: string) => {
     if (id === category) return;
     transition('filter', () => setCategory(id));
   };
@@ -55,9 +92,8 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
               aria-hidden="true"
             />
           )}
-          {CATEGORY_FILTERS.map((filter) => {
-            const count =
-              filter.id === 'all' ? SERVICES.length : SERVICES.filter((s) => s.category === filter.id).length;
+          {filters.map((filter) => {
+            const count = filter.id === 'all' ? all.length : all.filter((s) => s.category === filter.id).length;
             return (
               <button
                 key={filter.id}
@@ -73,13 +109,47 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
             );
           })}
         </div>
+        <div className="tw:flex tw:items-center tw:gap-2">
+          {hidden.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              aria-expanded={showHidden}
+              onClick={() => setShowHidden((v) => !v)}
+            >
+              <EyeOffIcon size={13} />
+              Hidden {hidden.length}
+            </button>
+          )}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void scan()} disabled={scanning} title="Look for new apps now">
+            <RefreshIcon size={13} />
+            {scanning ? 'Scanning…' : 'Rescan'}
+          </button>
+        </div>
       </div>
+
+      {showHidden && hidden.length > 0 && (
+        <ul className="tw:mb-4 tw:flex tw:flex-wrap tw:gap-2" aria-label="Hidden services">
+          {hidden.map((s) => (
+            <li
+              key={s.id}
+              className="tw:flex tw:items-center tw:gap-2 tw:rounded-md tw:border tw:border-line tw:bg-surface tw:py-1 tw:pr-1 tw:pl-3 tw:text-[13px] tw:text-fg-2"
+            >
+              <span className="tw:max-w-48 tw:truncate">{s.name}</span>
+              <span className="tw:font-mono tw:text-[11px] tw:text-fg-3">:{s.port}</span>
+              <button type="button" className="btn btn-icon btn-sm" onClick={() => void setHidden(s, false)} aria-label={`Show ${s.name}`} title="Show again">
+                <EyeIcon size={13} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {!data ? (
         <Loading what="services">
           <div className="svc-grid">
-            {SERVICES.filter((s) => category === 'all' || s.category === category).map((s) => (
-              <div key={s.id} className="svc skeleton-card" aria-hidden="true">
+            {Array.from({ length: SKELETON_CARDS }, (_, i) => (
+              <div key={i} className="svc skeleton-card" aria-hidden="true">
                 <div className="bone-row" style={{ padding: 0 }}>
                   <Bone w={36} h={36} />
                   <div className="skeleton-head" style={{ flex: 1 }}>
@@ -109,6 +179,7 @@ export function ServicesGrid({ data, hostMode, onNotify }: ServicesGridProps): J
               index={index}
               hostMode={hostMode}
               onNotify={onNotify}
+              onHide={() => void setHidden(service, true)}
             />
           ))}
         </div>
@@ -122,14 +193,16 @@ function ServiceCard({
   index,
   hostMode,
   onNotify,
+  onHide,
 }: {
   readonly service: Service;
   readonly index: number;
   readonly hostMode: HostMode;
   readonly onNotify: (message: string) => void;
+  readonly onHide: () => void;
 }): JSX.Element {
   const url = buildServiceUrl(service, hostMode);
-  const subdomain = isSubdomainMode(hostMode);
+  const subdomain = usesSubdomain(service, hostMode);
   const { online, latency } = service.status;
   const color = SERVICE_COLOR[service.id] ?? 'var(--accent)';
 
@@ -162,7 +235,7 @@ function ServiceCard({
         ) : (
           <span className="pill is-crit">Offline</span>
         )}
-        <span className="tag">key {service.keyNumber}</span>
+        {service.keyNumber && <span className="tag">key {service.keyNumber}</span>}
       </div>
 
       <p className="svc-desc">{service.description}</p>
@@ -179,6 +252,9 @@ function ServiceCard({
         </a>
         <button type="button" className="btn btn-icon" onClick={() => void copy()} aria-label={`Copy ${service.name} URL`} title="Copy URL">
           <CopyIcon size={14} />
+        </button>
+        <button type="button" className="btn btn-icon" onClick={onHide} aria-label={`Hide ${service.name}`} title="Hide">
+          <EyeOffIcon size={14} />
         </button>
       </div>
     </article>

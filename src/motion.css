@@ -68,25 +68,25 @@ html.theme-switching *::after {
 
 /* Stagger index: the nth child of these lists gets --n = n - 1 (capped). */
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(2) { --n: 1; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(2) { --n: 1; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(3) { --n: 2; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(3) { --n: 2; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(4) { --n: 3; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(4) { --n: 3; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(5) { --n: 4; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(5) { --n: 4; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(6) { --n: 5; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(6) { --n: 5; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(7) { --n: 6; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(7) { --n: 6; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(8) { --n: 7; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(8) { --n: 7; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(9) { --n: 8; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(9) { --n: 8; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(10) { --n: 9; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(10) { --n: 9; }
 :where(.kpis, .lamps, .svc-grid, .grid, .pulse-facts, .cores, .mem-bars, .log-list, .action-list, .ct-list, .stats,
-    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, tbody) > :nth-child(n + 11) { --n: 10; }
+    .spend-bars, .toolbar-compact, .pop, .palette-list, .alert-list, .files-list, tbody) > :nth-child(n + 11) { --n: 10; }
 
 /* ---------- 1. Controls: press squashes, release springs back ------------- */
 
@@ -561,6 +561,18 @@ html[data-vt='filter']::view-transition-new(*):only-child {
   animation: wipe-right 1000ms var(--ease-out) 260ms backwards;
 }
 
+/* Switching metric remounts the chart: a quick sharpen, not the whole entrance again. */
+.view[data-view='trends'] .is-refocused .spark-plot {
+  animation: refocus-in var(--dur) var(--ease-out) backwards;
+}
+
+@keyframes refocus-in {
+  from {
+    opacity: 0;
+    filter: blur(var(--mb-sm));
+  }
+}
+
 .view[data-view='trends'] .stats > * {
   animation: pop-in-scale var(--spring-bouncy-dur) var(--spring-bouncy) backwards;
   animation-delay: calc(200ms + var(--n, 0) * 70ms);
@@ -636,6 +648,39 @@ html[data-vt='filter']::view-transition-new(*):only-child {
 .view[data-view='logs-and-control'] .toolbar-compact > * {
   animation: pop-in-scale var(--spring-bouncy-dur) var(--spring-bouncy) backwards;
   animation-delay: calc(120ms + var(--n, 0) * 50ms);
+}
+
+/* Files: the card rises in, the path bar drops in, rows cascade down.
+   Opening another folder replays only a quick cascade (.is-nav). */
+.view[data-view='files'] .card {
+  animation: rise-soft var(--spring-soft-dur) var(--spring-soft) 60ms backwards;
+}
+
+.view[data-view='files'] .files-bar {
+  animation: drop-in var(--spring-snappy-dur) var(--spring-snappy) 140ms backwards;
+}
+
+.view[data-view='files'] .files-list > li {
+  animation: item-in 380ms var(--ease-out) backwards;
+  animation-delay: calc(200ms + var(--n, 0) * 24ms);
+}
+
+.view[data-view='files'] .files-list.is-nav > li {
+  animation-duration: 280ms;
+  animation-delay: calc(var(--n, 0) * 16ms);
+}
+
+.files-uploads > li {
+  animation: item-in 280ms var(--ease-out) backwards;
+}
+
+/* The preview slides in from its side; switching file sharpens the new content. */
+.files-preview {
+  animation: slide-in-right var(--spring-snappy-dur) var(--spring-snappy) backwards;
+}
+
+.files-preview-body {
+  animation: refocus-in var(--dur) var(--ease-out) backwards;
 }
 
 /* ---------- 6. Floating layers -------------------------------------------- */

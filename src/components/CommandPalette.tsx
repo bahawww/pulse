@@ -1,7 +1,7 @@
 import { type CSSProperties, type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { prefersReducedMotion } from '../lib/motion';
-import { SERVICES, type StatsPayload } from '../shared/contract';
-import { buildServiceUrl, copyToClipboard, isSubdomainMode, type HostMode } from '../lib/urls';
+import type { StatsPayload } from '../shared/contract';
+import { buildServiceUrl, copyToClipboard, usesSubdomain, type HostMode } from '../lib/urls';
 import { VIEWS, shortcutLabel } from '../lib/views';
 import { CopyIcon, RefreshIcon, SearchIcon, ServiceIconGlyph, TerminalIcon, ViewIcon } from './icons';
 import { SERVICE_COLOR } from '../lib/serviceColor';
@@ -15,8 +15,8 @@ interface PaletteProps {
   readonly onToggleTheme: () => void;
   readonly onRefresh: () => void;
   readonly onNotify: (message: string) => void;
-  readonly onOpenTerminal: () => void;
-  readonly onLogout: () => void;
+  /** Absent when this login may not open a terminal. */
+  readonly onOpenTerminal?: () => void;
   /** Set only while the browser offers to install the app. */
   readonly onInstall?: () => void;
 }
@@ -50,7 +50,6 @@ export function CommandPalette({
   onRefresh,
   onNotify,
   onOpenTerminal,
-  onLogout,
   onInstall,
 }: PaletteProps): JSX.Element | null {
   const [query, setQuery] = useState('');
@@ -85,17 +84,16 @@ export function CommandPalette({
   const effectiveHost = hostMode === 'auto' ? window.location.hostname || '127.0.0.1' : hostMode;
 
   const items = useMemo<PaletteItem[]>(() => {
-    const online = new Map(data?.services.map((s) => [s.id, s.status.online]) ?? []);
-    const subdomains = isSubdomainMode(hostMode);
+    const services = data?.services ?? [];
 
-    const open: PaletteItem[] = SERVICES.map((svc) => {
+    const open: PaletteItem[] = services.map((svc) => {
       const url = buildServiceUrl(svc, hostMode);
       return {
         id: `open-${svc.id}`,
         category: 'Open',
         title: svc.name,
-        description: subdomains ? url : `${svc.description.slice(0, 80)}… :${svc.port}`,
-        hint: online.get(svc.id) ? 'online' : 'offline',
+        description: usesSubdomain(svc, hostMode) ? url : `${svc.description.slice(0, 80)}… :${svc.port}`,
+        hint: svc.status.online ? 'online' : 'offline',
         color: SERVICE_COLOR[svc.id],
         icon: <ServiceIconGlyph icon={svc.icon} size={16} />,
         keywords: `${svc.name} ${svc.port} ${svc.category} open launch ${svc.id}`.toLowerCase(),
@@ -106,7 +104,7 @@ export function CommandPalette({
       };
     });
 
-    const copy: PaletteItem[] = SERVICES.map((svc) => {
+    const copy: PaletteItem[] = services.map((svc) => {
       const url = buildServiceUrl(svc, hostMode);
       return {
         id: `copy-${svc.id}`,
@@ -164,7 +162,7 @@ export function CommandPalette({
     ];
 
     const session: PaletteItem[] = [
-      {
+      ...(onOpenTerminal ? [{
         id: 'terminal',
         category: 'Terminal',
         title: 'Open terminal',
@@ -173,17 +171,8 @@ export function CommandPalette({
         icon: <TerminalIcon size={15} />,
         keywords: 'terminal shell ssh console bash tty command line',
         run: onOpenTerminal,
-      },
-      {
-        id: 'logout',
-        category: 'Account',
-        title: 'Log out',
-        description: 'End this session and close any open terminals',
-        hint: 'sign out',
-        icon: <SearchIcon size={15} />,
-        keywords: 'log out logout sign out signout exit session',
-        run: onLogout,
-      },
+      }] : []),
+      // No log out here: it lives only in the profile menu (top right).
     ];
 
     if (onInstall) {
@@ -200,7 +189,7 @@ export function CommandPalette({
     }
 
     return [...session.slice(0, 1), ...open, ...go, ...copy, ...system, ...session.slice(1)];
-  }, [data, hostMode, onInstall, onLogout, onNotify, onOpenTerminal, onRefresh, onToggleTheme, theme]);
+  }, [data, hostMode, onInstall, onNotify, onOpenTerminal, onRefresh, onToggleTheme, theme]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

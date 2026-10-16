@@ -20,6 +20,7 @@ flowchart LR
     DB[("data/telemetry.db<br/>node:sqlite")]
   end
   HOST["/proc, df, Docker socket,<br/>journalctl, systemctl"]
+  MY[("MySQL 8.4 (Docker, loopback)<br/>users table")]
   SSHD["sshd on loopback"]
 
   SPA -- "fetch JSON" --> EX
@@ -29,6 +30,7 @@ flowchart LR
   SM --> DB
   SM --> ST
   EX --> DB
+  EX -- "accounts, roles" --> MY
   TM -- "ssh -tt" --> SSHD
 ```
 
@@ -38,13 +40,17 @@ flowchart LR
 | --- | --- |
 | `src/server/index.ts` | Express app: security headers, auth and CSRF gates, every route, the sampler, startup and shutdown. |
 | `src/server/collect/` | One collector per metric (CPU, memory, disk, filesystems, processes, Docker). Read-only. |
-| `src/server/probe.ts` | HTTP probes of the configured services (latency, online). |
+| `src/server/probe.ts` | TCP probes of the listed services (latency, online). |
+| `src/server/files.ts` | File explorer API: list, preview, download, upload, mkdir, rename, delete; runs as the SSH user over the loopback login, writes logged to the action log. |
+| `src/server/sshLocal.ts` | Loopback SSH login settings shared by the terminal and the file explorer (key, pinned host key). |
+| `src/server/discover.ts` | Auto scan for services (Docker published ports, host listeners that answer HTTP), hidden list; state in `data/services.json`. |
 | `src/server/history.ts`, `store.ts` | In-memory ring for recent samples, SQLite for durable history, alert events and the action log. |
 | `src/server/alerts.ts`, `notify.ts` | Threshold rules over the sample stream; optional Telegram delivery. |
 | `src/server/actions.ts` | start, stop and restart for systemd units and containers: allowlist plus two-phase confirmation. |
 | `src/server/logs.ts` | Bounded `journalctl` reads with validated unit names. |
 | `src/server/reachability.ts`, `spend.ts` | Outside-in reachability check and LLM spend, both on demand. |
-| `src/server/session.ts`, `csrf.ts` | Login, server-side sessions, origin checks, CSRF tokens. |
+| `src/server/session.ts`, `csrf.ts` | Login, server-side sessions with a role, `requireRole`, origin checks, CSRF tokens. |
+| `src/server/db.ts`, `users.ts`, `userRoutes.ts` | MySQL pool and migrations (`deploy/sql/`), scrypt password hashes, account rules, `/api/users`. |
 | `src/server/stream.ts` | Server-sent events to every open tab. |
 | `src/server/terminal.ts` | WebSocket to pty bridge, remote SSH and Telnet targets, flow control. |
 | `src/shared/contract.ts` | Types and constants shared by server and client: the API contract. |
@@ -53,7 +59,8 @@ flowchart LR
 | `src/components/` | Views and panels. `components/terminal/` is the terminal, loaded as its own chunk. |
 | `src/styles.css`, `motion.css`, `terminal.css` | Plain CSS on design tokens. |
 | `src/tailwind.css` | Tailwind v4 for new components only: `tw:` prefix, no preflight, theme mapped to the tokens. |
-| `deploy/` | Unit template, hardening drop-in, health-ping cron script. |
+| `deploy/` | Unit template, hardening drop-in, health-ping cron script, `sql/` migrations. |
+| `scripts/user.mjs` | Account CLI: list, create, set a password. phpMyAdmin cannot make the hash. |
 
 ## Data flow
 
@@ -94,11 +101,11 @@ tree (`split.ts`), so re-arranging never remounts a shell.
 
 ## Key decisions
 
-- **Express plus a Vite SPA, not Next.js.** Pulse is private, single-user and
+- **Express plus a Vite SPA, not Next.js.** Pulse is private, has a handful of users and is
   behind a login, so server rendering and SEO buy nothing. The terminal needs a
   long-lived WebSocket and node-pty in the same process, which Next.js only
   allows through a custom server; its inline runtime scripts would also need a
-  nonce-based CSP. Revisit if the app grows public pages or several users.
+  nonce-based CSP. Revisit if the app grows public pages.
 - **SSE over WebSocket for telemetry.** The flow is one-way, EventSource
   reconnects by itself, it works through HTTP proxies as a normal GET, and it
   carries cookies with no extra handshake. WebSocket is kept for the terminal,
@@ -112,6 +119,19 @@ tree (`split.ts`), so re-arranging never remounts a shell.
   a cascade layer, so plain CSS always wins: never mix the two on one element.
   Keyframes and view transitions stay in `motion.css`. The design system is
   published separately as a Claude Design System artifact.
+- **Accounts in MySQL, roles on the session.** Users and roles (viewer,
+  operator, admin) live in a MySQL container on loopback, so phpMyAdmin can
+  show and edit them. The role is copied into the session at login; any change
+  to an account ends its sessions, so the new role applies at once. The env
+  account (`ADMIN_USER`/`ADMIN_PASSWORD`) seeds the first admin and is a
+  break-glass login used only while MySQL cannot be reached. Telemetry stays
+  in SQLite: it is per-box and needs no server.
+- **Roles.** viewer reads telemetry and logs; operator also runs service
+  actions and the service scan; admin also gets the terminal, the file
+  explorer (reads too: it can open secrets) and user management; the one
+  superadmin (`ADMIN_USER`) is an admin whose account cannot be changed or
+  removed, re-asserted at start and every 5 minutes. The server
+  enforces this with `requireRole`; the client only hides what would 403.
 - **One process, no queue.** Everything the server does is bounded per tick or
   per request; nothing needs a worker.
 

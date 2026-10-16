@@ -15,7 +15,7 @@ export interface ServiceStatus {
 export interface ServiceCategoryMeta {
   readonly badge: string;
   readonly category: string;
-  /** Single key 1-9 mapped to a keyboard shortcut. */
+  /** Single key 1-9 mapped to a keyboard shortcut; '' when the digits ran out. */
   readonly keyNumber: string;
   readonly name: string;
   readonly description: string;
@@ -26,9 +26,16 @@ export interface ServiceCategoryMeta {
   readonly themeClass: string;
 }
 
-export type ServiceIcon = 'bot' | 'network' | 'activity' | 'monitor' | 'terminal' | 'server';
+export type ServiceIcon = 'bot' | 'network' | 'activity' | 'monitor' | 'terminal' | 'server' | 'boxes';
 
-export interface Service extends ServiceCategoryMeta {
+/** Where a service came from: the curated list below, or the auto scan. */
+export type ServiceSource = 'curated' | 'docker' | 'host';
+
+export interface ServiceMeta extends ServiceCategoryMeta {
+  readonly source: ServiceSource;
+}
+
+export interface Service extends ServiceMeta {
   readonly status: ServiceStatus;
 }
 
@@ -150,7 +157,10 @@ export interface SystemMetrics {
 }
 
 export interface StatsPayload {
+  /** Visible services: curated plus discovered, minus the hidden ones. */
   readonly services: readonly Service[];
+  /** Hidden from every list; offered back on the Applications view. */
+  readonly hiddenServices: readonly ServiceMeta[];
   readonly system: SystemMetrics;
 }
 
@@ -333,6 +343,37 @@ export interface ReachabilityReport {
 }
 
 // ---------------------------------------------------------------------------
+// Users (src/server/users.ts, MySQL)
+// ---------------------------------------------------------------------------
+
+/**
+ * viewer: read-only monitoring. operator: also service actions. admin: also
+ * terminal, files, users. superadmin: everything admin can, and the account
+ * itself cannot be deleted, disabled, demoted or renamed. Exactly one, the
+ * env ADMIN_USER; it is never assignable.
+ */
+export type Role = 'viewer' | 'operator' | 'admin' | 'superadmin';
+
+/** Roles an admin can give through the API, the Users view or the CLI. */
+export type AssignableRole = Exclude<Role, 'superadmin'>;
+
+export const ROLE_RANK: Readonly<Record<Role, number>> = { viewer: 0, operator: 1, admin: 2, superadmin: 3 };
+
+export function roleAtLeast(role: Role, min: Role): boolean {
+  return ROLE_RANK[role] >= ROLE_RANK[min];
+}
+
+export interface UserRow {
+  readonly id: number;
+  readonly username: string;
+  readonly role: Role;
+  readonly disabled: boolean;
+  /** Epoch ms. */
+  readonly createdAt: number;
+  readonly lastLoginAt: number | null;
+}
+
+// ---------------------------------------------------------------------------
 // Write actions (feature 9)
 // ---------------------------------------------------------------------------
 
@@ -361,7 +402,8 @@ export interface ActionLogEntry {
   readonly id: number;
   /** Epoch ms when the action finished. */
   readonly ts: number;
-  readonly target: ActionTarget;
+  /** 'files': an upload, rename, new folder or delete from the file explorer. 'users': an account change. */
+  readonly target: ActionTarget | 'files' | 'users';
   readonly name: string;
   readonly action: string;
   readonly ok: boolean;
@@ -408,11 +450,53 @@ export interface SpendReport {
   readonly fetchedAt: number;
 }
 
+// ---------------------------------------------------------------------------
+// File explorer
+// ---------------------------------------------------------------------------
+
+export type FileKind = 'file' | 'dir' | 'link' | 'other';
+
+export interface FileEntry {
+  readonly name: string;
+  readonly kind: FileKind;
+  /** For a symlink, what it points at ('dir' means it can be opened as a folder). */
+  readonly target: FileKind | null;
+  readonly size: number;
+  /** Epoch ms. */
+  readonly mtime: number;
+  /** Octal permission bits, e.g. "755". */
+  readonly mode: string;
+  readonly owner: string;
+}
+
+export interface FileListing {
+  /** Absolute path that was listed, as the shell resolved it. */
+  readonly path: string;
+  /** The SSH user's home, for the Home button. */
+  readonly home: string;
+  readonly entries: readonly FileEntry[];
+  /** More entries existed than the listing cap. */
+  readonly truncated: boolean;
+}
+
+export interface FilePreview {
+  readonly path: string;
+  readonly size: number;
+  /** Null for a binary file. */
+  readonly text: string | null;
+  readonly truncated: boolean;
+}
+
 /** Shape returned on a 5xx from /api/stats, or when a probe layer throws. */
 export interface ApiErrorPayload {
   readonly error: string;
 }
 
+/**
+ * Curated services: hand-written names, descriptions and keys. Always listed,
+ * online or not. The auto scan (src/server/discover.ts) adds everything else;
+ * a scanned port that matches one of these is shown as this entry instead.
+ */
 export const SERVICES: readonly ServiceCategoryMeta[] = [
   {
     id: 'hermes',
@@ -493,13 +577,27 @@ export function isHiddenContainer(name: string): boolean {
   return HIDDEN_CONTAINER_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
-/** Ordered category filter list; "all" is always offered first. */
-export const CATEGORY_FILTERS = [
-  { id: 'all', label: 'All Services' },
-  { id: 'AI Agents', label: 'AI Agents' },
-  { id: 'AI Infrastructure', label: 'AI Gateway' },
-  { id: 'Remote Access', label: 'Remote GUI' },
-  { id: 'Deployment', label: 'Deploy' },
-] as const;
+/** Categories the auto scan files services under. */
+export const DOCKER_CATEGORY = 'Containers';
+export const HOST_CATEGORY = 'Discovered';
 
-export type CategoryFilter = (typeof CATEGORY_FILTERS)[number]['id'];
+/** Short tab labels; a category without one shows its own name. Tabs follow this order. */
+const CATEGORY_LABELS: Readonly<Record<string, string>> = {
+  'AI Agents': 'AI Agents',
+  'AI Infrastructure': 'AI Gateway',
+  'Remote Access': 'Remote GUI',
+  Deployment: 'Deploy',
+  [DOCKER_CATEGORY]: 'Containers',
+  [HOST_CATEGORY]: 'Discovered',
+};
+
+/** "all" first, then every category present, known ones in CATEGORY_LABELS order. */
+export function categoryFilters(services: readonly { readonly category: string }[]): { id: string; label: string }[] {
+  const present = new Set(services.map((s) => s.category));
+  const known = Object.keys(CATEGORY_LABELS).filter((c) => present.has(c));
+  const rest = [...present].filter((c) => !(c in CATEGORY_LABELS)).sort();
+  return [
+    { id: 'all', label: 'All Services' },
+    ...[...known, ...rest].map((id) => ({ id, label: CATEGORY_LABELS[id] ?? id })),
+  ];
+}

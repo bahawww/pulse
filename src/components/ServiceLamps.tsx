@@ -1,5 +1,5 @@
 import { type CSSProperties, type JSX } from 'react';
-import { SERVICES, type Service, type StatsPayload } from '../shared/contract';
+import type { Service, StatsPayload } from '../shared/contract';
 import { buildServiceUrl, type HostMode } from '../lib/urls';
 import { serviceColor } from '../lib/serviceColor';
 import { Bone, Loading } from './Skeleton';
@@ -10,6 +10,9 @@ interface ServiceLampsProps {
   readonly hostMode: HostMode;
   readonly onNotify: (message: string) => void;
 }
+
+/** Rows drawn while the first stats are on their way. */
+const SKELETON_ROWS = 5;
 
 function median(values: readonly number[]): number | null {
   if (values.length === 0) return null;
@@ -35,8 +38,8 @@ export function ServiceLamps({ data, hostMode, onNotify }: ServiceLampsProps): J
     return (
       <Loading what="services">
         <ul className="lamps">
-          {SERVICES.map((svc, i) => (
-            <li key={svc.id} className="bone-row">
+          {Array.from({ length: SKELETON_ROWS }, (_, i) => (
+            <li key={i} className="bone-row">
               <Bone w={32} h={32} />
               <Bone w={`${48 + ((i * 13) % 30)}%`} />
               <Bone w={44} />
