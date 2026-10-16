@@ -28,7 +28,8 @@ import {
   passwordConfigured,
   passwordWeak,
   peerAddress,
-  requireRole,
+  renewSession,
+  requirePerm,
   requireSession,
   sameOrigin,
   sessionHash,
@@ -40,7 +41,8 @@ import { performAction, refreshAllowlist } from './actions.js';
 import { readLogs, listUnits } from './logs.js';
 import { checkReachability } from './reachability.js';
 import { getSpend } from './spend.js';
-import { handleUpgrade } from './terminal.js';
+import { detachedShells, handleUpgrade } from './terminal.js';
+import { getSessions, killSession, renameSession } from './tmux.js';
 import { CSRF_HEADER, csrfToken, csrfValid } from './csrf.js';
 import { onServicesChange, rescan, serviceList, setHidden, startDiscovery } from './discover.js';
 import { registerFileRoutes, UPLOAD_PATH } from './files.js';
@@ -289,6 +291,7 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
     res.status(401).json({ error: 'login required' });
     return;
   }
+  renewSession(req, res);
   res.json({ user, csrf: csrfToken(hash) });
 });
 
@@ -437,13 +440,13 @@ const logLimiter = rateLimit({
   message: { error: 'Too many log requests' },
 });
 
-app.get('/api/logs/units', logLimiter, (_req: Request, res: Response) => {
+app.get('/api/logs/units', logLimiter, requirePerm('view:logs'), (_req: Request, res: Response) => {
   void listUnits()
     .then((units) => res.json({ units }))
     .catch(() => res.status(500).json({ error: 'could not list units' }));
 });
 
-app.get('/api/logs', logLimiter, (req: Request, res: Response) => {
+app.get('/api/logs', logLimiter, requirePerm('view:logs'), (req: Request, res: Response) => {
   const unit = String(req.query.unit ?? '');
   if (!unit) {
     res.status(400).json({ error: 'unit query parameter required' });
@@ -530,18 +533,35 @@ const filesWriteLimiter = rateLimit({
   message: { error: 'Too many file operations' },
 });
 // The explorer reads and writes anything the dashboard user can, secrets
-// included, so all of it is admin-only.
-app.use('/api/files', requireRole('admin'));
+// included: reads need files:read, every write files:write (both admin-only roles).
+const filesRead = requirePerm('files:read');
+const filesWrite = requirePerm('files:write');
+app.use('/api/files', (req: Request, res: Response, next: NextFunction) => (req.method === 'GET' ? filesRead : filesWrite)(req, res, next));
 registerFileRoutes(app, apiLimiter, filesWriteLimiter);
 
+// tmux session manager (tmux.ts): list, rename, kill. Attaching is a terminal window.
+const wrapAsync = (fn: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response) => {
+  fn(req, res).catch(() => {
+    if (!res.headersSent) res.status(500).json({ error: 'tmux command failed' });
+  });
+};
+app.get('/api/tmux', apiLimiter, requirePerm('terminal'), wrapAsync(getSessions));
+app.post('/api/tmux/kill', actionLimiter, requirePerm('terminal'), wrapAsync(killSession));
+app.post('/api/tmux/rename', actionLimiter, requirePerm('terminal'), wrapAsync(renameSession));
+
+// Shells a new tab or a relaunched phone app can reattach (terminal.ts).
+app.get('/api/terminal/sessions', apiLimiter, requirePerm('terminal'), (_req: Request, res: Response) => {
+  res.json({ shells: detachedShells(res.locals.sessionHash as string) });
+});
+
 // Accounts (userRoutes.ts). Admin-only; the rows live in MySQL.
-registerUserRoutes(app, apiLimiter, requireRole('admin'), destroyUserSessions, (req) => {
+registerUserRoutes(app, apiLimiter, destroyUserSessions, (req) => {
   const hash = sessionHash(req);
-  return hash ? (userOf(hash)?.id ?? null) : null;
+  return hash ? userOf(hash) : null;
 });
 
 // Auto-scanned services: hide or show one, or scan again now.
-app.post('/api/services/hidden', apiLimiter, requireRole('operator'), (req: Request, res: Response) => {
+app.post('/api/services/hidden', apiLimiter, requirePerm('services:control'), (req: Request, res: Response) => {
   const body = req.body as { id?: unknown; hidden?: unknown };
   if (typeof body.id !== 'string' || body.id.length > 120 || typeof body.hidden !== 'boolean') {
     res.status(400).json({ error: 'id and hidden required' });
@@ -554,7 +574,7 @@ app.post('/api/services/hidden', apiLimiter, requireRole('operator'), (req: Requ
   res.json({ ok: true });
 });
 
-app.post('/api/services/scan', apiLimiter, requireRole('operator'), (_req: Request, res: Response) => {
+app.post('/api/services/scan', apiLimiter, requirePerm('services:control'), (_req: Request, res: Response) => {
   void rescan().then(() => {
     const { visible, hidden } = serviceList();
     res.json({ ok: true, visible: visible.length, hidden: hidden.length });
@@ -563,12 +583,12 @@ app.post('/api/services/scan', apiLimiter, requireRole('operator'), (_req: Reque
 
 // Audit trail of executed write actions, newest first. Read-only, so it sits
 // behind the normal read limiter rather than the action one.
-app.get('/api/actions/log', apiLimiter, (_req: Request, res: Response) => {
+app.get('/api/actions/log', apiLimiter, requirePerm('view:logs'), (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ entries: recentActions(50) });
 });
 
-app.post('/api/action', actionLimiter, requireRole('operator'), (req: Request, res: Response) => {
+app.post('/api/action', actionLimiter, requirePerm('services:control'), (req: Request, res: Response) => {
   const body = req.body as { target?: unknown; name?: unknown; action?: unknown; confirm?: unknown };
 
   void performAction(

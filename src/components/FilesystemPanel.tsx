@@ -1,6 +1,7 @@
 import { type JSX, useMemo } from 'react';
 import type { FilesystemInfo } from '../shared/contract';
 import { formatBytes, formatPercent } from '../lib/format';
+import { fill } from '../lib/meter';
 
 /**
  * Every real mount, with bytes and inodes. Inodes get their own number because
@@ -65,7 +66,7 @@ export function FilesystemPanel({ filesystems, rootMount }: FilesystemPanelProps
                 <div className="meter" aria-hidden="true">
                   <div
                     className={`meter-fill ${tone(fs.percent)}`}
-                    style={{ width: `${Math.min(fs.percent, 100)}%`, background: tone(fs.percent) ? undefined : 'var(--s-disk)' }}
+                    style={fill(fs.percent, tone(fs.percent) ? undefined : 'var(--s-disk)')}
                   />
                 </div>
                 <div className="fs-meta">

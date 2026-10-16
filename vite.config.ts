@@ -14,7 +14,10 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          react: ['react', 'react-dom'],
+          // The renderer (react-dom/client) too: React only changes on upgrades,
+          // so this chunk keeps its hash across deploys and stays in the
+          // service worker's cache while the app chunk changes.
+          react: ['react', 'react-dom', 'react-dom/client'],
         },
       },
     },

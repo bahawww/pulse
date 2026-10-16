@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { postJson, setCsrf } from '../lib/csrf';
 import { SESSION_CHECK_EVENT, useStreamLive } from '../lib/stream';
-import type { Role } from '../shared/contract';
+import type { Permission, Role } from '../shared/contract';
 
 export interface AuthUser {
   readonly id: number | null;
   readonly name: string;
   readonly role: Role;
+  readonly permissions: readonly Permission[];
 }
 
 export type AuthState =

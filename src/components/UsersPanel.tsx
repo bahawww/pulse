@@ -1,36 +1,47 @@
-import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
-import type { AssignableRole, Role, UserRow } from '../shared/contract';
+import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  PERMISSIONS,
+  ROLE_RANK,
+  roleCeiling,
+  type AssignableRole,
+  type Permission,
+  type Role,
+  type UserRow,
+} from '../shared/contract';
 import { formatDay, formatClock } from '../shared/time';
 import { postJson } from '../lib/csrf';
+import type { AuthUser } from '../hooks/useAuth';
 import { ConfirmDialog } from './ConfirmDialog';
 import { SelectMenu } from './SelectMenu';
 import { Bone, Loading } from './Skeleton';
-import { RefreshIcon, TrashIcon } from './icons';
+import { PencilIcon, RefreshIcon } from './icons';
 
 /**
- * Login accounts (admin only). Rows live in MySQL (src/server/users.ts) and
- * can also be read in phpMyAdmin. Any change here logs that account out, so a
- * new role or a disable takes effect at once. The server refuses changes to
- * your own account and to the last enabled admin. The superadmin row is
- * locked: only its owner can change its password, nothing else.
+ * Login accounts and what each one may open or do. Rows live in MySQL
+ * (src/server/users.ts); the server applies the same rules shown here:
+ *  - the superadmin edits anyone: username, password, role, status, permissions;
+ *  - an admin with "Manage users" edits viewers and operators (not their
+ *    username or password), and can create them;
+ *  - permissions are picked per user, within what the role allows.
+ * A saved change logs that account out, so it applies at once.
  */
 
 interface UsersPanelProps {
-  readonly selfId: number | null;
+  readonly me: AuthUser;
   readonly onNotify: (message: string) => void;
 }
 
-const ROLES: readonly AssignableRole[] = ['viewer', 'operator', 'admin'];
-const ROLE_OPTIONS = ROLES.map((r) => ({ value: r, label: r }));
 const ROLE_HINT: Readonly<Record<Role, string>> = {
-  viewer: 'read-only monitoring and logs',
-  operator: 'also start, stop and restart services',
-  admin: 'also terminal, files and users',
-  superadmin: 'everything; cannot be changed or deleted',
+  viewer: 'can be given views only',
+  operator: 'views and service control',
+  admin: 'everything, incl. terminal, files and managing viewers/operators',
+  superadmin: 'everything; the one account that manages admins',
 };
 
+const GROUPS = [...new Set(PERMISSIONS.map((p) => p.group))];
+
 const field =
-  'tw:rounded-md tw:border tw:border-line-strong tw:bg-surface-2 tw:px-3 tw:py-1.5 tw:text-[13px] tw:text-fg tw:outline-none';
+  'tw:w-full tw:rounded-md tw:border tw:border-line-strong tw:bg-surface-2 tw:px-3 tw:py-1.5 tw:text-[13px] tw:text-fg tw:outline-none tw:disabled:opacity-60';
 
 async function errorOf(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -41,13 +52,32 @@ function when(ts: number | null): string {
   return ts === null ? 'never' : `${formatDay(ts)} ${formatClock(ts, false)}`;
 }
 
-export function UsersPanel({ selfId, onNotify }: UsersPanelProps): JSX.Element {
+/** The editor's working copy. id null = a new user. */
+interface Draft {
+  readonly id: number | null;
+  readonly username: string;
+  readonly password: string;
+  readonly role: Role;
+  readonly disabled: boolean;
+  readonly permissions: ReadonlySet<Permission>;
+}
+
+export function UsersPanel({ me, onNotify }: UsersPanelProps): JSX.Element {
   const [users, setUsers] = useState<readonly UserRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<UserRow | null>(null);
-  const [resetFor, setResetFor] = useState<UserRow | null>(null);
-  const [newRole, setNewRole] = useState<AssignableRole>('viewer');
+
+  const isSuper = me.role === 'superadmin';
+  /** Roles I may give out. */
+  const assignable: readonly AssignableRole[] = isSuper ? ['viewer', 'operator', 'admin'] : ['viewer', 'operator'];
+
+  /** May I change this account's role, status, permissions, or delete it? (Same rule as the server.) */
+  const mayManage = useCallback(
+    (u: UserRow) => u.id !== me.id && u.role !== 'superadmin' && (isSuper || ROLE_RANK[u.role] < ROLE_RANK.admin),
+    [isSuper, me.id],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -67,46 +97,67 @@ export function UsersPanel({ selfId, onNotify }: UsersPanelProps): JSX.Element {
     void load();
   }, [load]);
 
-  const send = useCallback(
-    async (path: string, body: unknown, done: string): Promise<boolean> => {
-      setBusy(true);
-      try {
-        const res = await postJson(path, body);
-        if (!res.ok) {
-          onNotify(await errorOf(res));
-          return false;
-        }
-        onNotify(done);
-        await load();
-        return true;
-      } catch {
-        onNotify('server unreachable');
-        return false;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [load, onNotify],
-  );
+  const edit = (u: UserRow) =>
+    setDraft({ id: u.id, username: u.username, password: '', role: u.role, disabled: u.disabled, permissions: new Set(u.permissions) });
+  const create = () => setDraft({ id: null, username: '', password: '', role: 'viewer', disabled: false, permissions: new Set(roleCeiling('viewer')) });
 
-  async function create(e: FormEvent<HTMLFormElement>) {
+  const original = draft?.id != null ? (users?.find((u) => u.id === draft.id) ?? null) : null;
+
+  /** Sends the changes in order: details, username, password. Stops at the first refusal. */
+  async function save(e: FormEvent) {
     e.preventDefault();
-    const form = e.currentTarget;
-    const data = new FormData(form);
-    const username = String(data.get('username') ?? '').trim().toLowerCase();
-    const ok = await send('/api/users', { username, password: data.get('password'), role: newRole }, `Added ${username}`);
-    if (ok) {
-      form.reset();
-      setNewRole('viewer');
+    if (!draft) return;
+    setBusy(true);
+    try {
+      const perms = PERMISSIONS.map((p) => p.key).filter((k) => draft.permissions.has(k));
+      const name = draft.username.trim().toLowerCase();
+      if (draft.id === null) {
+        const res = await postJson('/api/users', { username: name, password: draft.password, role: draft.role, permissions: perms });
+        if (!res.ok) return onNotify(await errorOf(res));
+        onNotify(`Added ${name}`);
+      } else if (original) {
+        if (mayManage(original)) {
+          const changed = draft.role !== original.role || draft.disabled !== original.disabled || perms.join() !== original.permissions.join();
+          if (changed) {
+            const body: { role?: Role; disabled: boolean; permissions: Permission[] } = { disabled: draft.disabled, permissions: perms };
+            if (draft.role !== original.role) body.role = draft.role;
+            const res = await postJson(`/api/users/${original.id}`, body);
+            if (!res.ok) return onNotify(await errorOf(res));
+          }
+        }
+        if (isSuper && name !== original.username) {
+          const res = await postJson(`/api/users/${original.id}/username`, { username: name });
+          if (!res.ok) return onNotify(await errorOf(res));
+        }
+        if (isSuper && draft.password) {
+          const res = await postJson(`/api/users/${original.id}/password`, { password: draft.password });
+          if (!res.ok) return onNotify(await errorOf(res));
+        }
+        onNotify(`Saved ${name}${original.id === me.id ? '' : ' · they were logged out to apply it'}`);
+      }
+      setDraft(null);
+      await load();
+    } catch {
+      onNotify('server unreachable');
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function resetPassword(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!resetFor) return;
-    const password = new FormData(e.currentTarget).get('password');
-    const ok = await send(`/api/users/${resetFor.id}/password`, { password }, `Password changed for ${resetFor.username}`);
-    if (ok) setResetFor(null);
+  async function remove(u: UserRow) {
+    setBusy(true);
+    try {
+      const res = await postJson(`/api/users/${u.id}/delete`, {});
+      onNotify(res.ok ? `Deleted ${u.username}` : await errorOf(res));
+      if (res.ok) {
+        setDraft(null);
+        await load();
+      }
+    } catch {
+      onNotify('server unreachable');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -116,45 +167,17 @@ export function UsersPanel({ selfId, onNotify }: UsersPanelProps): JSX.Element {
           <h3 id="users-h" className="card-title">
             Users
           </h3>
-          <p className="card-sub">who can log in, and what they may do. Stored in MySQL.</p>
+          <p className="card-sub">who can log in, and what each one may see and do</p>
         </div>
-        <button type="button" className="btn btn-icon btn-sm" onClick={() => void load()} aria-label="Refresh" title="Refresh">
-          <RefreshIcon size={14} />
-        </button>
+        <span className="tw:flex tw:gap-2">
+          <button type="button" className="btn btn-icon btn-sm" onClick={() => void load()} aria-label="Refresh" title="Refresh">
+            <RefreshIcon size={14} />
+          </button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={create} disabled={busy}>
+            Add user
+          </button>
+        </span>
       </div>
-
-      <form onSubmit={(e) => void create(e)} className="tw:mb-4 tw:flex tw:flex-wrap tw:items-end tw:gap-2">
-        <label className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
-          Username
-          <input name="username" required minLength={2} maxLength={64} pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]+" autoComplete="off" spellCheck={false} className={field} />
-        </label>
-        <label className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
-          Password
-          <input name="password" type="password" required autoComplete="new-password" className={field} />
-        </label>
-        <div className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
-          <span aria-hidden="true">Role</span>
-          <SelectMenu label="Role" value={newRole} options={ROLE_OPTIONS} onChange={(v) => setNewRole(v as AssignableRole)} />
-        </div>
-        <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
-          Add user
-        </button>
-      </form>
-
-      {resetFor && (
-        <form onSubmit={(e) => void resetPassword(e)} className="confirm tw:flex tw:flex-wrap tw:items-end tw:gap-2" aria-label={`New password for ${resetFor.username}`}>
-          <label className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
-            New password for <strong>{resetFor.username}</strong>
-            <input name="password" type="password" required autoComplete="new-password" autoFocus className={field} />
-          </label>
-          <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
-            Set password
-          </button>
-          <button type="button" className="btn btn-sm" onClick={() => setResetFor(null)}>
-            Cancel
-          </button>
-        </form>
-      )}
 
       {error && <p className="result is-error">{error}</p>}
       {!users && !error && (
@@ -165,87 +188,72 @@ export function UsersPanel({ selfId, onNotify }: UsersPanelProps): JSX.Element {
       )}
 
       {users && (
-        // No overflow wrapper: a scroll container would clip the role dropdown.
-        <div>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th className="tw:max-sm:hidden">Last login</th>
-                <th aria-label="Actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => {
-                const self = u.id === selfId;
-                const locked = u.role === 'superadmin';
-                return (
-                  <tr key={u.id}>
-                    <td>
-                      {u.username}
-                      {self && <span className="muted"> (you)</span>}
-                    </td>
-                    <td>
-                      {locked ? (
-                        <span className="pill is-warn" title={ROLE_HINT.superadmin}>
-                          superadmin
-                        </span>
-                      ) : (
-                      <SelectMenu
-                        label={`Role of ${u.username}`}
-                        value={u.role}
-                        options={ROLE_OPTIONS}
-                        disabled={busy || self}
-                        title={self ? 'You cannot change your own role' : ROLE_HINT[u.role]}
-                        onChange={(v) => {
-                          if (v !== u.role) void send(`/api/users/${u.id}`, { role: v }, `${u.username} is now ${v}`);
-                        }}
-                      />
-                      )}
-                    </td>
-                    <td>
-                      <span className={`pill ${u.disabled ? 'is-crit' : 'is-ok'}`}>{u.disabled ? 'disabled' : 'active'}</span>
-                    </td>
-                    <td className="muted tw:max-sm:hidden">{when(u.lastLoginAt)}</td>
-                    <td>
-                      <span className="tw:flex tw:justify-end tw:gap-1">
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          disabled={busy || (locked && !self)}
-                          title={locked && !self ? 'Only the superadmin can change this password' : undefined}
-                          onClick={() => setResetFor(u)}
-                        >
-                          Password
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          disabled={busy || self || locked}
-                          onClick={() => void send(`/api/users/${u.id}`, { disabled: !u.disabled }, `${u.username} ${u.disabled ? 'enabled' : 'disabled'}`)}
-                        >
-                          {u.disabled ? 'Enable' : 'Disable'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-icon btn-sm btn-danger-ghost"
-                          disabled={busy || self || locked}
-                          aria-label={`Delete ${u.username}`}
-                          title="Delete"
-                          onClick={() => setConfirmDelete(u)}
-                        >
-                          <TrashIcon size={14} />
-                        </button>
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th className="tw:max-sm:hidden">Access</th>
+              <th className="tw:max-md:hidden">Last login</th>
+              <th aria-label="Edit" />
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => {
+              const self = u.id === me.id;
+              const editable = mayManage(u) || isSuper;
+              return (
+                <tr key={u.id} className={draft?.id === u.id ? 'tw:bg-surface-2' : undefined}>
+                  <td>
+                    {u.username}
+                    {self && <span className="muted"> (you)</span>}
+                    {u.disabled && <span className="pill is-crit tw:ml-2">disabled</span>}
+                  </td>
+                  <td>
+                    <span className={`pill${u.role === 'superadmin' ? ' is-warn' : ''}`} title={ROLE_HINT[u.role]}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="muted tw:max-sm:hidden">
+                    {u.role === 'superadmin'
+                      ? 'everything'
+                      : `${u.permissions.length} of ${roleCeiling(u.role).length}${u.customized ? ' · custom' : ' · role default'}`}
+                  </td>
+                  <td className="muted tw:max-md:hidden">{when(u.lastLoginAt)}</td>
+                  <td>
+                    <span className="tw:flex tw:justify-end">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={busy || !editable}
+                        title={editable ? 'Edit' : self ? 'Change your own password from the profile menu' : 'Only the superadmin can edit this account'}
+                        onClick={() => edit(u)}
+                      >
+                        <PencilIcon size={13} />
+                        Edit
+                      </button>
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {draft && (
+        <Editor
+          draft={draft}
+          original={original}
+          isSuper={isSuper}
+          canManage={draft.id === null || (original !== null && mayManage(original))}
+          assignable={assignable}
+          busy={busy}
+          onChange={setDraft}
+          onSave={(e) => void save(e)}
+          onCancel={() => setDraft(null)}
+          onDelete={original && mayManage(original) ? () => setConfirmDelete(original) : undefined}
+        />
       )}
 
       <ConfirmDialog
@@ -256,10 +264,151 @@ export function UsersPanel({ selfId, onNotify }: UsersPanelProps): JSX.Element {
         onConfirm={() => {
           const u = confirmDelete;
           setConfirmDelete(null);
-          if (u) void send(`/api/users/${u.id}/delete`, {}, `Deleted ${u.username}`);
+          if (u) void remove(u);
         }}
         onCancel={() => setConfirmDelete(null)}
       />
     </section>
+  );
+}
+
+interface EditorProps {
+  readonly draft: Draft;
+  readonly original: UserRow | null;
+  readonly isSuper: boolean;
+  /** Role, status and permissions can be changed (or this is a new user). */
+  readonly canManage: boolean;
+  readonly assignable: readonly AssignableRole[];
+  readonly busy: boolean;
+  readonly onChange: (d: Draft) => void;
+  readonly onSave: (e: FormEvent) => void;
+  readonly onCancel: () => void;
+  readonly onDelete?: () => void;
+}
+
+function Editor({ draft, original, isSuper, canManage, assignable, busy, onChange, onSave, onCancel, onDelete }: EditorProps): JSX.Element {
+  const creating = draft.id === null;
+  const ceiling = useMemo(() => new Set<Permission>(roleCeiling(draft.role)), [draft.role]);
+  const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
+  const toggle = (p: Permission) => {
+    const next = new Set(draft.permissions);
+    if (next.has(p)) next.delete(p);
+    else next.add(p);
+    set({ permissions: next });
+  };
+  // A new role starts from its defaults, like the server does.
+  const changeRole = (role: Role) => set({ role, permissions: new Set(roleCeiling(role)) });
+  const lockedPerms = !canManage || draft.role === 'superadmin';
+  const granted = [...draft.permissions].filter((p) => ceiling.has(p)).length;
+
+  return (
+    <form onSubmit={onSave} className="tw:mt-4 tw:rounded-lg tw:border tw:border-line tw:p-4" aria-label={creating ? 'New user' : `Edit ${original?.username ?? ''}`}>
+      <h4 className="tw:mb-3 tw:text-[14px] tw:font-semibold tw:text-fg">{creating ? 'New user' : `Edit ${original?.username}`}</h4>
+
+      <div className="tw:grid tw:gap-3 tw:sm:grid-cols-2 tw:lg:grid-cols-4">
+        <label className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
+          Username
+          <input
+            className={field}
+            value={draft.username}
+            onChange={(e) => set({ username: e.currentTarget.value })}
+            required
+            minLength={2}
+            maxLength={64}
+            pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]+"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={!creating && !isSuper}
+            title={!creating && !isSuper ? 'Only the superadmin can change usernames' : undefined}
+          />
+        </label>
+        <label className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
+          {creating ? 'Password' : 'New password'}
+          <input
+            className={field}
+            type="password"
+            value={draft.password}
+            onChange={(e) => set({ password: e.currentTarget.value })}
+            required={creating}
+            autoComplete="new-password"
+            placeholder={creating ? '' : isSuper ? 'leave blank to keep' : 'superadmin only'}
+            disabled={!creating && !isSuper}
+          />
+        </label>
+        <div className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
+          <span aria-hidden="true">Role</span>
+          {draft.role === 'superadmin' || !canManage ? (
+            <span className={`pill${draft.role === 'superadmin' ? ' is-warn' : ''}`} style={{ alignSelf: 'flex-start', marginTop: 4 }}>
+              {draft.role}
+            </span>
+          ) : (
+            <SelectMenu label="Role" value={draft.role} options={assignable.map((r) => ({ value: r, label: r }))} onChange={(v) => changeRole(v as Role)} />
+          )}
+          <span className="tw:text-[11px]">{ROLE_HINT[draft.role]}</span>
+        </div>
+        <div className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
+          <span aria-hidden="true">Status</span>
+          <label className="tw:flex tw:items-center tw:gap-2 tw:text-[13px] tw:text-fg">
+            <input type="checkbox" checked={!draft.disabled} disabled={!canManage || draft.role === 'superadmin'} onChange={(e) => set({ disabled: !e.currentTarget.checked })} />
+            Can log in
+          </label>
+        </div>
+      </div>
+
+      <fieldset className="tw:m-0 tw:mt-4 tw:min-w-0 tw:border-0 tw:border-t tw:border-line tw:p-0 tw:pt-3" disabled={lockedPerms}>
+        <legend className="tw:float-left tw:mb-3 tw:flex tw:w-full tw:items-center tw:justify-between tw:gap-2 tw:p-0 tw:text-[12px] tw:text-fg-3">
+          <span>
+            Access{' '}
+            {draft.role === 'superadmin' ? '(the superadmin always has everything)' : `· ${granted} of ${ceiling.size} allowed by the ${draft.role} role`}
+          </span>
+          {!lockedPerms && (
+            <span className="tw:flex tw:gap-2">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: new Set(ceiling) })}>
+                All
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: new Set() })}>
+                None
+              </button>
+            </span>
+          )}
+        </legend>
+        <div className="tw:clear-both tw:grid tw:gap-4 tw:md:grid-cols-2">
+        {GROUPS.map((g) => (
+          <div key={g} className="tw:flex tw:flex-col tw:gap-1.5">
+            <span className="tw:text-[12px] tw:font-semibold tw:text-fg-2">{g}</span>
+            {PERMISSIONS.filter((p) => p.group === g).map((p) => {
+              const allowed = ceiling.has(p.key);
+              return (
+                <label
+                  key={p.key}
+                  className={`tw:flex tw:items-center tw:gap-2 tw:text-[13px] ${allowed ? 'tw:text-fg' : 'tw:text-fg-3'}`}
+                  title={allowed ? p.key : `Needs the ${p.min} role`}
+                >
+                  <input type="checkbox" checked={allowed && draft.permissions.has(p.key)} disabled={!allowed} onChange={() => toggle(p.key)} />
+                  {p.label}
+                  {!allowed && <span className="tw:text-[11px]">· {p.min}+</span>}
+                </label>
+              );
+            })}
+          </div>
+        ))}
+        </div>
+      </fieldset>
+
+      <div className="tw:mt-4 tw:flex tw:flex-wrap tw:items-center tw:gap-2">
+        <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
+          {creating ? 'Create user' : 'Save'}
+        </button>
+        <button type="button" className="btn btn-sm" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <span className="tw:flex-1" />
+        {onDelete && (
+          <button type="button" className="btn btn-sm btn-danger-ghost" onClick={onDelete} disabled={busy}>
+            Delete user
+          </button>
+        )}
+      </div>
+    </form>
   );
 }

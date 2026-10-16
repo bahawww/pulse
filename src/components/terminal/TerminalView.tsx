@@ -1,3 +1,4 @@
+import { behindExpiredGate } from '../../lib/accessGate';
 import { type CSSProperties, type JSX, type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -108,6 +109,8 @@ interface ViewProps {
   readonly style?: CSSProperties;
   /** A remote host instead of a shell here. */
   readonly target?: Target;
+  /** Attach this tmux session instead of starting a login shell. */
+  readonly tmux?: string;
   /** True for keys the workspace handles (window and tool shortcuts); xterm drops them. */
   readonly ownsKey: (e: KeyboardEvent) => boolean;
   readonly onSplit: (dir: Dir) => void;
@@ -119,6 +122,8 @@ interface ViewProps {
   readonly onActivity: (id: number) => void;
   readonly onStatus: (id: number, s: WinStatus) => void;
   readonly onZoom: (delta: number) => void;
+  /** A sideways one-finger swipe: -1 previous window, 1 next. Phones only. */
+  readonly onSwipe?: (dir: -1 | 1) => void;
   readonly onFind: () => void;
   /** Typed input; the workspace decides whether it goes to this shell or to all of them. */
   readonly onInput: (id: number, data: string) => void;
@@ -220,6 +225,17 @@ export function TerminalView(props: ViewProps): JSX.Element {
       t.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
       t.open(el);
       term.current = t;
+      // Phone keyboards must not "help": no capital first letter, autocorrect,
+      // suggestions or spell check in what goes to the shell.
+      const ta = t.textarea;
+      if (ta) {
+        ta.setAttribute('autocapitalize', 'off');
+        ta.setAttribute('autocorrect', 'off');
+        ta.setAttribute('autocomplete', 'off');
+        ta.setAttribute('spellcheck', 'false');
+        ta.setAttribute('enterkeyhint', 'send');
+        ta.setAttribute('data-gramm', 'false');
+      }
 
       // GPU rendering: the whole screen is one texture-atlas draw per frame, so
       // heavy output and scrolling stay smooth. Without WebGL, or if the context
@@ -444,7 +460,9 @@ export function TerminalView(props: ViewProps): JSX.Element {
         const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const q = new URLSearchParams({ cols: String(t.cols), rows: String(t.rows) });
         const target = live.current.target;
+        const tmux = live.current.tmux;
         if (sid) q.set('sid', sid);
+        else if (tmux) q.set('tmux', tmux);
         else if (target) {
           q.set('proto', target.proto);
           q.set('host', target.host);
@@ -475,7 +493,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
             if (!live.current.current || document.hidden) live.current.onActivity(id);
             return;
           }
-          let msg: { t?: string; d?: string; sid?: string; resumed?: boolean; mode?: string; pid?: number; code?: number; ts?: number; bin?: boolean };
+          let msg: { t?: string; d?: string; sid?: string; resumed?: boolean; reattached?: boolean; tmux?: string | null; mode?: string; pid?: number; code?: number; ts?: number; bin?: boolean };
           try {
             msg = JSON.parse(String(e.data));
           } catch {
@@ -486,12 +504,16 @@ export function TerminalView(props: ViewProps): JSX.Element {
             helloSeen = true;
             binary = msg.bin === true;
             retries = 0;
+            lastPong = performance.now();
             everConnected = true;
             if (pending) {
               sendInput(pending);
               pending = '';
             }
-            if (sid && !msg.resumed) note('[previous shell has ended — this is a new one]', 90);
+            // A tmux window that lost its link attaches the same session again: nothing ended.
+            if (sid && !msg.resumed && !msg.reattached && !msg.tmux) note('[previous shell has ended — this is a new one]', 90);
+            // Same shell, kept by dtach across a server restart; its earlier output is not.
+            if (msg.reattached) note('[reattached to your running shell]', 90);
             if (msg.resumed) {
               // The replay rebuilds the screen from scratch.
               t.reset();
@@ -517,6 +539,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
             if (remote) note(`[connection to ${targetLabel(remote)} closed${msg.code ? ` (${msg.code})` : ''} — press Enter to connect again]`);
             else note(`[process exited${msg.code ? ` with ${msg.code}` : ''} — press Enter for a new shell]`);
           } else if (msg.t === 'pong' && typeof msg.ts === 'number') {
+            lastPong = performance.now();
             const ms = Math.max(0, Math.round(performance.now() - msg.ts));
             if (ms !== status.latency) report({ latency: ms });
           }
@@ -548,22 +571,80 @@ export function TerminalView(props: ViewProps): JSX.Element {
             note('[this shell was opened in another tab — press Enter to take it back]');
             return;
           }
-          // Dropped: try to reattach on our own, backing off.
-          if (retries < 8) {
-            report({ link: 'reconnecting' });
-            const wait = Math.min(8000, 400 * 2 ** retries);
-            retries += 1;
-            retryTimer = setTimeout(() => connect(), wait);
-          } else {
-            report({ link: 'offline' });
-            note('[disconnected — press Enter to reconnect]');
-          }
+          // Dropped: reattach on our own. A phone in the background (another app
+          // in front) gets no tries at all: they would only fail and use up the
+          // budget. Coming back to the page reconnects at once (see revive).
+          report({ link: 'reconnecting' });
+          if (document.hidden) return;
+          scheduleRetry();
         };
       };
+      // While visible, never give up: back off to every 8 s, and after the first
+      // eight tries say so once, but keep trying (a phone on the move drops a lot).
+      const scheduleRetry = () => {
+        clearTimeout(retryTimer);
+        const wait = Math.min(8000, 400 * 2 ** retries);
+        retries += 1;
+        // Several failures in a row: maybe Cloudflare Access wants a new sign-in, not a dead server.
+        if (retries === 3)
+          void behindExpiredGate().then((gated) => {
+            if (gated && !disposed) note('[Cloudflare Access sign-in expired — reload the page to sign in again]', 31);
+          });
+        if (retries === 9) {
+          report({ link: 'offline' });
+          note('[connection lost — still trying, or press Enter]');
+        }
+        retryTimer = setTimeout(() => connect(), wait);
+      };
+
+      // Back from another app, the network coming back, or the page restored from
+      // the back-forward cache. A socket that still says OPEN may be dead (the OS
+      // froze it), so it must answer a ping quickly or it is replaced.
+      let lastPong = performance.now();
+      let probe: ReturnType<typeof setTimeout> | undefined;
+      const replace = () => {
+        const old = ws;
+        ws = null;
+        connected = false;
+        old?.close();
+        retries = 0;
+        report({ link: 'reconnecting' });
+        connect();
+      };
+      const revive = () => {
+        if (disposed || ending || document.hidden) return;
+        const state = ws?.readyState;
+        if (state === WebSocket.OPEN && connected) {
+          const asked = performance.now();
+          send({ type: 'ping', ts: asked });
+          clearTimeout(probe);
+          probe = setTimeout(() => {
+            if (lastPong < asked && ws?.readyState === WebSocket.OPEN) replace();
+          }, 2500);
+          return;
+        }
+        if (state === WebSocket.CONNECTING) return;
+        // Closed while we were away: go now, not after the backoff.
+        clearTimeout(retryTimer);
+        retries = 0;
+        report({ link: 'reconnecting' });
+        connect();
+      };
+      const onVisible = () => {
+        if (!document.hidden) revive();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      window.addEventListener('online', revive);
+      window.addEventListener('pageshow', revive);
+      window.addEventListener('focus', revive);
+
       connect();
 
       const ping = setInterval(() => {
-        if (connected && !document.hidden) send({ type: 'ping', ts: performance.now() });
+        if (!connected || document.hidden) return;
+        send({ type: 'ping', ts: performance.now() });
+        // No pong for a long while on a visible page: the link is dead without a close event.
+        if (performance.now() - lastPong > 15000) replace();
       }, 4000);
 
       const data = t.onData((raw) => {
@@ -614,6 +695,120 @@ export function TerminalView(props: ViewProps): JSX.Element {
       };
       el.addEventListener('wheel', onWheel, { passive: false, capture: true });
 
+      // Touch gestures (phones):
+      //  - two fingers pinch the text size, one step per PINCH_STEP px of spread;
+      //  - one finger, in a full-screen program (vim, less, htop) that does not
+      //    take the mouse, a vertical drag sends arrow keys, one per text row;
+      //  - one finger, a quick sideways swipe goes to the previous or next window;
+      //  - a long press selects the word under the finger (the line, on a blank)
+      //    and copies it.
+      const PINCH_STEP = 28;
+      const LONG_PRESS_MS = 480;
+      type Gesture =
+        | { kind: 'pinch'; base: number }
+        | { kind: 'one'; x0: number; y0: number; t0: number; lastY: number; moved: boolean; arrows: boolean; longTimer: number; selected: boolean };
+      let g: Gesture | null = null;
+      const spread = (e: TouchEvent) => {
+        const [a, b] = [e.touches[0], e.touches[1]];
+        return a && b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0;
+      };
+      const cell = () => {
+        const screen = el.querySelector<HTMLElement>('.xterm-screen');
+        const box = screen?.getBoundingClientRect();
+        return box && t.cols > 0 && t.rows > 0 ? { box, w: box.width / t.cols, h: box.height / t.rows } : null;
+      };
+      const selectAt = (x: number, y: number) => {
+        const c = cell();
+        if (!c) return;
+        const col = Math.floor((x - c.box.left) / c.w);
+        const row = Math.floor((y - c.box.top) / c.h) + t.buffer.active.viewportY;
+        const line = t.buffer.active.getLine(row)?.translateToString(true) ?? '';
+        if (col < 0 || col >= t.cols || !line) return;
+        const isWord = (ch: string | undefined) => !!ch && !/\s/.test(ch);
+        let start = col;
+        let end = col;
+        if (isWord(line[col])) {
+          while (start > 0 && isWord(line[start - 1])) start -= 1;
+          while (end < line.length - 1 && isWord(line[end + 1])) end += 1;
+          t.select(start, row, end - start + 1);
+        } else {
+          t.selectLines(row, row);
+        }
+        // Copied on touchend: the clipboard needs a user gesture, and a timer is not one.
+        if (t.hasSelection()) navigator.vibrate?.(12);
+      };
+      const onTouchStart = (e: TouchEvent) => {
+        if (g?.kind === 'one') clearTimeout(g.longTimer);
+        if (e.touches.length === 2) {
+          g = { kind: 'pinch', base: spread(e) };
+          return;
+        }
+        if (e.touches.length !== 1) {
+          g = null;
+          return;
+        }
+        const p = e.touches[0]!;
+        const alt = t.buffer.active.type === 'alternate' && t.modes.mouseTrackingMode === 'none';
+        const longTimer = window.setTimeout(() => {
+          if (g?.kind === 'one' && !g.moved) {
+            selectAt(g.x0, g.y0);
+            g.selected = t.hasSelection();
+          }
+        }, LONG_PRESS_MS);
+        g = { kind: 'one', x0: p.clientX, y0: p.clientY, t0: Date.now(), lastY: p.clientY, moved: false, arrows: alt, longTimer, selected: false };
+      };
+      const onTouchMove = (e: TouchEvent) => {
+        if (!g) return;
+        if (g.kind === 'pinch' && e.touches.length === 2) {
+          e.preventDefault();
+          const d = spread(e);
+          if (Math.abs(d - g.base) >= PINCH_STEP) {
+            live.current.onZoom(d > g.base ? 1 : -1);
+            g.base = d;
+          }
+          return;
+        }
+        const p = e.touches[0];
+        if (g.kind !== 'one' || !p) return;
+        if (!g.moved && Math.hypot(p.clientX - g.x0, p.clientY - g.y0) > 10) {
+          g.moved = true;
+          clearTimeout(g.longTimer);
+        }
+        if (g.arrows) {
+          e.preventDefault();
+          const h = cell()?.h ?? 16;
+          const app = t.modes.applicationCursorKeysMode;
+          while (Math.abs(p.clientY - g.lastY) >= h) {
+            const up = p.clientY > g.lastY; // finger down: earlier content, like scrolling
+            input(up ? (app ? '\x1bOA' : '\x1b[A') : app ? '\x1bOB' : '\x1b[B');
+            g.lastY += up ? h : -h;
+          }
+        }
+      };
+      const onTouchEnd = (e: TouchEvent) => {
+        if (g?.kind === 'one') {
+          clearTimeout(g.longTimer);
+          if (g.selected) {
+            // Keep the browser from turning the lift into a click that clears the selection.
+            if (e.cancelable) e.preventDefault();
+            void copyToClipboard(t.getSelection()).then((ok) => ok && live.current.onCopied());
+            g = null;
+            return;
+          }
+          const p = e.changedTouches[0];
+          if (p && !g.arrows && live.current.onSwipe) {
+            const dx = p.clientX - g.x0;
+            const dy = p.clientY - g.y0;
+            if (Math.abs(dx) > 70 && Math.abs(dy) < 40 && Date.now() - g.t0 < 450) live.current.onSwipe(dx < 0 ? 1 : -1);
+          }
+        }
+        if (e.touches.length === 0) g = null;
+      };
+      el.addEventListener('touchstart', onTouchStart, { passive: true });
+      el.addEventListener('touchmove', onTouchMove, { passive: false });
+      el.addEventListener('touchend', onTouchEnd, { passive: false });
+      el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
       // Fires whenever the window changes size or goes from hidden to shown.
       // Batched to one fit per frame: a drag-resize fires this dozens of times.
       let fitFrame = 0;
@@ -637,8 +832,18 @@ export function TerminalView(props: ViewProps): JSX.Element {
         clearTimeout(retryTimer);
         clearTimeout(sizeTimer);
         clearInterval(ping);
+        clearTimeout(probe);
+        document.removeEventListener('visibilitychange', onVisible);
+        window.removeEventListener('online', revive);
+        window.removeEventListener('pageshow', revive);
+        window.removeEventListener('focus', revive);
         cancelAnimationFrame(fitFrame);
         el.removeEventListener('wheel', onWheel, { capture: true });
+        el.removeEventListener('touchstart', onTouchStart);
+        el.removeEventListener('touchmove', onTouchMove);
+        el.removeEventListener('touchend', onTouchEnd);
+        el.removeEventListener('touchcancel', onTouchEnd);
+        if (g?.kind === 'one') clearTimeout(g.longTimer);
         el.removeEventListener('mouseup', onMouseUp);
         t.textarea?.removeEventListener('paste', onPaste, true);
         results.dispose();

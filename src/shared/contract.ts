@@ -347,14 +347,17 @@ export interface ReachabilityReport {
 // ---------------------------------------------------------------------------
 
 /**
- * viewer: read-only monitoring. operator: also service actions. admin: also
- * terminal, files, users. superadmin: everything admin can, and the account
- * itself cannot be deleted, disabled, demoted or renamed. Exactly one, the
- * env ADMIN_USER; it is never assignable.
+ * A role is a ceiling: it decides which permissions a user may be given, and
+ * what a new user starts with. What a user can actually do is their own
+ * permission list (UserRow.permissions), set per user in the Users view.
+ *  - viewer: views only. operator: also service control.
+ *  - admin: everything, including terminal, files and managing users below admin.
+ *  - superadmin: exactly one, always every permission; can rename and set the
+ *    password of anyone. Never assignable.
  */
 export type Role = 'viewer' | 'operator' | 'admin' | 'superadmin';
 
-/** Roles an admin can give through the API, the Users view or the CLI. */
+/** Roles that can be given through the API, the Users view or the CLI. */
 export type AssignableRole = Exclude<Role, 'superadmin'>;
 
 export const ROLE_RANK: Readonly<Record<Role, number>> = { viewer: 0, operator: 1, admin: 2, superadmin: 3 };
@@ -363,11 +366,56 @@ export function roleAtLeast(role: Role, min: Role): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[min];
 }
 
+/** Every permission, in display order, with the lowest role allowed to hold it. */
+export const PERMISSIONS = [
+  { key: 'view:overview', group: 'Views', label: 'Overview', min: 'viewer' },
+  { key: 'view:applications', group: 'Views', label: 'Applications', min: 'viewer' },
+  { key: 'view:trends', group: 'Views', label: 'Trends', min: 'viewer' },
+  { key: 'view:hardware', group: 'Views', label: 'Hardware', min: 'viewer' },
+  { key: 'view:workload', group: 'Views', label: 'Workload', min: 'viewer' },
+  { key: 'view:capacity', group: 'Views', label: 'Capacity', min: 'viewer' },
+  { key: 'view:logs', group: 'Views', label: 'Logs and action history', min: 'viewer' },
+  { key: 'services:control', group: 'Actions', label: 'Start, stop, restart services; rescan or hide cards', min: 'operator' },
+  { key: 'files:read', group: 'Actions', label: 'Files: browse, preview, download', min: 'admin' },
+  { key: 'files:write', group: 'Actions', label: 'Files: upload, rename, delete', min: 'admin' },
+  { key: 'terminal', group: 'Actions', label: 'Terminal and tmux (full shell with sudo)', min: 'admin' },
+  { key: 'users:manage', group: 'Actions', label: 'Manage viewers and operators', min: 'admin' },
+] as const satisfies readonly { key: string; group: string; label: string; min: Role }[];
+
+export type Permission = (typeof PERMISSIONS)[number]['key'];
+
+const PERMISSION_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
+
+export function isPermission(v: unknown): v is Permission {
+  return typeof v === 'string' && PERMISSION_KEYS.has(v);
+}
+
+/** What `role` may hold. Also what a new user with that role starts with. */
+export function roleCeiling(role: Role): Permission[] {
+  return PERMISSIONS.filter((p) => roleAtLeast(role, p.min)).map((p) => p.key);
+}
+
+/** `wanted` cut down to what `role` may hold; null (never set) means the role's default. */
+export function effectivePermissions(role: Role, wanted: readonly string[] | null): Permission[] {
+  const ceiling = roleCeiling(role);
+  if (role === 'superadmin' || wanted === null) return ceiling;
+  const keep = new Set(wanted);
+  return ceiling.filter((p) => keep.has(p));
+}
+
+export function can(user: { readonly permissions: readonly string[] } | null | undefined, perm: Permission): boolean {
+  return !!user && user.permissions.includes(perm);
+}
+
 export interface UserRow {
   readonly id: number;
   readonly username: string;
   readonly role: Role;
   readonly disabled: boolean;
+  /** Effective permissions: the user's own list within their role's ceiling. */
+  readonly permissions: readonly Permission[];
+  /** False while the user still has their role's defaults. */
+  readonly customized: boolean;
   /** Epoch ms. */
   readonly createdAt: number;
   readonly lastLoginAt: number | null;
@@ -403,7 +451,7 @@ export interface ActionLogEntry {
   /** Epoch ms when the action finished. */
   readonly ts: number;
   /** 'files': an upload, rename, new folder or delete from the file explorer. 'users': an account change. */
-  readonly target: ActionTarget | 'files' | 'users';
+  readonly target: ActionTarget | 'files' | 'users' | 'tmux';
   readonly name: string;
   readonly action: string;
   readonly ok: boolean;

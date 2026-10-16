@@ -13,7 +13,12 @@ export interface Win {
   readonly sid?: string;
   /** A remote host (router, switch, server) instead of a shell on this machine. */
   readonly target?: Target;
+  /** A tmux session this window is attached to; other devices can attach it too. */
+  readonly tmux?: string;
 }
+
+/** tmux session names the server accepts (src/server/tmux.ts). */
+export const TMUX_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
 /** Tabs: one window at a time. Split: every window on screen, arranged by a tree. */
 export type Mode = 'tabs' | 'split';
@@ -130,6 +135,7 @@ export function readWins(): readonly Win[] {
             name: typeof w.name === 'string' ? w.name : undefined,
             sid: typeof w.sid === 'string' ? w.sid : undefined,
             target: checkTarget(w.target) ?? undefined,
+            tmux: typeof w.tmux === 'string' && TMUX_RE.test(w.tmux) ? w.tmux : undefined,
           }))
       : [];
     if (ok.length > 0) return ok;
@@ -137,6 +143,16 @@ export function readWins(): readonly Win[] {
     /* private mode */
   }
   return [{ id: 1 }];
+}
+
+/** True when this tab already has windows saved (a reload), false in a new tab or a relaunched app. */
+export function hasStoredWins(): boolean {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(WINS_KEY) ?? '[]') as unknown;
+    return Array.isArray(raw) && raw.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export function storeWins(wins: readonly Win[] | null): void {
@@ -300,6 +316,8 @@ export interface Snippet {
   readonly command: string;
 }
 
+// Tapping a snippet types it without Enter, so the ones that change the system
+// (apt, restart) still wait for the user. A trailing space leaves room for a name.
 const DEFAULT_SNIPPETS: readonly Snippet[] = [
   { id: 'top', label: 'Processes', command: 'htop || top' },
   { id: 'disk', label: 'Disk usage', command: 'df -h -x tmpfs -x devtmpfs' },
@@ -308,7 +326,34 @@ const DEFAULT_SNIPPETS: readonly Snippet[] = [
   { id: 'ports', label: 'Listening ports', command: 'ss -ltnp' },
   { id: 'failed', label: 'Failed units', command: 'systemctl --failed' },
   { id: 'journal', label: 'Follow journal', command: 'journalctl -f -n 50' },
+  // Ubuntu server everyday set (added in snippet defaults v2).
+  { id: 'apt-up', label: 'Update packages', command: 'sudo apt update && sudo apt upgrade' },
+  { id: 'apt-list', label: 'Upgradable', command: 'apt list --upgradable' },
+  { id: 'reboot-req', label: 'Reboot needed?', command: 'cat /var/run/reboot-required 2>/dev/null || echo "no reboot needed"' },
+  { id: 'cpu-top', label: 'Top CPU', command: 'ps aux --sort=-%cpu | head -15' },
+  { id: 'mem-top', label: 'Top memory', command: 'ps aux --sort=-%mem | head -15' },
+  { id: 'dir-size', label: 'Folder sizes', command: 'du -h --max-depth=1 . 2>/dev/null | sort -h' },
+  { id: 'big-files', label: 'Big files', command: 'sudo find / -xdev -type f -size +500M -exec ls -lh {} + 2>/dev/null' },
+  { id: 'svc-status', label: 'Service status', command: 'systemctl status ' },
+  { id: 'svc-restart', label: 'Restart service', command: 'sudo systemctl restart ' },
+  { id: 'unit-logs', label: 'Service logs', command: 'journalctl --no-pager -n 100 -u ' },
+  { id: 'timers', label: 'Timers', command: 'systemctl list-timers' },
+  { id: 'dlogs', label: 'Container logs', command: 'docker logs -f --tail 100 ' },
+  { id: 'dstats', label: 'Container stats', command: 'docker stats --no-stream' },
+  { id: 'ddf', label: 'Docker disk', command: 'docker system df' },
+  { id: 'ip', label: 'IP addresses', command: 'ip -br a' },
+  { id: 'ufw', label: 'Firewall', command: 'sudo ufw status numbered' },
+  { id: 'who', label: 'Who is on', command: 'w' },
+  { id: 'logins', label: 'Last logins', command: 'last -n 20' },
+  { id: 'ssh-fail', label: 'Failed SSH', command: "sudo journalctl -u ssh --since today --no-pager | grep -i 'failed\\|invalid'" },
+  { id: 'syslog', label: 'Syslog', command: 'sudo tail -f /var/log/syslog' },
+  { id: 'cron', label: 'Crontab', command: 'crontab -l' },
+  { id: 'os', label: 'OS version', command: 'lsb_release -ds; uname -r; uptime -p' },
 ];
+
+/** Bumped when DEFAULT_SNIPPETS gains entries; saved lists get the new ones appended once. */
+const SNIPPET_DEFAULTS_VERSION = 2;
+const SNIPPET_VERSION_KEY = 'vps_term_snippets_v';
 
 export function readSnippets(): readonly Snippet[] {
   try {
@@ -316,9 +361,16 @@ export function readSnippets(): readonly Snippet[] {
     if (raw === null) return DEFAULT_SNIPPETS;
     const list = JSON.parse(raw) as Snippet[];
     if (!Array.isArray(list)) return DEFAULT_SNIPPETS;
-    return list
+    const saved = list
       .filter((s) => typeof s?.command === 'string' && s.command.trim() !== '')
       .map((s) => ({ id: typeof s.id === 'string' ? s.id : newId(), label: typeof s.label === 'string' ? s.label : '', command: s.command }));
+    if (Number(localStorage.getItem(SNIPPET_VERSION_KEY) ?? 1) >= SNIPPET_DEFAULTS_VERSION) return saved;
+    // An older saved list: add the defaults it has never seen, keep the user's own order and edits.
+    const have = new Set(saved.map((s) => s.id));
+    const merged = [...saved, ...DEFAULT_SNIPPETS.filter((s) => !have.has(s.id))];
+    store(SNIPPETS_KEY, JSON.stringify(merged));
+    store(SNIPPET_VERSION_KEY, String(SNIPPET_DEFAULTS_VERSION));
+    return merged;
   } catch {
     return DEFAULT_SNIPPETS;
   }
@@ -326,6 +378,8 @@ export function readSnippets(): readonly Snippet[] {
 
 export function storeSnippets(list: readonly Snippet[]): void {
   store(SNIPPETS_KEY, JSON.stringify(list));
+  // A list the user saved already reflects these defaults; deleted ones must not come back.
+  store(SNIPPET_VERSION_KEY, String(SNIPPET_DEFAULTS_VERSION));
 }
 
 export function newId(): string {

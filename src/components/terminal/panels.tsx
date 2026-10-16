@@ -72,6 +72,12 @@ export const Icon = {
       <path d="m6 9 6 6 6-6" />
     </svg>
   ),
+  layers: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <path d="m12 3 9 5-9 5-9-5z" />
+      <path d="m3 13 9 5 9-5" />
+    </svg>
+  ),
   plus: ({ size = 16 }) => (
     <svg {...svg(size)}>
       <path d="M12 5v14M5 12h14" />
@@ -488,18 +494,54 @@ interface KeyButtonProps {
   /** Present on Ctrl and Alt: armed for one key, or locked. */
   readonly state?: ModState;
   readonly wide?: boolean;
+  /** Held down, the key repeats like a hardware key (arrows, paging). */
+  readonly repeat?: boolean;
   readonly onPress: () => void;
 }
 
-export function KeyButton({ label, name, state, wide, onPress }: KeyButtonProps): JSX.Element {
+/** Hold time before a held key starts repeating, then the repeat interval. */
+const REPEAT_DELAY_MS = 380;
+const REPEAT_EVERY_MS = 55;
+
+export function KeyButton({ label, name, state, wide, repeat = false, onPress }: KeyButtonProps): JSX.Element {
   const cls = state === 'lock' ? ' is-lock' : state === 'once' ? ' is-once' : '';
+  const timer = useRef(0);
+  const pressRef = useRef(onPress);
+  pressRef.current = onPress;
+
+  const stop = () => {
+    window.clearTimeout(timer.current);
+    window.clearInterval(timer.current);
+    timer.current = 0;
+  };
+  useEffect(() => stop, []);
+
   return (
     <button
       type="button"
       className={`tw-key${cls}${wide ? ' is-wide' : ''}`}
       aria-label={name ?? label}
       aria-pressed={state === undefined ? undefined : state !== 'off'}
-      onClick={onPress}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        // A short tick, so the key bar feels like keys (Android; iOS has no vibrate).
+        navigator.vibrate?.(8);
+        if (!repeat) return;
+        pressRef.current();
+        stop();
+        timer.current = window.setTimeout(() => {
+          timer.current = window.setInterval(() => pressRef.current(), REPEAT_EVERY_MS);
+        }, REPEAT_DELAY_MS);
+      }}
+      onPointerUp={repeat ? stop : undefined}
+      onPointerLeave={repeat ? stop : undefined}
+      onPointerCancel={repeat ? stop : undefined}
+      onContextMenu={repeat ? (e) => e.preventDefault() : undefined}
+      // A repeat key already fired on pointer down; only a keyboard click (detail 0) presses here.
+      onClick={(e) => {
+        if (repeat && e.detail !== 0) return;
+        onPress();
+      }}
     >
       {label}
     </button>

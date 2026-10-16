@@ -1,6 +1,7 @@
 import { type JSX } from 'react';
 import type { HistorySample, SystemMetrics } from '../shared/contract';
 import { formatBytes, formatPercent, formatRate } from '../lib/format';
+import { fill } from '../lib/meter';
 import { AnimatedNumber } from './AnimatedNumber';
 import { Bone } from './Skeleton';
 import { Sparkline } from './Sparkline';
@@ -55,7 +56,7 @@ export function TelemetryGrid({ system, samples }: TelemetryGridProps): JSX.Elem
           {system && <span className="kpi-unit">%</span>}
         </div>
         <div className="meter" aria-hidden="true">
-          <div className={`meter-fill ${tone(cpu)}`} style={{ width: `${Math.min(cpu, 100)}%`, background: tone(cpu) ? undefined : 'var(--s-cpu)' }} />
+          <div className={`meter-fill ${tone(cpu)}`} style={fill(cpu, tone(cpu) ? undefined : 'var(--s-cpu)')} />
         </div>
         <Sparkline values={pick('cpu')} color="var(--s-cpu)" max={100} label="CPU over time" />
         {system ? (
@@ -77,7 +78,7 @@ export function TelemetryGrid({ system, samples }: TelemetryGridProps): JSX.Elem
           {system && <span className="kpi-unit">%</span>}
         </div>
         <div className="meter" aria-hidden="true">
-          <div className={`meter-fill ${tone(mem)}`} style={{ width: `${Math.min(mem, 100)}%`, background: tone(mem) ? undefined : 'var(--s-mem)' }} />
+          <div className={`meter-fill ${tone(mem)}`} style={fill(mem, tone(mem) ? undefined : 'var(--s-mem)')} />
         </div>
         <Sparkline values={pick('ram')} color="var(--s-mem)" max={100} label="Memory over time" />
         {system ? (
@@ -99,7 +100,7 @@ export function TelemetryGrid({ system, samples }: TelemetryGridProps): JSX.Elem
           {system && <span className="kpi-unit">%</span>}
         </div>
         <div className="meter" aria-hidden="true">
-          <div className={`meter-fill ${tone(disk)}`} style={{ width: `${Math.min(disk, 100)}%`, background: tone(disk) ? undefined : 'var(--s-disk)' }} />
+          <div className={`meter-fill ${tone(disk)}`} style={fill(disk, tone(disk) ? undefined : 'var(--s-disk)')} />
         </div>
         <Sparkline values={pick('disk')} color="var(--s-disk)" max={100} label="Disk over time" />
         {system ? (

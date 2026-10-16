@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
-import { roleAtLeast, type Role } from '../shared/contract.js';
+import { roleCeiling, type Permission, type Role } from '../shared/contract.js';
 import { authenticate } from './users.js';
 
 /**
@@ -36,6 +36,8 @@ const FILE = path.join(process.env.DASHBOARD_DATA_DIR ?? path.join(process.cwd()
 interface Record {
   readonly user: string;
   readonly role: Role;
+  /** Copied at login; any change to the account ends its sessions, so it never goes stale. */
+  readonly permissions: readonly Permission[];
   /** Row id in `users`; null for the break-glass env login. */
   readonly userId: number | null;
   readonly created: number;
@@ -55,7 +57,7 @@ function load(): void {
   try {
     const raw = JSON.parse(fs.readFileSync(FILE, 'utf8')) as Array<[string, Record]>;
     // Records from before roles existed have no role: drop them, the user logs in again.
-    for (const [hash, rec] of raw) if (rec.expires > Date.now() && rec.role) sessions.set(hash, rec);
+    for (const [hash, rec] of raw) if (rec.expires > Date.now() && rec.role && Array.isArray(rec.permissions)) sessions.set(hash, rec);
   } catch {
     /* no file yet, or unreadable: start with no sessions */
   }
@@ -100,6 +102,7 @@ export interface LoginUser {
   readonly id: number | null;
   readonly name: string;
   readonly role: Role;
+  readonly permissions: readonly Permission[];
   /** True when the database was down and the env account let this login in. */
   readonly breakGlass: boolean;
 }
@@ -113,10 +116,12 @@ export async function verifyLogin(username: unknown, password: unknown): Promise
   if (username.length > 64) return null;
   try {
     const user = await authenticate(username, password);
-    return user ? { id: user.id, name: user.username, role: user.role, breakGlass: false } : null;
+    return user ? { id: user.id, name: user.username, role: user.role, permissions: user.permissions, breakGlass: false } : null;
   } catch (err) {
     console.warn('[auth] user database unreachable:', err instanceof Error ? err.message : err);
-    return verifyEnvLogin(username, password) ? { id: null, name: ADMIN_USER, role: 'superadmin', breakGlass: true } : null;
+    return verifyEnvLogin(username, password)
+      ? { id: null, name: ADMIN_USER, role: 'superadmin', permissions: roleCeiling('superadmin'), breakGlass: true }
+      : null;
   }
 }
 
@@ -127,6 +132,7 @@ export function createSession(req: IncomingMessage, user: LoginUser): { token: s
   sessions.set(hash, {
     user: user.name,
     role: user.role,
+    permissions: user.permissions,
     userId: user.id,
     created: now,
     expires: now + TTL_MS,
@@ -164,9 +170,16 @@ export function isValid(hash: string): boolean {
   return true;
 }
 
-export function userOf(hash: string): { id: number | null; name: string; role: Role } | null {
+export interface SessionUser {
+  readonly id: number | null;
+  readonly name: string;
+  readonly role: Role;
+  readonly permissions: readonly Permission[];
+}
+
+export function userOf(hash: string): SessionUser | null {
   const rec = sessions.get(hash);
-  return rec ? { id: rec.userId, name: rec.user, role: rec.role } : null;
+  return rec ? { id: rec.userId, name: rec.user, role: rec.role, permissions: rec.permissions } : null;
 }
 
 /** Ends every session of one account: after a role change, disable, password reset or delete. */
@@ -196,6 +209,23 @@ export function setCookie(res: Response, req: Request, token: string, maxAgeSeco
   const flags = ['Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${maxAgeSeconds}`];
   if (req.secure) flags.push('Secure');
   res.setHeader('Set-Cookie', `${COOKIE}=${token}; ${flags.join('; ')}`);
+}
+
+/**
+ * Sliding expiry: a session in use is pushed out to a full TTL again (at most
+ * once an hour), with a fresh cookie, so a phone that keeps coming back is
+ * never logged out mid-week. An unused one still ends TTL_MS after last use.
+ */
+export function renewSession(req: Request, res: Response): void {
+  const token = cookieToken(req.headers.cookie);
+  if (!token) return;
+  const hash = sha256(token).toString('hex');
+  const rec = sessions.get(hash);
+  const now = Date.now();
+  if (!rec || rec.expires <= now || rec.expires - now > TTL_MS - 3_600_000) return;
+  rec.expires = now + TTL_MS;
+  persist();
+  setCookie(res, req, token, TTL_MS / 1000);
 }
 
 export function clearCookie(res: Response, req: Request): void {
@@ -253,10 +283,10 @@ export function requireSession(open: ReadonlySet<string>) {
 }
 
 /**
- * Gate for routes that need more than a login. Mount after requireSession,
- * which leaves the session hash in res.locals.
+ * Gate for routes that need a permission. Mount after requireSession, which
+ * leaves the session hash in res.locals.
  */
-export function requireRole(min: Role) {
+export function requirePerm(perm: Permission) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const hash = (res.locals.sessionHash as string | undefined) ?? sessionHash(req);
     const user = hash ? userOf(hash) : null;
@@ -264,8 +294,8 @@ export function requireRole(min: Role) {
       res.status(401).json({ error: 'login required' });
       return;
     }
-    if (!roleAtLeast(user.role, min)) {
-      res.status(403).json({ error: `needs the ${min} role`, code: 'role' });
+    if (!user.permissions.includes(perm)) {
+      res.status(403).json({ error: `you do not have the "${perm}" permission`, code: 'permission' });
       return;
     }
     next();

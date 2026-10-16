@@ -12,7 +12,7 @@ function spring(k, c, samples) {
   for (let i = 0; i <= samples; i++) { const v = i === samples ? 1 : x((i / samples) * T); peak = Math.max(peak, v); pts.push(+v.toFixed(4)); }
   return { css: `linear(${pts.join(', ')})`, ms: Math.round(T * 1000), overshoot: +((peak - 1) * 100).toFixed(1) };
 }
-const defs = { snappy: [380, 30, 32], bouncy: [260, 17, 48], soft: [170, 26, 28], wobbly: [200, 12, 56] };
+const defs = { snappy: [380, 30, 32], bouncy: [260, 17, 48], soft: [170, 26, 28], wobbly: [200, 12, 56], sheet: [300, 33, 30] };
 for (const [name, [k, c, n]] of Object.entries(defs)) {
   const s = spring(k, c, n);
   console.log(`  /* k=${k} c=${c}: ${s.ms}ms, ${s.overshoot}% overshoot */`);

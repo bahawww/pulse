@@ -1,6 +1,6 @@
 import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { isHiddenContainer, roleAtLeast, type HistorySample, type Service } from './shared/contract';
+import { can, isHiddenContainer, type HistorySample, type Service } from './shared/contract';
 import { useNow } from './hooks/useNow';
 import { useStats } from './hooks/useStats';
 import { useHistory } from './hooks/useHistory';
@@ -27,6 +27,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { GoHint } from './components/GoHint';
 import { Loading, SkeletonCard } from './components/Skeleton';
 import { Rail, Sidebar } from './components/Sidebar';
+import { TabBar } from './components/TabBar';
 import { VIEWS } from './lib/views';
 import { SpendPanel } from './components/SpendPanel';
 import { TelemetryGrid } from './components/TelemetryGrid';
@@ -78,8 +79,9 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
 
   const notify = useCallback((text: string) => setToast((t) => ({ text, id: t.id + 1 })), []);
   // The server enforces these too; hiding the controls only saves a 403.
-  const canAct = roleAtLeast(user.role, 'operator');
-  const canShell = roleAtLeast(user.role, 'admin');
+  const canAct = can(user, 'services:control');
+  const canShell = can(user, 'terminal');
+  const canLogs = can(user, 'view:logs');
 
   // "G then letter" jumps to a view (letters in lib/views.ts). G arms it for
   // GO_WINDOW_MS; the ref drives the key handler, the state shows the hint, and
@@ -102,6 +104,8 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   }, [disarmGo]);
   const alerts = useAlerts(notify);
   const view = useView();
+  // A view this login may not open (an old bookmark, or none allowed) renders nothing but a notice.
+  const shownView = VIEWS.some((v) => v.id === view) ? view : null;
   const { sidebarOpen, toggleSidebar } = useSidebar();
 
   // The terminal is its own chunk, fetched while idle and then held as a plain
@@ -121,9 +125,14 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       .catch(() => undefined);
   }, []);
   useEffect(() => {
+    // The terminal chunk is the biggest one (xterm, ~170 KB gzipped). Touch
+    // devices and Save-Data connections fetch it on intent instead: a finger
+    // on the Terminal tab (TabBar onWarmTerminal) or opening it.
+    const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+    const eager = !window.matchMedia('(pointer: coarse)').matches && !conn?.saveData;
     const fetchIdle = () => {
       fetchCharts();
-      fetchTerminal();
+      if (eager) fetchTerminal();
     };
     const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
     if (w.requestIdleCallback) w.requestIdleCallback(fetchIdle);
@@ -257,6 +266,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
         alerts={alerts}
         user={user}
         onLogout={requestLogout}
+        onOpenTerminal={canShell ? () => setTerminal('open') : undefined}
         active={view}
       />
 
@@ -272,7 +282,12 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
 
           {/* data-view picks this view's entrance choreography in motion.css. */}
           <div key={view} className="view" data-view={view}>
-            {view === 'overview' && (
+            {shownView === null && (
+              <Section title="No access" hint="ask an admin">
+                <p className="empty">Your account cannot open {VIEWS.length === 0 ? 'any page yet' : 'this page'}. An admin can grant it in Users.</p>
+              </Section>
+            )}
+            {shownView === 'overview' && (
               <>
                 <ErrorBoundary label="the status hero">
                   <PulseHero
@@ -293,13 +308,13 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </>
             )}
 
-            {view === 'applications' && (
+            {shownView === 'applications' && (
               <Section title="Applications" hint="launch, status and latency">
-                <ServicesGrid data={data} hostMode={hostMode} onNotify={notify} onRefresh={refresh} />
+                <ServicesGrid data={data} hostMode={hostMode} onNotify={notify} onRefresh={refresh} canEdit={canAct} />
               </Section>
             )}
 
-            {view === 'trends' && Charts && (
+            {shownView === 'trends' && Charts && (
               <Section title="Trends" hint="CPU, memory and disk over time">
                 <Charts.ResourceTrends
                   samples={samples}
@@ -329,13 +344,13 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {view === 'hardware' && system && Charts && (
+            {shownView === 'hardware' && system && Charts && (
               <Section title="Hardware" hint="cores, memory, network and disks">
                 <Charts.DeepTelemetry system={system} samples={samples} />
               </Section>
             )}
 
-            {view === 'workload' && system && Charts && (
+            {shownView === 'workload' && system && Charts && (
               <Section title="Workload" hint="what is running and how much it uses">
                 <div className="grid">
                   <div className="span-7">
@@ -348,7 +363,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {view === 'capacity' && system && Charts && (
+            {shownView === 'capacity' && system && Charts && (
               <Section title="Capacity" hint="what could run out">
                 <div className="grid">
                   <div className="span-5">
@@ -365,7 +380,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {view === 'reach-and-spend' && (
+            {shownView === 'reach-and-spend' && (
               <Section title="Reach and spend" hint="is this box reachable, and what does it cost">
                 <div className="grid">
                   <div className="span-6">
@@ -378,14 +393,16 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {view === 'logs-and-control' && (
-              <Section title="Logs and control" hint={canAct ? 'actions ask for confirmation first' : 'read-only for your role'}>
+            {shownView === 'logs-and-control' && (
+              <Section title={canLogs ? (canAct ? 'Logs and control' : 'Logs') : 'Service control'} hint={canAct ? 'actions ask for confirmation first' : 'read-only for your account'}>
                 <div className="grid">
-                  <div className={canAct ? 'span-7' : 'span-12'}>
-                    <LogPanel />
-                  </div>
+                  {canLogs && (
+                    <div className={canAct ? 'span-7' : 'span-12'}>
+                      <LogPanel />
+                    </div>
+                  )}
                   {canAct && (
-                  <div className="span-5">
+                  <div className={canLogs ? 'span-5' : 'span-12'}>
                     <ActionsPanel
                       systemdTargets={(data?.services ?? []).map((svc) => ({ id: svc.id, running: svc.status.online }))}
                       dockerTargets={(system?.docker ?? [])
@@ -398,15 +415,15 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               </Section>
             )}
 
-            {view === 'files' && (
+            {shownView === 'files' && (
               <Section title="Files" hint="browse, preview, upload and download">
-                <FilesPanel onNotify={notify} />
+                <FilesPanel onNotify={notify} canWrite={can(user, 'files:write')} />
               </Section>
             )}
 
-            {view === 'users' && (
-              <Section title="Users" hint="roles: viewer, operator, admin">
-                <UsersPanel selfId={user.id} onNotify={notify} />
+            {shownView === 'users' && (
+              <Section title="Users" hint="accounts, roles and what each may access">
+                <UsersPanel me={user} onNotify={notify} />
               </Section>
             )}
           </div>
@@ -437,6 +454,14 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
           </footer>
         </main>
       </div>
+
+      {/* Phones and tablets: bottom navigation (hidden at desktop sizes). */}
+      <TabBar
+        active={view}
+        onOpenTerminal={canShell ? () => setTerminal('open') : undefined}
+        onWarmTerminal={canShell && !Workspace ? fetchTerminal : undefined}
+        terminalRunning={terminal === 'hidden'}
+      />
 
       <CommandPalette
         open={paletteOpen}

@@ -6,19 +6,16 @@ import { LoginPage } from './components/LoginPage';
 import { type AuthState, useAuth } from './hooks/useAuth';
 import { useInstall } from './hooks/useInstall';
 import { canTransition, prefersReducedMotion, transition } from './lib/motion';
-import { setViewRole } from './lib/views';
-import { installPointerEffects } from './lib/pointer';
-// Self-hosted fonts, latin subset only: no third-party request, and they work offline.
-import '@fontsource/inter/latin-400.css';
-import '@fontsource/inter/latin-500.css';
-import '@fontsource/inter/latin-600.css';
-import '@fontsource/inter/latin-700.css';
-import '@fontsource/jetbrains-mono/latin-400.css';
+import { setViewAccess } from './lib/views';
+import { installPointerEffects, installTouchFeedback } from './lib/pointer';
+import { installSheets } from './lib/sheets';
+// Self-hosted fonts, latin subset only: no third-party request, and they work
+// offline. Inter and JetBrains Mono are variable (fonts.css): one file each.
+import './fonts.css';
 import '@fontsource/jetbrains-mono/latin-400-italic.css';
-import '@fontsource/jetbrains-mono/latin-500.css';
-import '@fontsource/jetbrains-mono/latin-700.css';
 import './styles.css';
 import './motion.css';
+import './mobile.css';
 import './tailwind.css';
 
 /** Matches the .login.is-leaving fade in styles.css (browsers without View Transitions). */
@@ -63,11 +60,13 @@ function Root() {
   if (state.status === 'loading') return null;
   if (state.status === 'anon' || leaving) return <LoginPage login={login} leaving={leaving} fadeOut={leaving && !morph} />;
   // Before App renders: its sidebar, palette and shortcuts read the narrowed view list.
-  setViewRole(state.user.role);
+  setViewAccess(state.user.permissions);
   return <App user={state.user} onLogout={() => void logout()} install={install} />;
 }
 
 installPointerEffects();
+installTouchFeedback();
+installSheets();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root missing from index.html');

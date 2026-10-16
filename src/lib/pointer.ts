@@ -13,6 +13,15 @@ const TILT = '.svc, .login-card';
 const SPOTLIGHT = '.kpi, .lamp-row, .card';
 const ANY = `${TILT}, ${SPOTLIGHT}`;
 
+/**
+ * iOS Safari applies :active (the pressed look every control gets in
+ * motion.css) only when a touch listener exists. A passive no-op is enough:
+ * passive listeners never hold up scrolling.
+ */
+export function installTouchFeedback(): void {
+  document.addEventListener('touchstart', () => undefined, { passive: true });
+}
+
 export function installPointerEffects(): void {
   if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches || prefersReducedMotion()) return;
 

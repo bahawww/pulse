@@ -22,7 +22,9 @@ export function useView(): ViewId {
       transition('view', () => {
         viewRef.current = next;
         setView(next);
-        window.scrollTo({ top: 0 });
+        // Instant: html has scroll-behavior: smooth, which would scroll the new
+        // page live underneath the transition.
+        window.scrollTo({ top: 0, behavior: 'instant' });
       });
     };
     window.addEventListener('hashchange', onHash);

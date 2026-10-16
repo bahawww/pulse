@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
-import { onSessionEnd } from './session.js';
+import { onSessionEnd, userOf } from './session.js';
+import type { Permission } from '../shared/contract.js';
 
 /**
  * Server-sent events: the server pushes instead of every tab polling.
@@ -48,6 +49,14 @@ onSessionEnd((hash) => {
   }
 });
 
+/** Events only some users may receive; the rest go to every stream. */
+const EVENT_PERM: Readonly<Record<string, Permission>> = { actions: 'view:logs' };
+
+function allowed(session: string, event: string): boolean {
+  const need = EVENT_PERM[event];
+  return !need || !!userOf(session)?.permissions.includes(need);
+}
+
 export function openStream(req: Request, res: Response, session: string): void {
   let mine = 0;
   for (const c of clients) if (c.session === session) mine += 1;
@@ -63,7 +72,7 @@ export function openStream(req: Request, res: Response, session: string): void {
     'X-Accel-Buffering': 'no',
   });
   res.write('retry: 3000\n\n');
-  for (const [event, data] of latest) write(res, event, data);
+  for (const [event, data] of latest) if (allowed(session, event)) write(res, event, data);
 
   const client: Client = { res, session };
   clients.add(client);
@@ -80,7 +89,7 @@ export function publish(event: string, payload: unknown, dedupe = false): void {
   const data = JSON.stringify(payload);
   if (dedupe && latest.get(event) === data) return;
   latest.set(event, data);
-  for (const c of clients) write(c.res, event, data);
+  for (const c of clients) if (allowed(c.session, event)) write(c.res, event, data);
 }
 
 export function streamCount(): number {

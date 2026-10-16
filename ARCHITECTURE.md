@@ -49,15 +49,17 @@ flowchart LR
 | `src/server/actions.ts` | start, stop and restart for systemd units and containers: allowlist plus two-phase confirmation. |
 | `src/server/logs.ts` | Bounded `journalctl` reads with validated unit names. |
 | `src/server/reachability.ts`, `spend.ts` | Outside-in reachability check and LLM spend, both on demand. |
-| `src/server/session.ts`, `csrf.ts` | Login, server-side sessions with a role, `requireRole`, origin checks, CSRF tokens. |
+| `src/server/session.ts`, `csrf.ts` | Login, server-side sessions with role and permissions, `requirePerm`, origin checks, CSRF tokens. |
 | `src/server/db.ts`, `users.ts`, `userRoutes.ts` | MySQL pool and migrations (`deploy/sql/`), scrypt password hashes, account rules, `/api/users`. |
 | `src/server/stream.ts` | Server-sent events to every open tab. |
 | `src/server/terminal.ts` | WebSocket to pty bridge, remote SSH and Telnet targets, flow control. |
 | `src/shared/contract.ts` | Types and constants shared by server and client: the API contract. |
 | `src/hooks/` | Data hooks: `useStats`, `useHistory`, `useAlerts`, `usePolled`, `useAuth`. |
 | `src/lib/stream.ts`, `csrf.ts` | The tab's one EventSource, and the CSRF token holder with `postJson`. |
-| `src/components/` | Views and panels. `components/terminal/` is the terminal, loaded as its own chunk. |
-| `src/styles.css`, `motion.css`, `terminal.css` | Plain CSS on design tokens. |
+| `src/lib/motion.ts`, `spring.ts`, `sheets.ts` | View Transitions, JS springs with velocity (gestures), and menus as draggable bottom sheets on phones. |
+| `src/components/` | Views and panels. `TabBar.tsx` is the phone navigation (tab bar, scope bar). `components/terminal/` is the terminal, loaded as its own chunk. |
+| `src/styles.css`, `motion.css`, `mobile.css`, `terminal.css` | Plain CSS on design tokens. `mobile.css` is the layer below 1024px. |
+| `src/fonts.css` | Self-hosted variable Inter and JetBrains Mono, latin subset. |
 | `src/tailwind.css` | Tailwind v4 for new components only: `tw:` prefix, no preflight, theme mapped to the tokens. |
 | `deploy/` | Unit template, hardening drop-in, health-ping cron script, `sql/` migrations. |
 | `scripts/user.mjs` | Account CLI: list, create, set a password. phpMyAdmin cannot make the hash. |
@@ -126,12 +128,16 @@ tree (`split.ts`), so re-arranging never remounts a shell.
   account (`ADMIN_USER`/`ADMIN_PASSWORD`) seeds the first admin and is a
   break-glass login used only while MySQL cannot be reached. Telemetry stays
   in SQLite: it is per-box and needs no server.
-- **Roles.** viewer reads telemetry and logs; operator also runs service
-  actions and the service scan; admin also gets the terminal, the file
-  explorer (reads too: it can open secrets) and user management; the one
-  superadmin (`ADMIN_USER`) is an admin whose account cannot be changed or
-  removed, re-asserted at start and every 5 minutes. The server
-  enforces this with `requireRole`; the client only hides what would 403.
+- **Roles are ceilings, permissions are per user.** `PERMISSIONS` in
+  `src/shared/contract.ts` lists every permission with the lowest role that may
+  hold it; a user's `permissions` (JSON, NULL = role default) is cut to that
+  ceiling when read, so a hand edit cannot exceed the role. The list is copied
+  into the session at login and checked by `requirePerm` on every route, the
+  terminal upgrade and the SSE feed; the client hides what would be refused.
+  Only the superadmin renames users or sets others' passwords; admins with
+  `users:manage` handle viewers and operators. Telemetry endpoints (stats,
+  history, stream) are shared by all monitoring views, so they need a login,
+  not a specific view.
 - **One process, no queue.** Everything the server does is bounded per tick or
   per request; nothing needs a worker.
 

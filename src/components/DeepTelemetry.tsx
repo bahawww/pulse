@@ -1,6 +1,7 @@
 import { type JSX, useMemo } from 'react';
 import type { HistorySample, SystemMetrics } from '../shared/contract';
 import { formatBytes, formatPercent, formatRate } from '../lib/format';
+import { fill } from '../lib/meter';
 import { TimeChart, type Series } from './TimeChart';
 
 /**
@@ -60,7 +61,7 @@ export function DeepTelemetry({ system, samples }: DeepTelemetryProps): JSX.Elem
           {cores.map((v, i) => (
             <div className={`core${v >= 95 ? ' is-max' : v >= 75 ? ' is-hot' : ''}`} key={i} role="listitem">
               <div className="core-bar" title={`core ${i}: ${formatPercent(v)}%`}>
-                <div className="core-fill" style={{ height: `${Math.min(Math.max(v, 0), 100)}%` }} />
+                <div className="core-fill" style={fill(v)} />
               </div>
               <span>{i}</span>
             </div>
@@ -93,7 +94,7 @@ export function DeepTelemetry({ system, samples }: DeepTelemetryProps): JSX.Elem
               </span>
             </div>
             <div className="meter">
-              <div className={`meter-fill ${meterTone(mem.percent)}`} style={{ width: `${Math.min(mem.percent, 100)}%`, background: meterTone(mem.percent) ? undefined : 'var(--s-mem)' }} />
+              <div className={`meter-fill ${meterTone(mem.percent)}`} style={fill(mem.percent, meterTone(mem.percent) ? undefined : 'var(--s-mem)')} />
             </div>
           </div>
           <div className="mem-bar-row">
@@ -102,7 +103,7 @@ export function DeepTelemetry({ system, samples }: DeepTelemetryProps): JSX.Elem
               <span className="mono">{mem.swapTotalBytes > 0 ? `${formatPercent(swapPct)}%` : 'none'}</span>
             </div>
             <div className="meter">
-              <div className={`meter-fill ${meterTone(swapPct)}`} style={{ width: `${Math.min(swapPct, 100)}%`, background: meterTone(swapPct) ? undefined : 'var(--s-lat)' }} />
+              <div className={`meter-fill ${meterTone(swapPct)}`} style={fill(swapPct, meterTone(swapPct) ? undefined : 'var(--s-lat)')} />
             </div>
           </div>
         </div>

@@ -31,6 +31,8 @@ import {
 
 interface FilesPanelProps {
   readonly onNotify: (message: string) => void;
+  /** Upload, new folder, rename, delete: the files:write permission. Without it the panel is read-only. */
+  readonly canWrite: boolean;
 }
 
 type SortKey = 'name' | 'size' | 'mtime';
@@ -136,7 +138,7 @@ function sendFile(dir: string, file: File, overwrite: boolean, onProgress: (load
   })();
 }
 
-export function FilesPanel({ onNotify }: FilesPanelProps): JSX.Element {
+export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element {
   const [listing, setListing] = useState<FileListing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -340,9 +342,9 @@ export function FilesPanel({ onNotify }: FilesPanelProps): JSX.Element {
           <h3 id="files-h" className="card-title">
             Files
           </h3>
-          <p className="card-sub">Runs as the server's login user, with that user's permissions. Drop files here to upload.</p>
+          <p className="card-sub">Runs as the server's login user, with that user's permissions. {canWrite ? ' Drop files here to upload.' : ' Read-only for your account.'}</p>
         </div>
-        <div className="tw:flex tw:flex-wrap tw:items-center tw:gap-2">
+        <div className={`tw:flex-wrap tw:items-center tw:gap-2 ${canWrite ? 'tw:flex' : 'tw:hidden'}`}>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setCreating(true)} disabled={!dir}>
             <FolderPlusIcon size={14} />
             New folder
@@ -457,13 +459,14 @@ export function FilesPanel({ onNotify }: FilesPanelProps): JSX.Element {
       <div className={`tw:grid tw:gap-4 ${selected && !isFolder(selected) ? 'tw:wide:grid-cols-[minmax(0,1fr)_380px]' : ''}`}>
         <div
           onDragOver={(e) => {
+            if (!canWrite) return;
             e.preventDefault();
             setDragging(true);
           }}
           onDragLeave={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
           }}
-          onDrop={onDrop}
+          onDrop={canWrite ? onDrop : undefined}
           className={`tw:relative tw:min-w-0 tw:overflow-hidden tw:rounded-lg tw:border ${dragging ? 'tw:border-accent tw:bg-accent-soft' : 'tw:border-line'}`}
         >
           {dragging && (
@@ -583,12 +586,16 @@ export function FilesPanel({ onNotify }: FilesPanelProps): JSX.Element {
                               <DownloadIcon size={13} />
                             </a>
                           )}
-                          <button type="button" className="btn btn-icon btn-sm" onClick={() => setRenaming(e.name)} aria-label={`Rename ${e.name}`} title="Rename">
-                            <PencilIcon size={13} />
-                          </button>
-                          <button type="button" className="btn btn-icon btn-sm" onClick={() => setToDelete(e)} aria-label={`Delete ${e.name}`} title="Delete">
-                            <TrashIcon size={13} />
-                          </button>
+                          {canWrite && (
+                            <button type="button" className="btn btn-icon btn-sm" onClick={() => setRenaming(e.name)} aria-label={`Rename ${e.name}`} title="Rename">
+                              <PencilIcon size={13} />
+                            </button>
+                          )}
+                          {canWrite && (
+                            <button type="button" className="btn btn-icon btn-sm" onClick={() => setToDelete(e)} aria-label={`Delete ${e.name}`} title="Delete">
+                              <TrashIcon size={13} />
+                            </button>
+                          )}
                         </span>
                       </li>
                     );

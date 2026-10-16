@@ -14,6 +14,8 @@ interface ServicesGridProps {
   readonly onNotify: (message: string) => void;
   /** Re-fetch the stats after a hide or a scan changed the list. */
   readonly onRefresh: () => void;
+  /** Hide, show and rescan need the services:control permission. */
+  readonly canEdit: boolean;
 }
 
 /** Cards drawn while the first stats are on their way. */
@@ -25,7 +27,7 @@ const SKELETON_CARDS = 4;
  * (src/server/discover.ts); any card can be hidden and shown again. Number
  * keys 1-9 open a service; see App for the key handling.
  */
-export function ServicesGrid({ data, hostMode, onNotify, onRefresh }: ServicesGridProps): JSX.Element {
+export function ServicesGrid({ data, hostMode, onNotify, onRefresh, canEdit }: ServicesGridProps): JSX.Element {
   const all = data?.services ?? [];
   const hidden = data?.hiddenServices ?? [];
   const filters = categoryFilters(all);
@@ -110,7 +112,7 @@ export function ServicesGrid({ data, hostMode, onNotify, onRefresh }: ServicesGr
           })}
         </div>
         <div className="tw:flex tw:items-center tw:gap-2">
-          {hidden.length > 0 && (
+          {canEdit && hidden.length > 0 && (
             <button
               type="button"
               className="btn btn-ghost btn-sm"
@@ -121,14 +123,16 @@ export function ServicesGrid({ data, hostMode, onNotify, onRefresh }: ServicesGr
               Hidden {hidden.length}
             </button>
           )}
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => void scan()} disabled={scanning} title="Look for new apps now">
-            <RefreshIcon size={13} />
-            {scanning ? 'Scanning…' : 'Rescan'}
-          </button>
+          {canEdit && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void scan()} disabled={scanning} title="Look for new apps now">
+              <RefreshIcon size={13} />
+              {scanning ? 'Scanning…' : 'Rescan'}
+            </button>
+          )}
         </div>
       </div>
 
-      {showHidden && hidden.length > 0 && (
+      {canEdit && showHidden && hidden.length > 0 && (
         <ul className="tw:mb-4 tw:flex tw:flex-wrap tw:gap-2" aria-label="Hidden services">
           {hidden.map((s) => (
             <li
@@ -179,7 +183,7 @@ export function ServicesGrid({ data, hostMode, onNotify, onRefresh }: ServicesGr
               index={index}
               hostMode={hostMode}
               onNotify={onNotify}
-              onHide={() => void setHidden(service, true)}
+              onHide={canEdit ? () => void setHidden(service, true) : undefined}
             />
           ))}
         </div>
@@ -199,7 +203,7 @@ function ServiceCard({
   readonly index: number;
   readonly hostMode: HostMode;
   readonly onNotify: (message: string) => void;
-  readonly onHide: () => void;
+  readonly onHide?: () => void;
 }): JSX.Element {
   const url = buildServiceUrl(service, hostMode);
   const subdomain = usesSubdomain(service, hostMode);
@@ -253,9 +257,11 @@ function ServiceCard({
         <button type="button" className="btn btn-icon" onClick={() => void copy()} aria-label={`Copy ${service.name} URL`} title="Copy URL">
           <CopyIcon size={14} />
         </button>
-        <button type="button" className="btn btn-icon" onClick={onHide} aria-label={`Hide ${service.name}`} title="Hide">
-          <EyeOffIcon size={14} />
-        </button>
+        {onHide && (
+          <button type="button" className="btn btn-icon" onClick={onHide} aria-label={`Hide ${service.name}`} title="Hide">
+            <EyeOffIcon size={14} />
+          </button>
+        )}
       </div>
     </article>
   );

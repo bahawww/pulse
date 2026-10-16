@@ -1,0 +1,527 @@
+/* ==========================================================================
+   Phones and tablets. Loaded after motion.css.
+
+   Below 1024px the sidebar is gone and Pulse behaves like an iOS app:
+   - Navigation bar on top. Its glass and hairline fade in only once content
+     scrolls under it (iOS scroll-edge appearance); the actions share one
+     capsule, like iOS 26 bar buttons. The view menu gives way to the tab bar.
+   - Scope bar under it: a segmented control for the views of the current
+     group (TabBar.tsx, ScopeBar).
+   - A floating glass tab bar at the bottom (TabBar.tsx).
+   - Below 641px every menu is a bottom sheet you can drag away
+     (lib/sheets.ts); on any screen a closed menu plays a short exit.
+   - Touch: no grey tap flash, no link preview on a long press of a control,
+     presses that squash and spring back.
+   Same motion rules as motion.css: only transform and opacity move.
+   ========================================================================== */
+
+:root {
+  --tb-capsule: rgba(255, 255, 255, 0.06);
+  --tb-press: rgba(255, 255, 255, 0.12);
+  --tabbar-fill: rgba(28, 28, 31, 0.82);
+  --tabbar-drop: 0 10px 30px -10px rgba(0, 0, 0, 0.75), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --tab-pill: rgba(255, 255, 255, 0.11);
+  --seg-track: rgba(118, 118, 128, 0.24);
+  --seg-pill: #2c2c2e;
+  --seg-pill-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 3px 8px rgba(0, 0, 0, 0.35);
+  --sheet-fill: rgba(24, 24, 27, 0.94);
+  --sheet-backdrop: rgba(0, 0, 0, 0.5);
+  /* Where the tab bar floats, and how much page it covers. */
+  --tabbar-bottom: max(10px, calc(env(safe-area-inset-bottom) - 8px));
+  --tabbar-space: calc(var(--tabbar-bottom) + 66px);
+}
+
+:root[data-theme='light'] {
+  --tb-capsule: rgba(0, 0, 0, 0.04);
+  --tb-press: rgba(0, 0, 0, 0.08);
+  --tabbar-fill: rgba(255, 255, 255, 0.74);
+  --tabbar-drop: 0 10px 30px -12px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --tab-pill: rgba(0, 0, 0, 0.06);
+  --seg-track: rgba(118, 118, 128, 0.12);
+  --seg-pill: #ffffff;
+  --seg-pill-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+  --sheet-fill: rgba(255, 255, 255, 0.94);
+  --sheet-backdrop: rgba(0, 0, 0, 0.22);
+}
+
+/* ---------- Touch, every size ------------------------------------------- */
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* No double-tap-zoom wait on controls. */
+a,
+button,
+summary,
+label,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+/* A long press on a control is a press, not a link preview or text selection. */
+.tabbar,
+.scopebar,
+.topbar-actions,
+.side-link,
+.rail-link,
+.lamp-row,
+.btn,
+.icon-btn,
+.tab,
+.range-btn {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Hidden at desktop sizes; shown below. */
+.tabbar,
+.scopebar {
+  display: none;
+}
+
+/* ---------- Every menu leaves instead of vanishing (lib/sheets.ts) -------- */
+
+.is-leaving {
+  pointer-events: none;
+}
+
+/* The copy's rows must not replay their entrance while it leaves. */
+.pop.is-leaving > * {
+  animation: none !important;
+}
+
+.pop.is-leaving {
+  animation: pop-leave 150ms var(--ease) forwards;
+}
+
+.pop-backdrop.is-leaving {
+  animation: fade-out-quick 220ms var(--ease) forwards;
+}
+
+@keyframes pop-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+/* ---------- Compact layout: below 1024px ---------------------------------- */
+
+@media (max-width: 1023px) {
+  /* Navigation bar */
+  .topbar {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+    border-bottom-color: transparent;
+  }
+
+  .topbar-inner {
+    min-height: 56px;
+    padding: 8px 16px;
+    gap: 10px;
+  }
+
+  .brand {
+    gap: 10px;
+  }
+
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand-name {
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+
+  /* The hairline under the bar: shown once content scrolls under it. */
+  .topbar::after {
+    inset: auto 0 0 0;
+    z-index: 0;
+    height: 1px;
+    background: var(--line);
+    box-shadow: none;
+    opacity: 1;
+  }
+
+  /* All actions in one capsule; each a round, borderless button. */
+  .topbar-actions {
+    gap: 0;
+    padding: 2px;
+    border: 1px solid var(--glass-edge);
+    border-radius: 999px;
+    background: var(--tb-capsule);
+  }
+
+  .topbar-actions .icon-btn,
+  .topbar-actions .search-btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    justify-content: center;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text);
+  }
+
+  .topbar-actions .icon-btn.is-alert {
+    color: var(--crit-text);
+  }
+
+  .topbar-actions :is(.icon-btn, .search-btn):active:not(:disabled) {
+    background: var(--tb-press);
+  }
+
+  .topbar-actions .badge-dot {
+    top: 2px;
+    right: 2px;
+  }
+
+  /* The tab bar replaces the view menu. */
+  html[data-tabbar] .nav-toggle {
+    display: none;
+  }
+
+  /* Scope bar: an iOS segmented control under the bar. */
+  .scopebar {
+    display: block;
+    padding: 0 16px 10px;
+  }
+
+  .scopebar-list {
+    position: relative;
+    display: flex;
+    padding: 2px;
+    border-radius: 10px;
+    background: var(--seg-track);
+  }
+
+  .scopebar-item {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 32px;
+    padding: 0 6px;
+    border-radius: 8px;
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color var(--dur) var(--ease);
+  }
+
+  .scopebar-item.is-active {
+    color: var(--text);
+  }
+
+  .scopebar-item:active:not(.is-active) {
+    opacity: 0.6;
+  }
+
+  .scopebar-pill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+    border-radius: 8px;
+    background: var(--seg-pill);
+    box-shadow: var(--seg-pill-shadow);
+    pointer-events: none;
+  }
+
+  /* Tab bar: a floating glass capsule over the bottom of the page. */
+  .tabbar {
+    position: fixed;
+    left: 50%;
+    bottom: var(--tabbar-bottom);
+    z-index: 45;
+    display: block;
+    width: min(calc(100% - 24px - env(safe-area-inset-left) - env(safe-area-inset-right)), 520px);
+    padding: 4px;
+    border: 1px solid var(--glass-edge);
+    border-radius: 999px;
+    background: var(--tabbar-fill);
+    -webkit-backdrop-filter: var(--glass-filter, blur(22px) saturate(180%));
+    backdrop-filter: var(--glass-filter, blur(22px) saturate(180%));
+    box-shadow:
+      inset 0 1px 0 var(--glass-hi),
+      var(--tabbar-drop);
+    transform: translateX(-50%);
+    animation: tabbar-in var(--spring-snappy-dur) var(--spring-snappy) 120ms backwards;
+  }
+
+  .tabbar::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(150deg, var(--glass-rim-a), transparent 34%, transparent 66%, var(--glass-rim-b));
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+    pointer-events: none;
+  }
+
+  .tabbar-list {
+    position: relative;
+    display: flex;
+  }
+
+  .tabbar-item {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    height: 54px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--text-3);
+    font: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color var(--dur) var(--ease);
+  }
+
+  .tabbar-item.is-active {
+    color: var(--text);
+  }
+
+  .tabbar-icon {
+    position: relative;
+    display: grid;
+    place-items: center;
+    transition: transform var(--spring-bouncy-dur) var(--spring-bouncy);
+  }
+
+  /* Press: down fast, back on a spring. */
+  .tabbar-item:active .tabbar-icon {
+    transform: scale(0.82);
+    transition-duration: 90ms;
+    transition-timing-function: var(--ease-out);
+  }
+
+  /* Becoming the current tab: the glyph bounces once, like an SF Symbol. */
+  .tabbar-item.is-active .tabbar-icon svg {
+    animation: tab-bounce var(--spring-bouncy-dur) var(--spring-bouncy);
+  }
+
+  .tabbar-label {
+    max-width: 100%;
+    padding: 0 2px;
+    overflow: hidden;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A shell is still running behind the Terminal tab. */
+  .tabbar-dot {
+    position: absolute;
+    top: -2px;
+    right: -5px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 2px var(--tabbar-fill);
+    animation: badge-pop var(--spring-wobbly-dur) var(--spring-wobbly) backwards;
+  }
+
+  .tabbar-pill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+    border-radius: 999px;
+    background: var(--tab-pill);
+    pointer-events: none;
+  }
+
+  /* Room for the bar: the page ends above it, toasts float over it. The
+     Terminal tab carries the "still running" dot instead of the floating button. */
+  html[data-tabbar] .page {
+    padding-bottom: calc(var(--tabbar-space) + 16px);
+  }
+
+  html[data-tabbar] {
+    scroll-padding-bottom: var(--tabbar-space);
+  }
+
+  html[data-tabbar] .toast {
+    bottom: calc(var(--tabbar-space) + 10px);
+  }
+
+  html[data-tabbar] .tw-resume {
+    display: none;
+  }
+
+  /* Page: iOS-sized large titles, less air above them. */
+  .page {
+    padding-top: 12px;
+    gap: 28px;
+  }
+
+  .view {
+    gap: 28px;
+  }
+
+  .section {
+    gap: 12px;
+  }
+
+  .section-title {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+}
+
+/* iOS scroll-edge appearance: at the top the bar is part of the page; its
+   glass and hairline come in over the first 24px of scroll. */
+@supports (animation-timeline: scroll()) {
+  @media (max-width: 1023px) {
+    .topbar::before,
+    .topbar::after {
+      animation: scroll-edge linear both;
+      animation-timeline: scroll(root);
+      animation-range: 0 24px;
+    }
+  }
+}
+
+/* ---------- Sheets: below 641px ------------------------------------------- */
+
+@media (max-width: 640px) {
+  .pop,
+  .topbar .pop,
+  .topbar .nav-pop,
+  .pop.select-pop,
+  .select-pop.is-up {
+    position: fixed;
+    top: auto;
+    left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    z-index: 60;
+    width: auto !important;
+    max-width: none;
+    max-height: min(78dvh, 640px) !important;
+    padding: 24px 10px 10px;
+    border-radius: 28px;
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='5'%3E%3Crect width='36' height='5' rx='2.5' fill='%23808080' fill-opacity='0.5'/%3E%3C/svg%3E")
+        no-repeat center 9px / 36px 5px,
+      var(--sheet-fill);
+    overscroll-behavior: contain;
+    transform-origin: bottom center;
+    animation: sheet-in var(--spring-sheet-dur) var(--spring-sheet) backwards;
+  }
+
+  .pop > :is(.menu-item, p, div, ul) {
+    animation-name: sheet-item-in;
+  }
+
+  .pop-backdrop {
+    background: var(--sheet-backdrop);
+    touch-action: none;
+    animation: fade-in var(--dur) var(--ease) backwards;
+  }
+
+  .pop.is-leaving {
+    animation: sheet-out var(--spring-sheet-dur) var(--spring-sheet) forwards;
+  }
+
+  /* While a finger holds it, the sheet goes exactly where the finger says. */
+  .pop.is-dragging {
+    transition: none;
+  }
+
+  .menu-item {
+    min-height: 48px;
+    align-items: center;
+    border-radius: 14px;
+  }
+}
+
+/* ---------- Fallbacks ------------------------------------------------------ */
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .tabbar {
+    background-color: var(--surface-2);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .tabbar {
+    background-color: var(--surface-2);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ---------- Keyframes (scroll-edge lives in motion.css) ------------------- */
+
+/* The bar keeps its centring translateX(-50%) in every frame. */
+@keyframes tabbar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(24px) scale(0.94);
+  }
+}
+
+@keyframes tab-bounce {
+  30% {
+    transform: scale(0.86) translateY(1px);
+  }
+
+  60% {
+    transform: scale(1.12) translateY(-1px);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translate3d(0, calc(100% + 24px), 0);
+  }
+}
+
+@keyframes sheet-out {
+  to {
+    transform: translate3d(0, calc(100% + 24px), 0);
+  }
+}
+
+@keyframes sheet-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}

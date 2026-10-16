@@ -4,8 +4,10 @@ import { type AuthUser } from '../hooks/useAuth';
 import { type Theme, type ThemeOrigin } from '../hooks/useTheme';
 import { HOST_OPTIONS, type HostMode } from '../lib/urls';
 import { VIEW_GROUPS, VIEWS, type ViewId } from '../lib/views';
-import { CheckIcon, MoonIcon, SearchIcon, SunIcon } from './icons';
+import { CheckIcon, MoonIcon, SearchIcon, SunIcon, TerminalIcon } from './icons';
 import { NotificationBell } from './NotificationBell';
+import { ScopeBar } from './TabBar';
+import { postJson } from '../lib/csrf';
 
 interface NavbarProps {
   readonly theme: Theme;
@@ -18,6 +20,8 @@ interface NavbarProps {
   readonly alerts: AlertsHandle;
   readonly user: AuthUser;
   readonly onLogout: () => void;
+  /** Opens the terminal; absent when this login may not. Listed in the phone menu. */
+  readonly onOpenTerminal?: () => void;
   /** The current view, named on the left of the bar on desktop (where the brand is in the sidebar). */
   readonly active: ViewId;
 }
@@ -37,6 +41,7 @@ export function Navbar({
   alerts,
   user,
   onLogout,
+  onOpenTerminal,
   active,
 }: NavbarProps): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -239,6 +244,9 @@ export function Navbar({
                     </span>
                   </div>
                   <div className="tw:border-t tw:border-line tw:pt-1.5">
+                    {user.id !== null && (
+                      <OwnPassword onNotify={onNotify} />
+                    )}
                     <button
                       type="button"
                       role="menuitem"
@@ -273,6 +281,19 @@ export function Navbar({
               <>
                 <div className="pop-backdrop" aria-hidden="true" onClick={() => setNavOpen(false)} />
                 <nav id="section-nav" className="pop nav-pop" aria-label="Views">
+                  {onOpenTerminal && (
+                    <button
+                      type="button"
+                      className="menu-item"
+                      onClick={() => {
+                        setNavOpen(false);
+                        onOpenTerminal();
+                      }}
+                    >
+                      <TerminalIcon size={15} />
+                      <span className="menu-item-label">Terminal</span>
+                    </button>
+                  )}
                   {VIEWS.map((view) => (
                     <a
                       key={view.id}
@@ -289,6 +310,8 @@ export function Navbar({
           </div>
         </div>
       </div>
+      {/* Phones and tablets: the views of the current group, as a segmented control. */}
+      <ScopeBar active={active} />
     </header>
   );
 }
@@ -328,6 +351,67 @@ function CloseGlyph(): JSX.Element {
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
       <line x1="6" y1="6" x2="18" y2="18" />
       <line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+  );
+}
+
+/** "Change password" in the profile menu: a small form, opened in place. */
+function OwnPassword({ onNotify }: { readonly onNotify: (message: string) => void }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const input =
+    'tw:w-full tw:rounded-md tw:border tw:border-line-strong tw:bg-surface tw:px-2.5 tw:py-1.5 tw:text-[13px] tw:text-fg tw:outline-none';
+  if (!open) {
+    return (
+      <button type="button" role="menuitem" className="menu-item" onClick={() => setOpen(true)}>
+        <KeyGlyph />
+        <span className="menu-item-label">Change password</span>
+      </button>
+    );
+  }
+  return (
+    <form
+      className="tw:flex tw:flex-col tw:gap-2 tw:px-2.5 tw:pt-1 tw:pb-2.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const data = new FormData(e.currentTarget);
+        const next = String(data.get('next') ?? '');
+        if (next !== String(data.get('again') ?? '')) {
+          onNotify('The new passwords do not match');
+          return;
+        }
+        setBusy(true);
+        void postJson('/api/auth/password', { current: data.get('current'), next })
+          .then(async (res) => {
+            if (res.ok) {
+              onNotify('Password changed');
+              setOpen(false);
+            } else onNotify(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'failed');
+          })
+          .catch(() => onNotify('server unreachable'))
+          .finally(() => setBusy(false));
+      }}
+    >
+      <input name="current" type="password" required autoComplete="current-password" placeholder="Current password" className={input} autoFocus />
+      <input name="next" type="password" required autoComplete="new-password" placeholder="New password" className={input} />
+      <input name="again" type="password" required autoComplete="new-password" placeholder="New password again" className={input} />
+      <span className="tw:flex tw:gap-2">
+        <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
+          Save
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+      </span>
+    </form>
+  );
+}
+
+function KeyGlyph(): JSX.Element {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <circle cx="8" cy="15" r="4" />
+      <path d="m10.8 12.2 9.2-9.2M17 6l3 3M14 9l2 2" />
     </svg>
   );
 }

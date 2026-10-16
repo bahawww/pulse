@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import type { IncomingMessage } from 'node:http';
@@ -6,8 +7,8 @@ import pty from 'node-pty';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import { csrfValid, WS_PROTOCOL, wsToken } from './csrf.js';
-import { roleAtLeast } from '../shared/contract.js';
 import { isValid, onSessionEnd, peerAddress, sessionHash, userOf } from './session.js';
+import { TMUX_RE } from './tmux.js';
 import { HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, writeKnownHosts } from './sshLocal.js';
 
 /**
@@ -37,6 +38,9 @@ import { HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, wri
  * Shells outlive their WebSocket. A dropped connection or a page reload leaves
  * the pty running for DETACH_MS; the browser reattaches with `?sid=` and gets
  * the recent output replayed. Only the login that started a shell can attach it.
+ * Login shells in ssh mode go further: they run inside dtach (see
+ * PERSIST_DETACH_MS), so they also survive a restart of this process; after
+ * one, any admin holding the shell's id can reattach it (no replay then).
  *
  * Wire format: output goes out as binary frames of raw UTF-8 (no JSON escaping,
  * no base64), control messages as JSON text frames. Input comes in as binary
@@ -57,8 +61,18 @@ import { HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, wri
 
 const MAX_SESSIONS = 24;
 const IDLE_MS = 60 * 60_000;
-/** How long a shell with no browser attached keeps running. */
-const DETACH_MS = 15 * 60_000;
+/** How long a shell with no browser attached keeps running (remote targets; login shells use dtach). */
+const DETACH_MS = 60 * 60_000;
+/**
+ * Login shells run inside dtach (ssh mode), so they outlive a dropped phone
+ * connection, a locked screen and a restart of this process. dtach passes the
+ * raw stream through, unlike tmux, so xterm keeps its own scrollback. Such a
+ * shell is kept this long with nobody attached.
+ */
+const PERSIST_DETACH_MS = 24 * 3_600_000;
+const DTACH = '/usr/bin/dtach';
+const PERSIST_DIR = `${HOME}/.cache/pulse-dtach`;
+const SID_RE = /^[0-9a-f]{32}$/;
 /** Recent output kept per shell for replay on reattach. */
 const REPLAY_BYTES = 512 * 1024;
 /**
@@ -78,6 +92,25 @@ const wss = new WebSocketServer({
   handleProtocols: (offered) => (offered.has(WS_PROTOCOL) ? WS_PROTOCOL : false),
 });
 
+/**
+ * Heartbeat: a phone that was put away or had the app killed often leaves its
+ * socket open with nobody behind it. Every HEARTBEAT_MS each socket is pinged;
+ * one that has not answered the previous ping is dropped, which detaches its
+ * shell so another tab, or the same phone coming back, can pick it up.
+ */
+const HEARTBEAT_MS = 15_000;
+const alive = new WeakMap<WebSocket, boolean>();
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (alive.get(ws) === false) {
+      ws.terminate();
+      continue;
+    }
+    alive.set(ws, false);
+    ws.ping();
+  }
+}, HEARTBEAT_MS).unref();
+
 /** A remote host this shell connects to instead of a login shell. */
 export interface Target {
   readonly proto: 'ssh' | 'telnet';
@@ -94,6 +127,10 @@ interface Shell {
   readonly pty: pty.IPty;
   readonly started: number;
   readonly target: Target | null;
+  /** Runs inside dtach: survives detach and restarts; ended explicitly by kill(). */
+  readonly persist: boolean;
+  /** Attached to this tmux session; killing the shell only detaches it. */
+  readonly tmux: string | null;
   ws: WebSocket | null;
   /** Ring of recent output chunks, newest last, at most REPLAY_BYTES in total. */
   replay: string[];
@@ -121,7 +158,7 @@ onSessionEnd((hash) => {
 });
 
 type Out =
-  | { t: 'hello'; sid: string; resumed: boolean; mode: string; pid: number; bin: true; target: string | null }
+  | { t: 'hello'; sid: string; resumed: boolean; reattached: boolean; persist: boolean; tmux: string | null; mode: string; pid: number; bin: true; target: string | null }
   | { t: 'o'; d: string }
   | { t: 'exit'; code: number; signal?: number }
   | { t: 'pong'; ts: number };
@@ -193,7 +230,71 @@ function reject(socket: Duplex, status: string): void {
 }
 
 
-function spawnShell(cols: number, rows: number, target: Target | null): pty.IPty | string {
+// ------------------------------------------------------------------ persistent shells (dtach)
+
+function canPersist(target: Target | null): boolean {
+  return !target && MODE === 'ssh' && fs.existsSync(DTACH);
+}
+
+function sockPath(sid: string): string {
+  return `${PERSIST_DIR}/${sid}`;
+}
+
+/** A dtach socket left by an earlier run of this process, or by a shell whose browser went away. */
+function hasSocket(sid: string): boolean {
+  try {
+    return fs.statSync(sockPath(sid)).isSocket();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ends a dtach session for good. The master ignores SIGHUP, so it gets SIGTERM;
+ * it then hangs up the shell and removes the socket. `[d]tach` keeps pkill from
+ * matching the shell that runs it, whose own command line holds the pattern.
+ */
+function endSession(sid: string): void {
+  if (!SID_RE.test(sid)) return;
+  const cmd = `pkill -TERM -f -- ${shq(`[d]tach -A ${sockPath(sid)} `)}; rm -f -- ${shq(sockPath(sid))}`;
+  const child = spawn('/usr/bin/ssh', [...loopbackOptions(), '-T', LOOPBACK_DEST, cmd], { stdio: 'ignore' });
+  child.on('error', () => undefined);
+}
+
+/** Sessions found at start with no shell object yet: ended unless someone reattaches in time. */
+const orphans = new Map<string, NodeJS.Timeout>();
+
+function adoptOrphans(): void {
+  let names: string[];
+  try {
+    names = fs.readdirSync(PERSIST_DIR);
+  } catch {
+    return;
+  }
+  for (const sid of names) {
+    if (!SID_RE.test(sid) || shells.has(sid) || orphans.has(sid) || !hasSocket(sid)) continue;
+    const t = setTimeout(() => {
+      orphans.delete(sid);
+      console.log(`[terminal] end orphan ${sid.slice(0, 8)}: detached too long`);
+      endSession(sid);
+    }, PERSIST_DETACH_MS);
+    t.unref();
+    orphans.set(sid, t);
+  }
+  if (orphans.size > 0) console.log(`[terminal] ${orphans.size} persistent shell(s) waiting to be reattached`);
+}
+
+adoptOrphans();
+
+/**
+ * Attach to tmux session `name`, creating it if missing. Mouse mode is set on
+ * that session only, so the wheel and a phone drag scroll tmux's history.
+ */
+function tmuxCommand(name: string): string {
+  return `exec tmux new-session -A -s ${shq(name)} \\; set-option -q mouse on`;
+}
+
+function spawnShell(cols: number, rows: number, target: Target | null, persistSid: string | null, tmux: string | null): pty.IPty | string {
   const env: Record<string, string> = {
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
@@ -208,6 +309,7 @@ function spawnShell(cols: number, rows: number, target: Target | null): pty.IPty
       const [cmd, ...args] = targetArgv(target);
       return pty.spawn(cmd ?? 'ssh', args, opts);
     }
+    if (tmux) return pty.spawn('/bin/sh', ['-c', tmuxCommand(tmux)], opts);
     const shell = process.env.SHELL ?? '/bin/bash';
     return pty.spawn(shell, ['-l'], opts);
   }
@@ -223,6 +325,12 @@ function spawnShell(cols: number, rows: number, target: Target | null): pty.IPty
       LOOPBACK_DEST,
       // A remote target runs as the login's own command, in place of its shell.
       ...(target ? [`exec ${targetArgv(target).map(shq).join(' ')}`] : []),
+      // A persistent login shell: attach to its dtach session, or start one. -E: no
+      // detach key, -z: no suspend key, -r winch: programs repaint on reattach.
+      ...(tmux ? [tmuxCommand(tmux)] : []),
+      ...(!target && !tmux && persistSid
+        ? [`umask 077; mkdir -p ${shq(PERSIST_DIR)} && exec ${DTACH} -A ${shq(sockPath(persistSid))} -E -z -r winch "\${SHELL:-/bin/bash}" -l`]
+        : []),
     ],
     opts,
   );
@@ -287,11 +395,14 @@ function remember(s: Shell, d: string): void {
 
 function touch(s: Shell): void {
   if (s.idle) clearTimeout(s.idle);
+  // A persistent shell may run a long job with no typing; only the detach limit ends it.
+  if (s.persist) return;
   s.idle = setTimeout(() => kill(s, 'idle timeout', 4408), IDLE_MS);
 }
 
 function kill(s: Shell, reason: string, code = 1000): void {
   if (!shells.delete(s.id)) return;
+  if (s.persist && !s.exited) endSession(s.id);
   if (s.idle) clearTimeout(s.idle);
   if (s.detach) clearTimeout(s.detach);
   cancelFlush(s);
@@ -308,15 +419,20 @@ function kill(s: Shell, reason: string, code = 1000): void {
   s.ws = null;
 }
 
-function create(login: string, cols: number, rows: number, target: Target | null): Shell | string {
-  const p = spawnShell(cols, rows, target);
+/** `reuse` is the id of a dtach session to reattach (an orphan from before a restart). */
+function create(login: string, cols: number, rows: number, target: Target | null, reuse: string | null = null, tmux: string | null = null): Shell | string {
+  const persist = !tmux && canPersist(target);
+  const id = reuse ?? randomBytes(16).toString('hex');
+  const p = spawnShell(cols, rows, target, persist ? id : null, tmux);
   if (typeof p === 'string') return p;
   const s: Shell = {
-    id: randomBytes(16).toString('hex'),
+    id,
     login,
     pty: p,
     started: Date.now(),
     target,
+    persist,
+    tmux,
     ws: null,
     replay: [],
     replaySize: 0,
@@ -346,13 +462,33 @@ function create(login: string, cols: number, rows: number, target: Target | null
     emit(s, { t: 'exit', code: exitCode, signal });
     kill(s, `shell exited ${exitCode}`);
   });
-  console.log(`[terminal] spawn ${s.id.slice(0, 8)} pid=${p.pid} mode=${MODE}${target ? ` -> ${targetLabel(target)}` : ''} (${shells.size} active)`);
+  console.log(`[terminal] spawn ${s.id.slice(0, 8)} pid=${p.pid} mode=${MODE}${target ? ` -> ${targetLabel(target)}` : ''}${tmux ? ` tmux=${tmux}` : ''} (${shells.size} active)`);
   return s;
 }
 
 function clampSize(v: string | null, min: number, max: number, dflt: number): number {
   const n = Number(v);
   return Number.isInteger(n) && n >= min && n <= max ? n : dflt;
+}
+
+export interface DetachedShell {
+  readonly sid: string;
+  readonly started: number | null;
+  readonly target: Target | null;
+  readonly tmux: string | null;
+}
+
+/**
+ * Shells this login could pick up again: its own with no browser attached, and
+ * dtach sessions left from before a restart. A new tab or a relaunched phone
+ * app (empty sessionStorage) adopts these instead of starting a fresh shell.
+ * Shells another tab is showing are left out, so opening a tab never steals one.
+ */
+export function detachedShells(login: string): DetachedShell[] {
+  const out: DetachedShell[] = [];
+  for (const s of shells.values()) if (s.login === login && !s.ws && !s.exited) out.push({ sid: s.id, started: s.started, target: s.target, tmux: s.tmux });
+  for (const sid of orphans.keys()) if (hasSocket(sid)) out.push({ sid, started: null, target: null, tmux: null });
+  return out.sort((a, b) => (a.started ?? 0) - (b.started ?? 0));
 }
 
 /** Call from server.on('upgrade'). Leaves other upgrade paths untouched. */
@@ -369,24 +505,28 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
   if (!originAllowed(req)) return deny('403 Forbidden', 'origin does not match host');
   const login = sessionHash(req);
   if (!login) return deny('401 Unauthorized', 'no valid login session');
-  // A shell here is the SSH user with NOPASSWD sudo, i.e. root: admins only.
-  const role = userOf(login)?.role;
-  if (!role || !roleAtLeast(role, 'admin')) return deny('403 Forbidden', 'needs the admin role');
+  // A shell here is the SSH user with NOPASSWD sudo, i.e. root: the terminal permission (admin roles only).
+  if (!userOf(login)?.permissions.includes('terminal')) return deny('403 Forbidden', 'needs the terminal permission');
   if (!csrfValid(login, wsToken(req.headers['sec-websocket-protocol']))) return deny('403 Forbidden', 'missing or bad CSRF token');
 
   const sid = url.searchParams.get('sid');
   const existing = sid ? shells.get(sid) : undefined;
   const resumable = existing && existing.login === login ? existing : undefined;
+  // A dtach session with no shell object (this process restarted): reattach it by its id.
+  const orphan = !existing && sid && SID_RE.test(sid) && hasSocket(sid) ? sid : null;
   if (!resumable && shells.size >= MAX_SESSIONS) return deny('429 Too Many Requests', 'too many terminal windows');
   const cols = clampSize(url.searchParams.get('cols'), 1, 500, 80);
   const rows = clampSize(url.searchParams.get('rows'), 1, 200, 24);
-  const target = resumable ? null : parseTarget(url.searchParams);
+  const target = resumable || orphan ? null : parseTarget(url.searchParams);
   if (typeof target === 'string') return deny('400 Bad Request', target);
+  const tmuxParam = url.searchParams.get('tmux');
+  if (tmuxParam !== null && !TMUX_RE.test(tmuxParam)) return deny('400 Bad Request', 'bad tmux session name');
+  const tmux = resumable || orphan || target ? null : tmuxParam;
 
-  wss.handleUpgrade(req, socket, head, (ws) => attach(ws, login, resumable, cols, rows, target, peerAddress(req)));
+  wss.handleUpgrade(req, socket, head, (ws) => attach(ws, login, resumable, cols, rows, target, peerAddress(req), orphan, tmux));
 }
 
-function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: number, rows: number, target: Target | null, peer: string): void {
+function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: number, rows: number, target: Target | null, peer: string, orphan: string | null, tmux: string | null): void {
   let s: Shell;
   if (found) {
     s = found;
@@ -395,7 +535,11 @@ function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: nu
     // One browser view per shell: a second tab takes it over.
     if (s.ws && s.ws !== ws) s.ws.close(4409, 'opened elsewhere');
   } else {
-    const made = create(login, cols, rows, target);
+    if (orphan) {
+      clearTimeout(orphans.get(orphan));
+      orphans.delete(orphan);
+    }
+    const made = create(login, cols, rows, target, orphan, tmux);
     if (typeof made === 'string') {
       ws.send(JSON.stringify({ t: 'o', d: `\r\n\x1b[31m${made}\x1b[0m\r\n` }));
       ws.close(1011, made);
@@ -404,13 +548,26 @@ function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: nu
     s = made;
   }
   s.ws = ws;
+  alive.set(ws, true);
+  ws.on('pong', () => alive.set(ws, true));
   // A new view starts with an empty xterm and a drained socket.
   s.paused = false;
   s.held = false;
   syncFlow(s);
   console.log(`[terminal] ${found ? 'resume' : 'open'} ${s.id.slice(0, 8)} from ${peer}`);
 
-  emit(s, { t: 'hello', sid: s.id, resumed: !!found, mode: MODE, pid: s.pty.pid, bin: true, target: s.target ? targetLabel(s.target) : null });
+  emit(s, {
+    t: 'hello',
+    sid: s.id,
+    resumed: !!found,
+    reattached: !found && orphan !== null,
+    persist: s.persist,
+    tmux: s.tmux,
+    mode: MODE,
+    pid: s.pty.pid,
+    bin: true,
+    target: s.target ? targetLabel(s.target) : null,
+  });
   if (found) {
     // Pending output is already part of the replay; send it once.
     cancelFlush(s);
@@ -474,8 +631,9 @@ function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: nu
     syncFlow(s);
     if (!shells.has(s.id)) return;
     if (s.detach) clearTimeout(s.detach);
-    s.detach = setTimeout(() => kill(s, 'detached too long'), DETACH_MS);
-    console.log(`[terminal] detach ${s.id.slice(0, 8)} (kept ${DETACH_MS / 60_000} min)`);
+    const keep = s.persist ? PERSIST_DETACH_MS : DETACH_MS;
+    s.detach = setTimeout(() => kill(s, 'detached too long'), keep);
+    console.log(`[terminal] detach ${s.id.slice(0, 8)} (kept ${keep / 60_000} min)`);
   };
   ws.on('close', gone);
   ws.on('error', gone);

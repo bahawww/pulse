@@ -544,6 +544,43 @@
   color: var(--text-2);
 }
 
+/* tmux manager (tmux.tsx): live = some device is attached right now. */
+.tw-conns .tw-proto.is-live {
+  color: var(--ok-text, var(--ok));
+}
+
+.tw-tmux-here {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.tw-tmux-rename,
+.tw-tmux-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+}
+
+.tw-tmux-rename input {
+  flex: 1 1 140px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 13px var(--font-mono);
+}
+
+.tw-tmux-confirm > span {
+  flex: 1 1 100%;
+  font-size: 13px;
+}
+
 .tw-conns li > .tw-chip {
   flex: none;
   align-self: center;
@@ -1621,25 +1658,92 @@
 
 /* ---------------------------------------------------------------- touch key bar */
 
+/* Two rows: .tw-keys-extra scrolls sideways (symbols, combos, paging), and
+   .tw-keys-main is a fixed grid that always shows Esc Tab Ctrl Alt and all
+   four arrows, whatever the phone width. */
 .tw-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+}
+
+.tw-keys-extra {
   display: flex;
   gap: 6px;
   margin: 0 calc(-1 * var(--gutter, 20px));
-  padding: 2px var(--gutter, 20px) 2px;
+  padding: 0 var(--gutter, 20px);
   overflow-x: auto;
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
+  /* Fade the far edge, so it reads as "more this way". */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 
-.tw-keys::-webkit-scrollbar {
+.tw-keys-extra::-webkit-scrollbar,
+.tw-keys-snips::-webkit-scrollbar {
   display: none;
+}
+
+.tw-keys-snips {
+  display: flex;
+  gap: 6px;
+  margin: 0 calc(-1 * var(--gutter, 20px));
+  padding: 0 var(--gutter, 20px);
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+.tw-snip-key {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: 500 12px var(--font-ui);
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tw-snip-key:active {
+  background: var(--surface-3);
+}
+
+.tw-keys-extra .tw-key {
+  height: 34px;
+}
+
+.tw-keys-main {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.tw-keys-main .tw-key {
+  min-width: 0;
+  padding: 0;
+}
+
+/* The mono font has small ← → next to big ↑ ↓; draw all four from the UI font. */
+.tw-keys-main .tw-key:is([aria-label='Left'], [aria-label='Right'], [aria-label='Up'], [aria-label='Down']) {
+  font: 600 17px var(--font-ui);
 }
 
 .tw-key {
   flex: none;
   min-width: 44px;
   height: 40px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   padding: 0 10px;
   border: 1px solid var(--line);
   border-bottom-width: 2px;
@@ -1665,6 +1769,29 @@
 .tw-key.is-once {
   border-color: var(--text);
   box-shadow: inset 0 0 0 1px var(--text);
+}
+
+/* Footer chip while Ctrl or Alt from the key bar is armed. */
+.tw-mod-chip {
+  padding: 1px 8px;
+  border: 1px solid var(--text);
+  border-radius: 999px;
+  color: var(--text);
+  font: 600 11px var(--font-ui);
+  white-space: nowrap;
+  animation: tw-chip-pulse 1.4s ease-in-out infinite;
+}
+
+.tw-mod-chip.is-lock {
+  background: var(--text);
+  color: var(--bg);
+  animation: none;
+}
+
+@keyframes tw-chip-pulse {
+  50% {
+    opacity: 0.55;
+  }
 }
 
 .tw-key.is-lock {
@@ -1856,6 +1983,25 @@
   flex-basis: 100%;
 }
 
+/* Phone in landscape: the keyboard leaves little height. One row of keys
+   (the fixed grid, shorter), no snippets, extras or status line. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .is-compact .tw-keys-snips,
+  .is-compact .tw-keys-extra,
+  .is-compact .tw-foot {
+    display: none;
+  }
+
+  .is-compact .tw-keys-main .tw-key {
+    height: 32px;
+  }
+
+  .tw.is-compact {
+    gap: 4px;
+    padding-top: max(4px, env(safe-area-inset-top));
+  }
+}
+
 @media (pointer: coarse) {
   .tw-tab-x {
     opacity: 1;
@@ -1879,6 +2025,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tw,
+  .tw-mod-chip,
   .tw.is-closing,
   .tw-pop,
   .tw-find,

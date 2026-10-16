@@ -92,7 +92,7 @@ function spawnRemote(cmd: string): ChildProcessWithoutNullStreams | string {
   );
 }
 
-interface RunResult {
+export interface RunResult {
   readonly code: number | null;
   readonly stdout: Buffer;
   readonly stderr: string;
@@ -100,6 +100,11 @@ interface RunResult {
 
 /** Runs a command to completion, capturing output up to maxBytes. */
 function run(cmd: string, maxBytes = 16 * 1024 * 1024): Promise<RunResult> {
+  return runRemote(cmd, maxBytes);
+}
+
+/** Runs one command as the SSH user over the loopback login (outside this sandbox), to completion. */
+export function runRemote(cmd: string, maxBytes = 16 * 1024 * 1024): Promise<RunResult> {
   return new Promise((resolve) => {
     const child = spawnRemote(cmd);
     if (typeof child === 'string') {

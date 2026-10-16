@@ -1,6 +1,7 @@
-import { type JSX } from 'react';
+import { type JSX, useEffect, useState } from 'react';
 import { useNow } from '../hooks/useNow';
 import { formatAgo, formatClock, zoneLabel } from '../lib/format';
+import { behindExpiredGate } from '../lib/accessGate';
 
 /** How old the last good reading may get before the UI calls it stale. Many missed 5s samples, so a brief idle or blip does not alarm. */
 export const STALE_MS = 60_000;
@@ -53,6 +54,34 @@ export function StaleBanner({
   readonly onRetry: () => void;
 }): JSX.Element {
   const now = useNow(1000);
+  // Is a sign-in gate (Cloudflare Access) in the way? Asked again every 15 s while lost.
+  const [gated, setGated] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const check = () => void behindExpiredGate().then((g) => live && setGated(g));
+    check();
+    const id = setInterval(check, 15_000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  if (gated) {
+    return (
+      <div className="stale-banner" role="alert">
+        <span className="lamp lamp-sm is-warn" aria-hidden="true" />
+        <div className="stale-copy">
+          <strong>Your Cloudflare Access sign-in expired.</strong>{' '}
+          <span>The server is fine; this page just cannot reach it until you sign in again.</span>
+        </div>
+        <button type="button" className="btn btn-sm btn-primary" onClick={() => window.location.reload()}>
+          Sign in again
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="stale-banner" role="alert">
       <span className="lamp lamp-sm is-crit" aria-hidden="true" />

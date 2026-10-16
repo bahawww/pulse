@@ -1,21 +1,34 @@
 import { randomBytes, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import type { AssignableRole, Role, UserRow } from '../shared/contract.js';
+import {
+  effectivePermissions,
+  isPermission,
+  ROLE_RANK,
+  roleCeiling,
+  type AssignableRole,
+  type Permission,
+  type Role,
+  type UserRow,
+} from '../shared/contract.js';
 import { getPool } from './db.js';
 
 /**
- * Login accounts in MySQL (table `users`, deploy/sql/001_users.sql).
+ * Login accounts in MySQL (table `users`, deploy/sql/).
  *
  * Passwords are scrypt hashes, stored as `scrypt$N$r$p$salt$hash` so the cost
  * can be raised later without breaking old rows. phpMyAdmin can view and edit
- * rows (role, disabled) but cannot make a hash; scripts/user.mjs and the Users
- * view can.
+ * rows but cannot make a hash; scripts/user.mjs and the Users view can.
  *
- * Guards that keep the box reachable: the superadmin (the env ADMIN_USER) can
- * never be deleted, disabled, demoted or renamed, and only it may set its own
- * password; the last enabled admin cannot be removed; nobody can do any of
- * that to themselves. ensureSuperadmin restores the superadmin at every start,
- * so a row deleted in phpMyAdmin comes back.
+ * Each user has a role (a ceiling) and a permission list within it
+ * (`permissions` JSON, NULL = the role's defaults). Who may change whom:
+ *  - the superadmin: anyone else, everything, including username and password;
+ *    its own username and password too. It cannot be deleted, disabled or demoted.
+ *  - an admin with `users:manage`: only viewers and operators (role up to
+ *    operator, permissions, disabled, delete). Not usernames or passwords.
+ *  - everyone: their own password, with the current one.
+ * Nobody changes their own role, permissions or status, and the last enabled
+ * admin-or-above is never removed. ensureSuperadmin keeps exactly one
+ * superadmin, re-created from the env account if it goes missing.
  */
 
 export const ROLES: readonly AssignableRole[] = ['viewer', 'operator', 'admin'];
@@ -78,6 +91,7 @@ interface Row extends RowDataPacket {
   username: string;
   password_hash: string;
   role: Role;
+  permissions: unknown;
   disabled: number;
   created_at: Date;
   last_login_at: Date | null;
@@ -89,15 +103,40 @@ function db() {
   return p;
 }
 
+/** The stored list (mysql2 parses JSON columns), or null for "role defaults". */
+function storedPermissions(v: unknown): string[] | null {
+  let list = v;
+  if (typeof v === 'string') {
+    try {
+      list = JSON.parse(v) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : null;
+}
+
 function toUser(r: Row): UserRow {
+  const stored = storedPermissions(r.permissions);
   return {
     id: r.id,
     username: r.username,
     role: r.role,
     disabled: r.disabled === 1,
+    permissions: effectivePermissions(r.role, stored),
+    customized: stored !== null && r.role !== 'superadmin',
     createdAt: r.created_at.getTime(),
     lastLoginAt: r.last_login_at ? r.last_login_at.getTime() : null,
   };
+}
+
+export class UserError extends Error {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
+    super(message);
+  }
 }
 
 /** The account for these credentials, or null. Disabled accounts never match. Throws if the DB is down. */
@@ -116,13 +155,8 @@ export async function getUser(id: number): Promise<UserRow | null> {
 }
 
 export async function listUsers(): Promise<UserRow[]> {
-  const [rows] = await db().query<Row[]>('SELECT * FROM users ORDER BY username');
+  const [rows] = await db().query<Row[]>("SELECT * FROM users ORDER BY FIELD(role, 'superadmin', 'admin', 'operator', 'viewer'), username");
   return rows.map(toUser);
-}
-
-export async function countUsers(): Promise<number> {
-  const [rows] = await db().query<RowDataPacket[]>('SELECT COUNT(*) AS n FROM users');
-  return Number(rows[0]?.n ?? 0);
 }
 
 async function enabledAdmins(): Promise<number> {
@@ -130,19 +164,51 @@ async function enabledAdmins(): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-export class UserError extends Error {
-  constructor(
-    message: string,
-    readonly status = 400,
-  ) {
-    super(message);
-  }
+// ------------------------------------------------------------------ who may do what
+
+/** The logged-in person making a change. id null = the break-glass env login (acts as superadmin). */
+export interface Actor {
+  readonly id: number | null;
+  readonly role: Role;
+  readonly permissions: readonly Permission[];
 }
 
-export async function createUser(username: string, password: string, role: AssignableRole): Promise<UserRow> {
+function isSuper(a: Actor): boolean {
+  return a.role === 'superadmin';
+}
+
+function mayManageUsers(a: Actor): void {
+  if (!isSuper(a) && !a.permissions.includes('users:manage')) throw new UserError('you may not manage users', 403);
+}
+
+/** May `a` manage `target` at all (status, role, permissions, delete)? */
+function mayManage(a: Actor, target: UserRow): void {
+  mayManageUsers(a);
+  if (a.id !== null && a.id === target.id) throw new UserError('you cannot change your own role, permissions or status', 403);
+  if (target.role === 'superadmin') throw new UserError('the superadmin cannot be changed this way', 403);
+  if (!isSuper(a) && ROLE_RANK[target.role] >= ROLE_RANK.admin) throw new UserError('only the superadmin manages admins', 403);
+}
+
+/** May `a` give out `role`? Admins only up to operator. */
+function mayAssign(a: Actor, role: AssignableRole): void {
+  if (!isSuper(a) && ROLE_RANK[role] >= ROLE_RANK.admin) throw new UserError('only the superadmin can make admins', 403);
+}
+
+/** Keeps a requested list to known keys within the role's ceiling. */
+function cleanPermissions(role: Role, wanted: readonly unknown[]): Permission[] {
+  const ceiling = new Set<string>(roleCeiling(role));
+  return wanted.filter((p): p is Permission => isPermission(p) && ceiling.has(p));
+}
+
+// ------------------------------------------------------------------ changes
+
+export async function createUser(a: Actor, username: string, password: string, role: AssignableRole, permissions: readonly unknown[] | null): Promise<UserRow> {
+  mayManageUsers(a);
+  mayAssign(a, role);
+  const perms = permissions === null ? null : JSON.stringify(cleanPermissions(role, permissions));
   const hash = await hashPassword(password);
   try {
-    const [res] = await db().query<ResultSetHeader>('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)', [username, hash, role]);
+    const [res] = await db().query<ResultSetHeader>('INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)', [username, hash, role, perms]);
     return (await getUser(res.insertId))!;
   } catch (err) {
     if ((err as { code?: string }).code === 'ER_DUP_ENTRY') throw new UserError('username already exists', 409);
@@ -150,53 +216,90 @@ export async function createUser(username: string, password: string, role: Assig
   }
 }
 
-/** Refuses a change that would leave no enabled admin, or that the actor makes to their own account. */
-async function guard(actorId: number | null, target: UserRow, losesAdmin: boolean): Promise<void> {
-  if (target.role === 'superadmin') throw new UserError('the superadmin cannot be changed or deleted', 403);
-  if (actorId !== null && actorId === target.id) throw new UserError('you cannot do this to your own account', 403);
+export interface UserChange {
+  readonly role?: AssignableRole;
+  readonly disabled?: boolean;
+  /** A list, or null to go back to the role's defaults. */
+  readonly permissions?: readonly unknown[] | null;
+}
+
+export async function updateUser(a: Actor, id: number, change: UserChange): Promise<UserRow> {
+  const target = await getUser(id);
+  if (!target) throw new UserError('no such user', 404);
+  mayManage(a, target);
+  const role = change.role ?? (target.role as AssignableRole);
+  if (change.role !== undefined) mayAssign(a, change.role);
+  const losesAdmin = role !== 'admin' || change.disabled === true;
   if (losesAdmin && target.role === 'admin' && !target.disabled && (await enabledAdmins()) <= 1) {
     throw new UserError('this is the last enabled admin', 409);
   }
-}
-
-export async function updateUser(actorId: number | null, id: number, change: { role?: AssignableRole; disabled?: boolean }): Promise<UserRow> {
-  const target = await getUser(id);
-  if (!target) throw new UserError('no such user', 404);
-  const losesAdmin = (change.role !== undefined && change.role !== 'admin') || change.disabled === true;
-  await guard(actorId, target, losesAdmin);
-  const role = change.role ?? target.role;
   const disabled = change.disabled ?? target.disabled;
-  await db().query('UPDATE users SET role = ?, disabled = ? WHERE id = ?', [role, disabled ? 1 : 0, id]);
+  // A role change without a new list resets to the new role's defaults: the old list was for another ceiling.
+  let perms: string | null | undefined;
+  if (change.permissions !== undefined) perms = change.permissions === null ? null : JSON.stringify(cleanPermissions(role, change.permissions));
+  else if (change.role !== undefined && change.role !== target.role) perms = null;
+  if (perms === undefined) await db().query('UPDATE users SET role = ?, disabled = ? WHERE id = ?', [role, disabled ? 1 : 0, id]);
+  else await db().query('UPDATE users SET role = ?, disabled = ?, permissions = ? WHERE id = ?', [role, disabled ? 1 : 0, perms, id]);
   return (await getUser(id))!;
 }
 
-/** actorId null means a trusted caller (the CLI); the API always passes the logged-in id. */
-export async function setPassword(actorId: number | null, id: number, password: string, trusted = false): Promise<void> {
+/** Superadmin only (any account, its own included). */
+export async function renameUser(a: Actor, id: number, username: string): Promise<UserRow> {
+  if (!isSuper(a)) throw new UserError('only the superadmin can change usernames', 403);
   const target = await getUser(id);
   if (!target) throw new UserError('no such user', 404);
-  if (target.role === 'superadmin' && !trusted && actorId !== id) throw new UserError('only the superadmin can change its own password', 403);
-  const hash = await hashPassword(password);
-  const [res] = await db().query<ResultSetHeader>('UPDATE users SET password_hash = ? WHERE id = ?', [hash, id]);
-  if (res.affectedRows === 0) throw new UserError('no such user', 404);
+  try {
+    await db().query('UPDATE users SET username = ? WHERE id = ?', [username, id]);
+  } catch (err) {
+    if ((err as { code?: string }).code === 'ER_DUP_ENTRY') throw new UserError('username already exists', 409);
+    throw err;
+  }
+  return (await getUser(id))!;
 }
 
-export async function deleteUser(actorId: number | null, id: number): Promise<UserRow> {
+/** Superadmin only, for any account. Everyone else uses changeOwnPassword. */
+export async function setPassword(a: Actor, id: number, password: string): Promise<UserRow> {
+  if (!isSuper(a)) throw new UserError("only the superadmin can set other people's passwords", 403);
   const target = await getUser(id);
   if (!target) throw new UserError('no such user', 404);
-  await guard(actorId, target, true);
+  await db().query('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(password), id]);
+  return target;
+}
+
+/** Anyone, for their own account, with the current password. */
+export async function changeOwnPassword(id: number, current: string, next: string): Promise<void> {
+  const [rows] = await db().query<Row[]>('SELECT * FROM users WHERE id = ?', [id]);
+  const row = rows[0];
+  if (!row) throw new UserError('no such user', 404);
+  if (!(await verifyPassword(current, row.password_hash))) throw new UserError('current password is wrong', 403);
+  await db().query('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(next), id]);
+}
+
+export async function deleteUser(a: Actor, id: number): Promise<UserRow> {
+  const target = await getUser(id);
+  if (!target) throw new UserError('no such user', 404);
+  mayManage(a, target);
+  if (target.role === 'admin' && !target.disabled && (await enabledAdmins()) <= 1) throw new UserError('this is the last enabled admin', 409);
   await db().query('DELETE FROM users WHERE id = ?', [id]);
   return target;
 }
 
 /**
- * Makes `username` the one superadmin: promotes, re-enables and keeps its row,
- * demotes any other superadmin to admin, and re-creates the row from the env
+ * Keeps exactly one superadmin. If one exists (under any name: the superadmin
+ * may rename itself) it is re-enabled and kept; extra ones are made admins.
+ * With none, the env account's row is promoted, or re-created from the env
  * password if it was deleted. Returns what it did, for the start-up log.
  */
 export async function ensureSuperadmin(username: string, password: string): Promise<string> {
-  await db().query("UPDATE users SET role = 'admin' WHERE role = 'superadmin' AND username <> ?", [username]);
-  const [res] = await db().query<ResultSetHeader>("UPDATE users SET role = 'superadmin', disabled = 0 WHERE username = ?", [username]);
-  if (res.affectedRows > 0) return res.changedRows > 0 ? `restored superadmin ${username}` : `superadmin ${username}`;
+  const [supers] = await db().query<Row[]>("SELECT * FROM users WHERE role = 'superadmin' ORDER BY id");
+  const keep = supers[0];
+  if (keep) {
+    if (supers.length > 1) await db().query("UPDATE users SET role = 'admin' WHERE role = 'superadmin' AND id <> ?", [keep.id]);
+    if (keep.disabled) await db().query('UPDATE users SET disabled = 0 WHERE id = ?', [keep.id]);
+    return keep.disabled || supers.length > 1 ? `restored superadmin ${keep.username}` : `superadmin ${keep.username}`;
+  }
+  const [res] = await db().query<ResultSetHeader>("UPDATE users SET role = 'superadmin', disabled = 0, permissions = NULL WHERE username = ?", [username]);
+  if (res.affectedRows > 0) return `restored superadmin ${username}`;
   if (!password) return `no superadmin: ${username} is missing and ADMIN_PASSWORD is not set`;
   await db().query("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'superadmin')", [username, await hashPassword(password)]);
   return `created superadmin ${username}`;

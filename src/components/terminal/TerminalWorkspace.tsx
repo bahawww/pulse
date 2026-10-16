@@ -22,6 +22,9 @@ import {
   readStoredSize,
   readView,
   readWins,
+  hasStoredWins,
+  checkTarget,
+  TMUX_RE,
   resolveScheme,
   SHORTCUTS,
   shortTitle,
@@ -48,6 +51,7 @@ import {
 import { Icon, KeyButton, Popover, ShortcutSheet, SnippetsPanel, ThemePanel } from './panels';
 import { CommandPalette, type Command } from './palette';
 import { ConnectPanel, protoBadge } from './remote';
+import { TmuxPanel } from './tmux';
 import { autoDir, equalize, ids, insert, layout, neighbor, nudge, preset, PRESETS, remove, resizeAt, swap, sync, type Dir, type Preset, type Rect, type Side } from './split';
 import { LINK_LABEL, TerminalView, type Port, type SearchResult, type WinStatus } from './TerminalView';
 import { SCHEMES } from '../../lib/termThemes';
@@ -55,7 +59,7 @@ import '@xterm/xterm/css/xterm.css';
 import '../../terminal.css';
 import { formatClock, formatDay } from '../../shared/time';
 
-type Panel = 'none' | 'themes' | 'snippets' | 'more' | 'tabs' | 'connect' | 'layout';
+type Panel = 'none' | 'themes' | 'snippets' | 'more' | 'tabs' | 'connect' | 'layout' | 'tmux';
 
 const PRESET_NAME: Record<Preset, string> = { grid: 'Grid', columns: 'Columns', rows: 'Rows', main: 'Main and stack' };
 
@@ -188,6 +192,45 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   }, []);
 
   const flash = useCallback((msg: string) => setToast(msg), []);
+
+  // A new tab or a relaunched phone app has no saved windows. Before starting a
+  // fresh shell, pick up the ones this login left running (closed tab, app
+  // killed in the background, server restart), so multitasking loses nothing.
+  const [adopting, setAdopting] = useState(() => !hasStoredWins());
+  useEffect(() => {
+    if (!adopting) return;
+    let cancelled = false;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 2500);
+    fetch('/api/terminal/sessions', { cache: 'no-store', signal: ctl.signal, headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? (r.json() as Promise<{ shells?: { sid?: unknown; target?: unknown; tmux?: unknown }[] }>) : { shells: [] }))
+      .then((body) => {
+        if (cancelled) return;
+        const found = (body.shells ?? []).filter((x): x is { sid: string; target?: unknown; tmux?: unknown } => typeof x.sid === 'string');
+        if (found.length === 0) return;
+        const next: Win[] = found.map((x, i) => {
+          const target = checkTarget(x.target);
+          const tmux = typeof x.tmux === 'string' && TMUX_RE.test(x.tmux) ? x.tmux : undefined;
+          if (target) return { id: i + 1, sid: x.sid, target };
+          return tmux ? { id: i + 1, sid: x.sid, tmux, name: tmux } : { id: i + 1, sid: x.sid };
+        });
+        setWins(next);
+        setActive(next[next.length - 1]!.id);
+        flash(`Reattached ${found.length} running shell${found.length === 1 ? '' : 's'}`);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        clearTimeout(timer);
+        if (!cancelled) setAdopting(false);
+      });
+    return () => {
+      // React's dev double-run: the second run does the work.
+      cancelled = true;
+      clearTimeout(timer);
+      ctl.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 1600);
@@ -265,6 +308,37 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
     return () => query.removeEventListener('change', onChange);
   }, []);
 
+  // Keep the screen on while the terminal is open, so a long command is not cut
+  // off by the phone going to sleep. Needs HTTPS; the lock drops whenever the
+  // page is hidden, so it is taken again on return.
+  useEffect(() => {
+    if (!open || !('wakeLock' in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let stopped = false;
+    const take = () => {
+      if (document.visibilityState !== 'visible' || lock) return;
+      navigator.wakeLock
+        .request('screen')
+        .then((l) => {
+          if (stopped) void l.release();
+          else {
+            lock = l;
+            l.addEventListener('release', () => {
+              if (lock === l) lock = null;
+            });
+          }
+        })
+        .catch(() => undefined);
+    };
+    take();
+    document.addEventListener('visibilitychange', take);
+    return () => {
+      stopped = true;
+      document.removeEventListener('visibilitychange', take);
+      void lock?.release();
+    };
+  }, [open]);
+
   // On phones the on-screen keyboard shrinks the visual viewport. Follow it, so the
   // key bar stays right above the keyboard instead of hiding behind it.
   useEffect(() => {
@@ -302,11 +376,11 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
   // beside the current window: `dir` when asked (split right, split down), else
   // whichever way the current pane has more room.
   const add = useCallback(
-    (opts: { readonly target?: Target; readonly name?: string; readonly dir?: Dir } = {}) => {
+    (opts: { readonly target?: Target; readonly tmux?: string; readonly name?: string; readonly dir?: Dir } = {}) => {
       const used = new Set(wins.map((w) => w.id));
       let id = 1;
       while (used.has(id)) id += 1;
-      setWins([...wins, { id, target: opts.target, name: opts.name?.trim() || undefined }]);
+      setWins([...wins, { id, target: opts.target, tmux: opts.tmux, name: opts.name?.trim() || undefined }]);
       setView((v) => {
         const base = sync(v.tree, wins.map((w) => w.id), aspect());
         const all = ids(base);
@@ -327,6 +401,17 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
     },
     [conns, add, setConns],
   );
+
+  /** Attach tmux session `name`: go to its window if this tab has one, else open one. */
+  const attachTmux = useCallback(
+    (name: string) => {
+      const open = wins.find((w) => w.tmux === name);
+      if (open) activate(open.id);
+      else add({ tmux: name, name });
+    },
+    [wins, activate, add],
+  );
+  const tmuxHere = useMemo(() => new Set(wins.flatMap((w) => (w.tmux ? [w.tmux] : []))), [wins]);
 
   const close = useCallback(
     (id: number) => {
@@ -680,6 +765,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
       item('Go to', `w${w.id}`, tabLabel(w), () => activate(w.id), i < 9 ? `Alt+${i + 1}` : undefined, w.target ? <Icon.router size={14} /> : <Icon.command size={14} />, w.target ? `${w.target.proto} ${targetLabel(w.target)}` : undefined),
     );
     item('Connect', 'panel', 'Connect to a router or server…', () => setPanel('connect'), 'Alt+O', <Icon.router size={14} />);
+    item('Session', 'tmux', 'tmux sessions: continue on another device…', () => setPanel('tmux'), undefined, <Icon.layers size={14} />);
     for (const k of conns) item('Connect', k.id, k.name || targetLabel(k), () => connectTo(k, k.name), undefined, <Icon.router size={14} />, `${k.proto} ${targetLabel(k)}${k.legacy ? ' · legacy' : ''}`);
     for (const sn of snippets) item('Snippet', sn.id, sn.label || sn.command, () => onInput(active, `${sn.command}
 `), undefined, <Icon.bolt size={14} />, sn.command);
@@ -902,6 +988,10 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
           <div className="tw-pop-wrap">
             {toolButton('connect', 'Connect', 'Connect to a router or server: SSH, Telnet (Alt+O)', <Icon.router />, () => togglePanel('connect'), panel === 'connect', 'connect')}
             {panel === 'connect' && <ConnectPanel list={conns} onChange={setConns} onConnect={connectTo} onClose={closePanel} />}
+          </div>
+          <div className="tw-pop-wrap">
+            {toolButton('tmux', 'tmux sessions', 'tmux sessions: start one, attach it from any device', <Icon.layers />, () => togglePanel('tmux'), panel === 'tmux', 'tmux')}
+            {panel === 'tmux' && <TmuxPanel openHere={tmuxHere} onAttach={attachTmux} onClose={closePanel} onNotify={flash} />}
           </div>
           {!compact && (
             <div className="tw-pop-wrap">
@@ -1175,7 +1265,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
       )}
 
       <div ref={body} className={`tw-body${splitOn ? ' is-split' : ''}${zoomed ? ' is-zoomed' : ''}`}>
-        {wins.map((w) => {
+        {/* Windows wait for the adoption check, so window 1 does not start a shell it would replace. */}
+        {!adopting && wins.map((w) => {
           const r = splitOn && !zoomed ? panes.get(w.id) : undefined;
           const shown = r ? true : w.id === active;
           return (
@@ -1185,6 +1276,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
             title={tabLabel(w)}
             sid={w.sid}
             target={w.target}
+            tmux={w.tmux}
             style={paneStyle(r ?? FULL)}
             framed={!!r}
             zoomed={zoomed && w.id === active}
@@ -1213,6 +1305,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
             onActivity={onActivity}
             onStatus={onStatus}
             onZoom={resizeText}
+            onSwipe={compact && !splitOn ? step : undefined}
             onFind={openFind}
             onInput={onInput}
             onConfirmPaste={confirmPaste}
@@ -1256,6 +1349,15 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
           </button>
         )}
         <span className="tw-foot-gap" />
+        {/* Armed key-bar modifiers: the next key typed gets them (locked: every key). */}
+        {compact &&
+          (['ctrl', 'alt'] as const)
+            .filter((m) => mods[m] !== 'off')
+            .map((m) => (
+              <span key={m} className={`tw-mod-chip${mods[m] === 'lock' ? ' is-lock' : ''}`} role="status">
+                {m === 'ctrl' ? 'Ctrl' : 'Alt'} {mods[m] === 'lock' ? 'locked' : '+ next key'}
+              </span>
+            ))}
         {!compact && (
           <span className="tw-foot-keys" aria-label="Keyboard shortcuts">
             {FOOTER_KEYS.map((s) => (
@@ -1276,26 +1378,51 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
           onMouseDown={(e) => e.preventDefault()}
           onPointerDown={(e) => e.preventDefault()}
         >
-          <KeyButton label="Esc" onPress={() => press({ k: 'esc' })} />
-          <KeyButton label="Tab" onPress={() => press({ k: 'tab' })} />
-          <KeyButton label="Ctrl" state={mods.ctrl} onPress={() => cycle('ctrl')} />
-          <KeyButton label="Alt" state={mods.alt} onPress={() => cycle('alt')} />
-          <KeyButton label="←" name="Left" onPress={() => press({ k: 'csi', final: 'D' })} />
-          <KeyButton label="↓" name="Down" onPress={() => press({ k: 'csi', final: 'B' })} />
-          <KeyButton label="↑" name="Up" onPress={() => press({ k: 'csi', final: 'A' })} />
-          <KeyButton label="→" name="Right" onPress={() => press({ k: 'csi', final: 'C' })} />
-          <KeyButton label="^C" name="Control C, interrupt" onPress={() => onInput(active, '\x03')} />
-          <KeyButton label="^D" name="Control D, end of input" onPress={() => onInput(active, '\x04')} />
-          <KeyButton label="^L" name="Control L, clear" onPress={() => onInput(active, '\x0c')} />
-          <KeyButton label="^R" name="Control R, history search" onPress={() => onInput(active, '\x12')} />
-          {['/', '-', '|', '~', '`', '\\', '_', '$', '*', '&'].map((ch) => (
-            <KeyButton key={ch} label={ch} onPress={() => press({ k: 'text', value: ch })} />
-          ))}
-          <KeyButton label="Home" onPress={() => press({ k: 'csi', final: 'H' })} />
-          <KeyButton label="End" onPress={() => press({ k: 'csi', final: 'F' })} />
-          <KeyButton label="PgUp" onPress={() => press({ k: 'tilde', n: 5 })} />
-          <KeyButton label="PgDn" onPress={() => press({ k: 'tilde', n: 6 })} />
-          {typeof navigator.clipboard?.readText === 'function' && <KeyButton label="Paste" wide onPress={pasteFromClipboard} />}
+          {/* Saved snippets, one tap each. Typed without Enter, so nothing runs by accident. */}
+          {snippets.length > 0 && (
+            <div className="tw-keys-snips" aria-label="Snippets">
+              {snippets.map((sn) => (
+                <button
+                  key={sn.id}
+                  type="button"
+                  className="tw-snip-key"
+                  title={sn.command}
+                  onClick={() => {
+                    navigator.vibrate?.(8);
+                    onInput(active, sn.command);
+                  }}
+                >
+                  {sn.label || sn.command}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Top row scrolls sideways: control combos, symbols, paging, paste. */}
+          <div className="tw-keys-extra">
+            <KeyButton label="^C" name="Control C, interrupt" onPress={() => onInput(active, '\x03')} />
+            <KeyButton label="^D" name="Control D, end of input" onPress={() => onInput(active, '\x04')} />
+            <KeyButton label="^L" name="Control L, clear" onPress={() => onInput(active, '\x0c')} />
+            <KeyButton label="^R" name="Control R, history search" onPress={() => onInput(active, '\x12')} />
+            {['/', '-', '|', '~', '`', '\\', '_', '$', '*', '&'].map((ch) => (
+              <KeyButton key={ch} label={ch} onPress={() => press({ k: 'text', value: ch })} />
+            ))}
+            <KeyButton label="Home" onPress={() => press({ k: 'csi', final: 'H' })} />
+            <KeyButton label="End" onPress={() => press({ k: 'csi', final: 'F' })} />
+            <KeyButton label="PgUp" repeat onPress={() => press({ k: 'tilde', n: 5 })} />
+            <KeyButton label="PgDn" repeat onPress={() => press({ k: 'tilde', n: 6 })} />
+            {typeof navigator.clipboard?.readText === 'function' && <KeyButton label="Paste" wide onPress={pasteFromClipboard} />}
+          </div>
+          {/* Bottom row never scrolls: the keys a phone keyboard lacks, arrows together. */}
+          <div className="tw-keys-main">
+            <KeyButton label="Esc" onPress={() => press({ k: 'esc' })} />
+            <KeyButton label="Tab" onPress={() => press({ k: 'tab' })} />
+            <KeyButton label="Ctrl" state={mods.ctrl} onPress={() => cycle('ctrl')} />
+            <KeyButton label="Alt" state={mods.alt} onPress={() => cycle('alt')} />
+            <KeyButton label="←" name="Left" repeat onPress={() => press({ k: 'csi', final: 'D' })} />
+            <KeyButton label="↓" name="Down" repeat onPress={() => press({ k: 'csi', final: 'B' })} />
+            <KeyButton label="↑" name="Up" repeat onPress={() => press({ k: 'csi', final: 'A' })} />
+            <KeyButton label="→" name="Right" repeat onPress={() => press({ k: 'csi', final: 'C' })} />
+          </div>
         </div>
       )}
 

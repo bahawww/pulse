@@ -12,12 +12,12 @@ Built with React 19, TypeScript and Vite on the frontend, and an Express 5 API o
 - **Service links.** Cards for each app on the box. Links can point at the current host, localhost, a Tailscale IP, or HTTPS subdomains of your domain.
 - **Logs and control.** Read journald logs per unit. Start, stop or restart systemd units and containers.
 - **Browser terminal.** An xterm.js shell over WebSocket with a GPU (WebGL) renderer that falls back to the DOM renderer.
-  - Tabs or side-by-side tiles. Shells survive a reload and reattach.
+  - Tabs or side-by-side tiles. Shells survive a reload and reattach. With `dtach` installed, login shells also survive a server restart and stay up for 24 hours with no browser attached.
   - Find with regex, case and whole-word options, plus ticks on the scroll rail.
   - Saved command snippets, and broadcast typing to every window.
   - Copy or save all output, restart a shell, and a confirmation before a multi-line paste runs.
   - OSC 52 clipboard and clickable links.
-  - Colour schemes and a shortcut sheet (`F1`). Esc returns to the dashboard at the prompt and stays with the program inside vim, less or htop. Phones get a key bar with sticky Ctrl and Alt.
+  - Colour schemes and a shortcut sheet (`F1`). Esc returns to the dashboard at the prompt and stays with the program inside vim, less or htop. Phones get a key bar with sticky Ctrl and Alt, held-key repeat and a snippet row, plus gestures: pinch for text size, swipe between windows, drag for arrow keys in vim or less, long press to copy.
 - **Reachability.** Checks from outside whether the box can actually be reached. Useful behind NAT, where a port bound to `0.0.0.0` can still be unreachable from the internet.
 - **LLM spend.** Optional panel that reads usage from a local 9router database.
 - **Keyboard first.** `Ctrl+K` opens the command palette. `G` then a letter opens a view. `[` toggles the sidebar. `` Ctrl+` `` opens and hides the terminal.
@@ -101,18 +101,25 @@ cat ~/.ssh/dashboard_terminal.pub >> ~/.ssh/authorized_keys
 
 ## Users
 
-Accounts live in the MySQL table `users` (schema in `deploy/sql/`, applied at every start). Roles:
+Accounts live in the MySQL table `users` (schema in `deploy/sql/`, applied at every start). Each user has a **role** and a **permission list**. The role is a ceiling: it decides which permissions can be given, and what a new user starts with. Permissions are ticked per user in the Users view (G then U).
 
-| Role | Can |
-|------|-----|
-| viewer | Read telemetry, history, alerts and logs. |
-| operator | Also start, stop and restart services, and rescan or hide service cards. |
-| admin | Also the terminal, the Files view and user management. |
-| superadmin | Everything admin can. Exactly one: the `ADMIN_USER` account. It cannot be deleted, disabled, demoted or renamed, and only its owner can change its password. Pulse restores it at start and every 5 minutes, so a row deleted or edited in phpMyAdmin comes back. |
+| Permission | Lowest role |
+|------------|-------------|
+| Views: Overview, Applications, Trends, Hardware, Workload, Capacity, Logs and action history | viewer |
+| Start, stop, restart services; rescan or hide service cards | operator |
+| Files: browse, preview, download / upload, rename, delete | admin |
+| Terminal and tmux | admin |
+| Manage viewers and operators | admin |
 
-The terminal and Files are admin-only because both act as the SSH user, who has sudo. Changing, disabling or deleting an account logs it out everywhere. Nobody can change their own role, disable or delete themselves, and the last enabled admin is always kept.
+Who can change what:
 
-Passwords are scrypt hashes, so phpMyAdmin can edit roles and the `disabled` flag but cannot set a password. Use the Users view or:
+- **superadmin** (exactly one): everyone's username, password, role, status and permissions, including its own username and password. It always has every permission and cannot be deleted, disabled or demoted. Pulse re-checks it at start and every 5 minutes.
+- **admin with "Manage users"**: creates, edits, disables and deletes viewers and operators (role up to operator, permissions, status). Not usernames or passwords, and not other admins.
+- **everyone**: their own password, from the profile menu, with the current one.
+
+The server enforces every permission (pages, logs, files, terminal, tmux, service control, the live action feed); the UI only hides what would be refused. Any change to an account logs it out everywhere, so it applies at once. Nobody changes their own role, permissions or status, and the last enabled admin is always kept.
+
+Passwords are scrypt hashes, so phpMyAdmin can edit roles, `disabled` and `permissions` (a JSON list, NULL = role default, always cut to the role's ceiling) but cannot set a password. Use the Users view or:
 
 ```bash
 node scripts/user.mjs list

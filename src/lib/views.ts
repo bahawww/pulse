@@ -1,4 +1,4 @@
-import { roleAtLeast, type Role } from '../shared/contract';
+import type { Permission } from '../shared/contract';
 
 /**
  * Dashboard views. Each one is a sidebar entry and a URL hash (#trends), so a
@@ -40,19 +40,34 @@ export type ViewId = (typeof ALL_VIEW_GROUPS)[number]['items'][number]['id'];
  */
 const HIDDEN_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(['reach-and-spend']);
 
-/** Views that need more than the viewer role. The server enforces the same. */
-const VIEW_ROLE: Partial<Readonly<Record<ViewId, Role>>> = { files: 'admin', users: 'admin' };
+/**
+ * What opens each view. A view shows when the login holds any one of these.
+ * The server enforces the same for the data behind them (logs, files, users).
+ */
+const VIEW_NEEDS: Readonly<Record<ViewId, readonly Permission[]>> = {
+  overview: ['view:overview'],
+  applications: ['view:applications'],
+  trends: ['view:trends'],
+  hardware: ['view:hardware'],
+  workload: ['view:workload'],
+  capacity: ['view:capacity'],
+  'reach-and-spend': ['view:overview'],
+  // Logs on one side, service control on the other: either one opens the page.
+  'logs-and-control': ['view:logs', 'services:control'],
+  files: ['files:read'],
+  users: ['users:manage'],
+};
 
-function groupsFor(role: Role): readonly { readonly title: string; readonly items: readonly View[] }[] {
+function groupsFor(perms: ReadonlySet<string>): readonly { readonly title: string; readonly items: readonly View[] }[] {
   return ALL_VIEW_GROUPS.map((group) => ({
     title: group.title,
-    items: group.items.filter((item) => !HIDDEN_VIEWS.has(item.id) && roleAtLeast(role, VIEW_ROLE[item.id] ?? 'viewer')),
+    items: group.items.filter((item) => !HIDDEN_VIEWS.has(item.id) && VIEW_NEEDS[item.id].some((p) => perms.has(p))),
   })).filter((group) => group.items.length > 0);
 }
 
-// Live bindings: setViewRole swaps them before the app renders, and every
+// Live bindings: setViewAccess swaps them before the app renders, and every
 // importer sees the new lists.
-export let VIEW_GROUPS = groupsFor('viewer');
+export let VIEW_GROUPS = groupsFor(new Set());
 
 interface View {
   readonly id: ViewId;
@@ -62,17 +77,21 @@ interface View {
 
 export let VIEWS: readonly View[] = VIEW_GROUPS.flatMap((group) => [...group.items]);
 
-let currentRole: Role = 'viewer';
+let currentKey = '';
 
 /** Narrows the views to what this login may open. Call before rendering the app. */
-export function setViewRole(role: Role): void {
-  if (role === currentRole) return;
-  currentRole = role;
-  VIEW_GROUPS = groupsFor(role);
+export function setViewAccess(permissions: readonly string[]): void {
+  const key = [...permissions].sort().join(',');
+  if (key === currentKey) return;
+  currentKey = key;
+  VIEW_GROUPS = groupsFor(new Set(permissions));
   VIEWS = VIEW_GROUPS.flatMap((group) => [...group.items]);
 }
 
-const DEFAULT_VIEW: ViewId = 'overview';
+/** The first view this login may open; overview when it may open none (the app says so). */
+function defaultView(): ViewId {
+  return VIEWS[0]?.id ?? 'overview';
+}
 
 /** "G O" style label for a view's shortcut. */
 export function shortcutLabel(view: { readonly key: string }): string {
@@ -83,5 +102,5 @@ export function shortcutLabel(view: { readonly key: string }): string {
 export function viewFromHash(hash: string): ViewId {
   const id = hash.replace(/^#/, '');
   const match = VIEWS.find((v) => v.id === id);
-  return match ? match.id : DEFAULT_VIEW;
+  return match ? match.id : defaultView();
 }
