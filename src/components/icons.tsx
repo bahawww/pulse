@@ -222,6 +222,8 @@ export function ViewIcon({ view, size = 18 }: { readonly view: string; readonly 
       return <FolderIcon size={size} />;
     case 'users':
       return <UsersIcon size={size} />;
+    case 'chat':
+      return <ChatIcon size={size} />;
     default:
       return <TerminalIcon size={size} />;
   }
@@ -273,6 +275,24 @@ export function PencilIcon({ size = 16 }: IconProps): JSX.Element {
   return (
     <svg {...base(size)}>
       <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" />
+    </svg>
+  );
+}
+
+export function LogOutIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+    </svg>
+  );
+}
+
+/** A file going round: overwrite what is there. */
+export function FileReplaceIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5" />
+      <path d="M15 14.5a3 3 0 1 1-.9-2.1M15 11.5v2h-2" />
     </svg>
   );
 }
@@ -437,4 +457,62 @@ const REGISTRY: Record<ServiceIcon, (props: IconProps) => JSX.Element> = {
 export function ServiceIconGlyph({ icon, size = 28 }: { icon: ServiceIcon; size?: number }): JSX.Element {
   const Component = REGISTRY[icon];
   return <Component size={size} />;
+}
+export function ChatIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z" />
+    </svg>
+  );
+}
+
+export function PlusIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+export function SendIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  );
+}
+
+export function StopIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Leave full screen: the chat shrinks back to its floating button. */
+export function MinimizeIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+    </svg>
+  );
+}
+
+export function MoreIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <circle cx="5" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="19" cy="12" r="1.2" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function ListIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />
+    </svg>
+  );
 }

@@ -264,6 +264,7 @@ export function UsersPanel({ me, onNotify }: UsersPanelProps): JSX.Element {
 
       <ConfirmDialog
         open={confirmDelete !== null}
+        icon="delete"
         title={`Delete ${confirmDelete?.username ?? ''}?`}
         message="The account is removed and logged out everywhere. This cannot be undone."
         confirmLabel="Delete user"

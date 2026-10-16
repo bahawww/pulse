@@ -48,6 +48,7 @@ import { CSRF_HEADER, csrfToken, csrfValid } from './csrf.js';
 import { onServicesChange, rescan, serviceList, setHidden, startDiscovery } from './discover.js';
 import { registerFileRoutes, UPLOAD_PATH } from './files.js';
 import { closeStreams, openStream, publish, publishScoped } from './stream.js';
+import { CHAT_PROMPT_PATH, closeChat, registerChatRoutes } from './chat.js';
 import { scopeSamples, scopeStats, seriesKey } from './scope.js';
 import { closeDb, dbConfigured, dbError, migrate } from './db.js';
 import { registerUserRoutes } from './userRoutes.js';
@@ -181,12 +182,17 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
 });
 
 // Not for the event stream: a gzip layer may hold events back until a buffer fills.
-app.use(compression({ filter: (req, res) => req.path !== '/api/stream' && compression.filter(req, res) }));
+const EVENT_STREAMS: ReadonlySet<string> = new Set(['/api/stream', '/api/chat/events']);
+app.use(compression({ filter: (req, res) => !EVENT_STREAMS.has(req.path) && compression.filter(req, res) }));
 
 // Body parsing is only needed for the action endpoint, but it is mounted here
 // with a tight size cap: an unauthenticated POST that can stream a large body is
 // a free denial-of-service. 16KB is far more than {target,name,action,confirm}.
-app.use(express.json({ limit: '16kb' }));
+// A chat prompt is the one body allowed to be bigger (a pasted log or file),
+// and only with a valid login.
+const smallJson = express.json({ limit: '16kb' });
+const promptJson = express.json({ limit: '512kb' });
+app.use((req: Request, res: Response, next: NextFunction) => (CHAT_PROMPT_PATH.test(req.path) && sessionHash(req) ? promptJson : smallJson)(req, res, next));
 
 // The legacy server sent `Access-Control-Allow-Origin: *` on every response,
 // which let any website on the internet read this host's service topology and
@@ -572,6 +578,17 @@ app.get('/api/terminal/sessions', apiLimiter, requirePerm('terminal'), (_req: Re
 });
 
 // Accounts (userRoutes.ts). Admin-only; the rows live in MySQL.
+// Agent chat (chat.ts): admin-only, like the terminal. Writes start agent
+// work, so they get their own limit.
+const chatWriteLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many chat requests' },
+});
+registerChatRoutes(app, apiLimiter, chatWriteLimiter);
+
 registerUserRoutes(app, apiLimiter, destroyUserSessions, (req) => {
   const hash = sessionHash(req);
   return hash ? userOf(hash) : null;
@@ -905,6 +922,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     // with a tab open (systemd: "Failed with result 'exit-code'"). End them;
     // both reconnect by themselves once the server is back.
     closeStreams();
+    closeChat();
     closeTerminals();
     server.close(() => process.exit(0));
     // A download or upload in flight gets a moment, then everything is cut.

@@ -3,7 +3,7 @@ import { prefersReducedMotion } from '../lib/motion';
 import type { StatsPayload } from '../shared/contract';
 import { buildServiceUrl, copyToClipboard, usesSubdomain, type HostMode } from '../lib/urls';
 import { VIEWS, shortcutLabel } from '../lib/views';
-import { CopyIcon, RefreshIcon, SearchIcon, ServiceIconGlyph, TerminalIcon, ViewIcon } from './icons';
+import { ChatIcon, CopyIcon, RefreshIcon, SearchIcon, ServiceIconGlyph, TerminalIcon, ViewIcon } from './icons';
 import { SERVICE_COLOR } from '../lib/serviceColor';
 
 interface PaletteProps {
@@ -17,6 +17,8 @@ interface PaletteProps {
   readonly onNotify: (message: string) => void;
   /** Absent when this login may not open a terminal. */
   readonly onOpenTerminal?: () => void;
+  /** Absent when this login may not use the agent chat. */
+  readonly onOpenChat?: () => void;
   /** Set only while the browser offers to install the app. */
   readonly onInstall?: () => void;
 }
@@ -50,6 +52,7 @@ export function CommandPalette({
   onRefresh,
   onNotify,
   onOpenTerminal,
+  onOpenChat,
   onInstall,
 }: PaletteProps): JSX.Element | null {
   const [query, setQuery] = useState('');
@@ -173,6 +176,16 @@ export function CommandPalette({
         keywords: 'terminal shell ssh console bash tty command line',
         run: onOpenTerminal,
       }] : []),
+      ...(onOpenChat ? [{
+        id: 'chat',
+        category: 'Chat',
+        title: 'Open chat',
+        description: 'Talk to the OpenCode agent, full screen. Sessions keep running when minimized',
+        hint: 'G I',
+        icon: <ChatIcon size={15} />,
+        keywords: 'chat agent opencode ai assistant ask prompt',
+        run: onOpenChat,
+      }] : []),
       // No log out here: it lives only in the profile menu (top right).
     ];
 
@@ -190,7 +203,7 @@ export function CommandPalette({
     }
 
     return [...session.slice(0, 1), ...open, ...go, ...copy, ...system, ...session.slice(1)];
-  }, [data, hostMode, onInstall, onNotify, onOpenTerminal, onRefresh, onToggleTheme, theme]);
+  }, [data, hostMode, onInstall, onNotify, onOpenChat, onOpenTerminal, onRefresh, onToggleTheme, theme]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

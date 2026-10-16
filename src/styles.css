@@ -3471,6 +3471,123 @@ kbd {
   }
 }
 
+/* ---------- Chat button (ChatFab): bottom right, opens the chat ---------- */
+.chat-fab {
+  position: fixed;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 1px solid var(--glass-edge);
+  border-radius: 50%;
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 var(--glass-hi),
+    var(--glass-drop);
+  cursor: pointer;
+  animation: fab-in var(--spring-bouncy-dur) var(--spring-bouncy) backwards;
+  transition: transform var(--spring-bouncy-dur) var(--spring-bouncy);
+}
+
+/* The chat is open over it: kept (html[data-chat-fab] stays), not shown. */
+.chat-fab.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .chat-fab:hover {
+    transform: translateY(-2px);
+  }
+}
+
+.chat-fab:active {
+  transform: scale(0.9);
+  transition-duration: 90ms;
+}
+
+/* The agent is working: a ring runs round the button. */
+.chat-fab-ring {
+  position: absolute;
+  inset: 3px;
+  border: 2px solid transparent;
+  border-top-color: var(--ok);
+  border-right-color: var(--ok);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: fab-spin 0.9s linear infinite;
+}
+
+/* The agent waits for Allow or Deny. */
+.chat-fab-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--warn);
+  color: #111;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px var(--bg);
+  animation: badge-pop var(--spring-wobbly-dur) var(--spring-wobbly) backwards;
+}
+
+/* Desktop: the terminal's "Continue session" sits left of the chat button. */
+html[data-chat-fab] .tw-resume {
+  right: 96px;
+}
+
+@keyframes fab-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.6);
+  }
+}
+
+@keyframes fab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .chat-fab {
+    background: var(--surface-2);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Terminal at the end of the Operations scope bar: a button among the links. */
+.scopebar-action {
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.scopebar-dot {
+  position: absolute;
+  top: 7px;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
 /* Floating "Continue session" button, shown while the terminal is hidden. */
 .tw-resume {
   position: fixed;
@@ -4339,19 +4456,79 @@ html[data-go] .side-kbd {
 }
 
 /* Current page, on the left of the top bar (desktop). Phones show the brand there. */
-.topbar-title {
+.topbar-where,
+.topbar-title,
+.scopebar.is-inline {
   display: none;
 }
 
 @media (min-width: 1024px) {
-  html[data-sidebar] .topbar-title {
+  html[data-sidebar] .topbar-where {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-right: auto;
     min-width: 0;
+  }
+
+  html[data-sidebar] .topbar-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
     font-size: 14px;
     white-space: nowrap;
+  }
+
+  /* Sidebar collapsed to the rail (one icon per group): the group's views sit
+     here as a segmented control instead of the page name. */
+  html[data-sidebar='closed'] .topbar-page.is-scoped {
+    display: none;
+  }
+
+  html[data-sidebar='closed'] .scopebar.is-inline {
+    display: block;
+  }
+
+  .scopebar.is-inline .scopebar-list {
+    position: relative;
+    display: flex;
+    padding: 2px;
+    border-radius: 9px;
+    background: var(--seg-track);
+  }
+
+  /* One width for every segment: the pill steps by it (TabBar useGlider). */
+  .scopebar.is-inline .scopebar-item {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    flex: 0 0 92px;
+    place-items: center;
+    height: 28px;
+    border-radius: 7px;
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color var(--dur) var(--ease);
+  }
+
+  .scopebar.is-inline .scopebar-item.is-active,
+  .scopebar.is-inline .scopebar-item:hover {
+    color: var(--text);
+  }
+
+  .scopebar.is-inline .scopebar-pill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+    border-radius: 7px;
+    background: var(--seg-pill);
+    box-shadow: var(--seg-pill-shadow);
+    pointer-events: none;
   }
 
   .topbar-crumb {

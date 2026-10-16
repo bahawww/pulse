@@ -654,6 +654,7 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
 
       <ConfirmDialog
         open={toDelete !== null}
+        icon="delete"
         title={`Delete ${toDelete?.name ?? ''}?`}
         message={
           toDelete && isFolder(toDelete)
@@ -666,6 +667,7 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
       />
       <ConfirmDialog
         open={conflict.length > 0}
+        icon="replace"
         title={conflict.length === 1 ? `Replace ${conflict[0]?.name ?? ''}?` : `Replace ${conflict.length} files?`}
         message={`${conflict.length === 1 ? 'A file with that name' : 'Files with those names'} already exist in this folder. Replacing overwrites ${conflict.length === 1 ? 'it' : 'them'}.`}
         confirmLabel="Replace"

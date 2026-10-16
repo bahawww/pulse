@@ -1,5 +1,5 @@
 import { type CSSProperties, type JSX, type RefObject, useLayoutEffect, useRef, useState } from 'react';
-import { VIEW_GROUPS, VIEWS, type ViewId, shortcutLabel } from '../lib/views';
+import { VIEW_GROUPS, type ViewId, groupTarget, noteView, shortcutLabel } from '../lib/views';
 import { PanelLeftIcon, ViewIcon } from './icons';
 import { BrandMark } from './Navbar';
 
@@ -114,11 +114,14 @@ interface RailProps {
 /**
  * Narrow strip shown on desktop while the sidebar is collapsed. The logo heads
  * it and doubles as the expand button: hovering (or focusing) it swaps the logo
- * for the expand icon, a click opens the sidebar. Each icon below jumps to a
- * view; labels show as tooltips.
+ * for the expand icon, a click opens the sidebar. Below it one icon per group,
+ * like the phone tab bar: it returns to the view last opened in the group, and
+ * the top bar shows the group's views as a segmented control (ScopeBar inline).
  */
 export function Rail({ active, onExpand }: RailProps): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
+  const current = VIEW_GROUPS.find((g) => g.items.some((i) => i.id === active));
+  noteView(active);
   const pill = useActivePill(listRef, active);
 
   return (
@@ -137,20 +140,22 @@ export function Rail({ active, onExpand }: RailProps): JSX.Element {
       <div className="rail-scroll" ref={listRef}>
         {pill && <span className="rail-pill" style={pillStyle(pill)} aria-hidden="true" />}
 
-        {VIEWS.map((view, i) => {
-          const current = view.id === active;
+        {VIEW_GROUPS.map((group, i) => {
+          const first = group.items[0];
+          if (!first) return null;
+          const on = group === current;
+          const views = group.items.map((v) => v.label).join(', ');
           return (
             <a
-              key={view.id}
-              href={`#${view.id}`}
-              className={`rail-link${current ? ' is-active' : ''}`}
+              key={group.title}
+              href={`#${groupTarget(group)}`}
+              className={`rail-link${on ? ' is-active' : ''}`}
               style={nth(i)}
-              aria-label={view.label}
-              aria-keyshortcuts={`G ${view.key.toUpperCase()}`}
-              title={`${view.label} (${shortcutLabel(view)})`}
-              aria-current={current ? 'page' : undefined}
+              aria-label={group.items.length > 1 ? `${group.title}: ${views}` : first.label}
+              title={group.items.length > 1 ? `${group.title}: ${views}` : `${first.label} (${shortcutLabel(first)})`}
+              aria-current={on ? 'page' : undefined}
             >
-              <ViewIcon view={view.id} />
+              <ViewIcon view={first.id} />
             </a>
           );
         })}

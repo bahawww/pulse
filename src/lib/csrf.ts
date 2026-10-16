@@ -32,9 +32,14 @@ export function ensureCsrf(): Promise<string | null> {
  * with a new key, a new login in another tab) refreshes it and retries once.
  */
 export async function postJson(path: string, body: unknown = {}): Promise<Response> {
+  return sendJson('POST', path, body);
+}
+
+/** postJson for any state-changing method (PATCH, DELETE). */
+export async function sendJson(method: 'POST' | 'PATCH' | 'DELETE', path: string, body: unknown = {}): Promise<Response> {
   const send = async () =>
     fetch(path, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-Token': (await ensureCsrf()) ?? '' },
       body: JSON.stringify(body),
     });

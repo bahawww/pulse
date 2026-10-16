@@ -386,6 +386,7 @@ export const PERMISSIONS = [
   { key: 'files:read', group: 'Actions', label: 'Files: browse, preview, download', min: 'admin' },
   { key: 'files:write', group: 'Actions', label: 'Files: upload, rename, delete', min: 'admin' },
   { key: 'terminal', group: 'Actions', label: 'Terminal and tmux (full shell with sudo)', min: 'admin' },
+  { key: 'chat', group: 'Actions', label: 'Agent chat (the agent runs shell commands with sudo)', min: 'admin' },
   { key: 'users:manage', group: 'Actions', label: 'Manage viewers and operators', min: 'admin' },
 ] as const satisfies readonly { key: string; group: string; label: string; min: Role }[];
 
@@ -663,4 +664,146 @@ export function categoryFilters(services: readonly { readonly category: string }
     { id: 'all', label: 'All Services' },
     ...[...known, ...rest].map((id) => ({ id, label: CATEGORY_LABELS[id] ?? id })),
   ];
+}
+// ---------------------------------------------------------------------------
+// Agent chat (src/server/chat.ts). One event format for every agent; OpenCode
+// is the first adapter (src/server/chatOpencode.ts). The agent keeps the
+// sessions and their history; Pulse stores none of it.
+// ---------------------------------------------------------------------------
+
+/** Agents a chat session can run on. */
+export type ChatAgent = 'opencode';
+
+/** Whether the chat panel can reach its agent server. */
+export type ChatUpstream = 'up' | 'down' | 'auth' | 'unconfigured';
+
+export interface ChatModelRef {
+  readonly providerID: string;
+  readonly modelID: string;
+}
+
+export interface ChatSession {
+  readonly id: string;
+  readonly agent: ChatAgent;
+  readonly title: string;
+  /** Working directory the agent runs in. */
+  readonly directory: string;
+  /** Epoch ms. */
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly busy: boolean;
+  /** The model the session last used, if known. */
+  readonly model: ChatModelRef | null;
+}
+
+export interface ChatTextPart {
+  readonly type: 'text' | 'reasoning';
+  readonly id: string;
+  readonly text: string;
+}
+
+export interface ChatToolPart {
+  readonly type: 'tool';
+  readonly id: string;
+  /** Matches ChatPermission.callID while the call waits for an answer. */
+  readonly callID: string;
+  readonly tool: string;
+  readonly status: 'pending' | 'running' | 'completed' | 'error';
+  /** One-line summary: the command, the file, or the agent's own title. */
+  readonly title: string;
+  /** The call's input, each value as text (long values cut). */
+  readonly input: Readonly<Record<string, string>>;
+  readonly output: string;
+  readonly error: string;
+  /** Unified diff of a file edit, when the tool made one. */
+  readonly diff: string;
+}
+
+export interface ChatFilePart {
+  readonly type: 'file';
+  readonly id: string;
+  readonly filename: string;
+  readonly mime: string;
+}
+
+export type ChatPart = ChatTextPart | ChatToolPart | ChatFilePart;
+
+export interface ChatMessageInfo {
+  readonly id: string;
+  readonly sessionID: string;
+  readonly role: 'user' | 'assistant';
+  readonly createdAt: number;
+  readonly completedAt: number | null;
+  readonly model: ChatModelRef | null;
+  /** Why the reply stopped early (aborted, provider error), if it did. */
+  readonly error: string;
+}
+
+export interface ChatMessage extends ChatMessageInfo {
+  readonly parts: readonly ChatPart[];
+}
+
+/** The agent asks before running a tool. */
+export interface ChatPermission {
+  readonly id: string;
+  readonly sessionID: string;
+  /** What it wants to do: bash, edit, webfetch, external_directory... */
+  readonly kind: string;
+  /** What exactly: the command line, the file path. */
+  readonly patterns: readonly string[];
+  /** What "Always" would allow from now on (e.g. "git *"). */
+  readonly always: readonly string[];
+  /** The tool call this blocks, so the client can show the card beside it. */
+  readonly callID: string;
+  readonly diff: string;
+}
+
+export interface ChatProviderList {
+  readonly providers: readonly { readonly id: string; readonly name: string; readonly models: readonly { readonly id: string; readonly name: string }[] }[];
+  /** Provider id to its default model id. */
+  readonly defaults: Readonly<Record<string, string>>;
+}
+
+/** What GET /api/chat/sessions/:id/messages answers. */
+export interface ChatHistory {
+  readonly session: ChatSession;
+  readonly messages: readonly ChatMessage[];
+  readonly permissions: readonly ChatPermission[];
+}
+
+/**
+ * Events on GET /api/chat/events. Session-list events reach every chat
+ * stream; message, part, delta and permission events only the streams
+ * watching that session.
+ */
+export type ChatEvent =
+  | { readonly type: 'upstream'; readonly status: ChatUpstream }
+  | { readonly type: 'session'; readonly session: ChatSession }
+  | { readonly type: 'session.deleted'; readonly sessionID: string }
+  | { readonly type: 'status'; readonly sessionID: string; readonly busy: boolean; readonly retry: string }
+  | { readonly type: 'message'; readonly sessionID: string; readonly message: ChatMessageInfo }
+  | { readonly type: 'message.removed'; readonly sessionID: string; readonly messageID: string }
+  | { readonly type: 'part'; readonly sessionID: string; readonly messageID: string; readonly part: ChatPart }
+  | { readonly type: 'part.removed'; readonly sessionID: string; readonly messageID: string; readonly partID: string }
+  | { readonly type: 'delta'; readonly sessionID: string; readonly messageID: string; readonly partID: string; readonly delta: string }
+  | { readonly type: 'permission'; readonly permission: ChatPermission }
+  | { readonly type: 'permission.replied'; readonly sessionID: string; readonly id: string }
+  | { readonly type: 'error'; readonly sessionID: string; readonly message: string };
+
+/** The session an event belongs to, for events that only its watchers get. */
+export function chatEventSession(e: ChatEvent): string | null {
+  switch (e.type) {
+    case 'message':
+    case 'message.removed':
+    case 'part':
+    case 'part.removed':
+    case 'delta':
+    case 'permission.replied':
+    case 'error':
+      return e.sessionID;
+    case 'permission':
+      return e.permission.sessionID;
+    default:
+      return null;
+  }
 }

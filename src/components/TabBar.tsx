@@ -1,18 +1,20 @@
 import { type JSX, type MouseEvent, type RefObject, useLayoutEffect, useRef } from 'react';
 import { prefersReducedMotion } from '../lib/motion';
 import { SPRINGS, type SpringCurve, springCurve, springKeyframes } from '../lib/spring';
-import { VIEW_GROUPS, type ViewId } from '../lib/views';
-import { TerminalIcon, ViewIcon } from './icons';
+import { TERMINAL_GROUP, VIEW_GROUPS, type ViewId, groupTarget, noteView } from '../lib/views';
+import { ViewIcon } from './icons';
 
 /**
  * Phone and tablet navigation, iOS style (below 1024px, where the sidebar is
  * hidden; mobile.css draws both):
  *
- *  - TabBar: a floating glass bar at the bottom, one tab per sidebar group,
- *    plus Terminal. A group tab returns to the view last opened in it, the
- *    way iOS tabs keep their place; tapping the current tab scrolls to the top.
+ *  - TabBar: a floating glass bar at the bottom, one tab per sidebar group
+ *    (three). A group tab returns to the view last opened in it, the way iOS
+ *    tabs keep their place; tapping the current tab scrolls to the top. The
+ *    chat button floats beside it (ChatFab).
  *  - ScopeBar: under the top bar, a segmented control for the views inside the
- *    current group (Trends | Hardware | Workload | Capacity).
+ *    current group (Trends | Hardware | Workload | Capacity). The Operations
+ *    one ends with Terminal, which opens the terminal overlay.
  *
  * Both read VIEW_GROUPS, already narrowed to what this login may open. Each
  * has one highlight that flies between items on a spring (useGlider).
@@ -20,9 +22,6 @@ import { TerminalIcon, ViewIcon } from './icons';
 
 /** Labels too long for a segment. */
 const SHORT: Partial<Record<ViewId, string>> = { 'logs-and-control': 'Logs' };
-
-/** The view last opened in each group, by group title. */
-const lastSeen = new Map<string, ViewId>();
 
 const STEP_MS = 1000 / 60;
 
@@ -138,23 +137,19 @@ function scrollTopIfCurrent(e: MouseEvent<HTMLAnchorElement>, current: boolean):
 
 interface TabBarProps {
   readonly active: ViewId;
-  /** Opens the terminal; absent when this login may not. */
-  readonly onOpenTerminal?: () => void;
-  /** Starts fetching the terminal's code the moment a finger lands on its tab. */
-  readonly onWarmTerminal?: () => void;
-  /** A shell is still running behind the hidden terminal: the tab shows a dot. */
+  /** A shell is still running behind the hidden terminal: its group's tab shows a dot. */
   readonly terminalRunning?: boolean;
 }
 
-export function TabBar({ active, onOpenTerminal, onWarmTerminal, terminalRunning = false }: TabBarProps): JSX.Element | null {
+export function TabBar({ active, terminalRunning = false }: TabBarProps): JSX.Element | null {
   const listRef = useRef<HTMLDivElement>(null);
   const groups = VIEW_GROUPS;
   const current = groups.find((g) => g.items.some((i) => i.id === active));
-  if (current) lastSeen.set(current.title, active);
+  noteView(active);
   const pillRef = useGlider(listRef, current?.title ?? '');
 
   // Room for the bar at the bottom of the page (mobile.css reads html[data-tabbar]).
-  const shown = groups.length + (onOpenTerminal ? 1 : 0) > 1;
+  const shown = groups.length > 1;
   useLayoutEffect(() => {
     if (!shown) return undefined;
     document.documentElement.dataset.tabbar = '';
@@ -171,7 +166,7 @@ export function TabBar({ active, onOpenTerminal, onWarmTerminal, terminalRunning
           const first = group.items[0];
           if (!first) return null;
           const on = group === current;
-          const target = lastSeen.get(group.title) ?? first.id;
+          const target = groupTarget(group);
           return (
             <a
               key={group.title}
@@ -183,41 +178,41 @@ export function TabBar({ active, onOpenTerminal, onWarmTerminal, terminalRunning
             >
               <span className="tabbar-icon">
                 <ViewIcon view={first.id} size={22} />
+                {terminalRunning && group.title === TERMINAL_GROUP && <span className="tabbar-dot" aria-hidden="true" />}
               </span>
               <span className="tabbar-label">{group.title}</span>
             </a>
           );
         })}
-        {onOpenTerminal && (
-          <button
-            type="button"
-            className="tabbar-item"
-            data-active={false}
-            onPointerDown={onWarmTerminal}
-            onClick={onOpenTerminal}
-            aria-label={terminalRunning ? 'Terminal, session running' : 'Terminal'}
-          >
-            <span className="tabbar-icon">
-              <TerminalIcon size={22} />
-              {terminalRunning && <span className="tabbar-dot" aria-hidden="true" />}
-            </span>
-            <span className="tabbar-label">Terminal</span>
-          </button>
-        )}
       </div>
     </nav>
   );
 }
 
-/** Segmented control for the views inside the current group; nothing for a group of one. */
-export function ScopeBar({ active }: { readonly active: ViewId }): JSX.Element | null {
+interface ScopeBarProps {
+  readonly active: ViewId;
+  /** The desktop copy in the top bar, shown while the sidebar is collapsed (styles.css). */
+  readonly inline?: boolean;
+  /** Opens the terminal; absent when this login may not. Offered in TERMINAL_GROUP. */
+  readonly onOpenTerminal?: () => void;
+  /** Starts fetching the terminal's code the moment a finger lands on it. */
+  readonly onWarmTerminal?: () => void;
+  readonly terminalRunning?: boolean;
+}
+
+/**
+ * Segmented control for the views inside the current group; nothing for a group
+ * of one. Phones show it under the top bar; `inline` is the desktop copy.
+ */
+export function ScopeBar({ active, inline = false, onOpenTerminal, onWarmTerminal, terminalRunning = false }: ScopeBarProps): JSX.Element | null {
   const listRef = useRef<HTMLDivElement>(null);
   const group = VIEW_GROUPS.find((g) => g.items.some((i) => i.id === active));
   const pillRef = useGlider(listRef, active);
-  if (!group || group.items.length < 2) return null;
+  const terminal = !!onOpenTerminal && group?.title === TERMINAL_GROUP;
+  if (!group || group.items.length + (terminal ? 1 : 0) < 2) return null;
 
   return (
-    <nav className="scopebar" aria-label={`${group.title} views`}>
+    <nav className={`scopebar${inline ? ' is-inline' : ''}`} aria-label={`${group.title} views`}>
       <div className="scopebar-list" ref={listRef}>
         <span className="scopebar-pill" ref={pillRef} aria-hidden="true" />
         {group.items.map((item) => {
@@ -235,6 +230,19 @@ export function ScopeBar({ active }: { readonly active: ViewId }): JSX.Element |
             </a>
           );
         })}
+        {terminal && (
+          <button
+            type="button"
+            className="scopebar-item scopebar-action"
+            data-active={false}
+            onPointerDown={onWarmTerminal}
+            onClick={onOpenTerminal}
+            aria-label={terminalRunning ? 'Terminal, session running' : 'Terminal'}
+          >
+            Terminal
+            {terminalRunning && <span className="scopebar-dot" aria-hidden="true" />}
+          </button>
+        )}
       </div>
     </nav>
   );

@@ -3,7 +3,7 @@ import { type AlertsHandle } from '../hooks/useAlerts';
 import { type AuthUser } from '../hooks/useAuth';
 import { type Theme, type ThemeOrigin } from '../hooks/useTheme';
 import { HOST_OPTIONS, type HostMode } from '../lib/urls';
-import { VIEW_GROUPS, VIEWS, type ViewId } from '../lib/views';
+import { TERMINAL_GROUP, VIEW_GROUPS, VIEWS, type ViewId } from '../lib/views';
 import { CheckIcon, MoonIcon, SearchIcon, SunIcon, TerminalIcon } from './icons';
 import { NotificationBell } from './NotificationBell';
 import { ScopeBar } from './TabBar';
@@ -21,8 +21,12 @@ interface NavbarProps {
   readonly alerts: AlertsHandle;
   readonly user: AuthUser;
   readonly onLogout: () => void;
-  /** Opens the terminal; absent when this login may not. Listed in the phone menu. */
+  /** Opens the terminal; absent when this login may not. Listed in the phone menu and the Operations scope bar. */
   readonly onOpenTerminal?: () => void;
+  /** Starts fetching the terminal's code on intent (a finger on its segment). */
+  readonly onWarmTerminal?: () => void;
+  /** A shell runs behind the hidden terminal. */
+  readonly terminalRunning?: boolean;
   /** The current view, named on the left of the bar on desktop (where the brand is in the sidebar). */
   readonly active: ViewId;
 }
@@ -43,6 +47,8 @@ export function Navbar({
   user,
   onLogout,
   onOpenTerminal,
+  onWarmTerminal,
+  terminalRunning = false,
   active,
 }: NavbarProps): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -125,11 +131,16 @@ export function Navbar({
           const group = VIEW_GROUPS.find((g) => g.items.some((i) => i.id === active));
           const item = group?.items.find((i) => i.id === active);
           if (!group || !item) return null;
+          const scoped = group.items.length > 1 || (!!onOpenTerminal && group.title === TERMINAL_GROUP);
           return (
-            <p className="topbar-title" aria-hidden="true">
-              {group.title !== item.label && <span className="topbar-crumb">{group.title}</span>}
-              <span className="topbar-page">{item.label}</span>
-            </p>
+            <div className="topbar-where">
+              <p className="topbar-title" aria-hidden="true">
+                {group.title !== item.label && <span className="topbar-crumb">{group.title}</span>}
+                <span className={`topbar-page${scoped ? ' is-scoped' : ''}`}>{item.label}</span>
+              </p>
+              {/* Desktop with the sidebar collapsed: the group's views, one click away. */}
+              {scoped && <ScopeBar active={active} inline onOpenTerminal={onOpenTerminal} onWarmTerminal={onWarmTerminal} terminalRunning={terminalRunning} />}
+            </div>
           );
         })()}
 
@@ -312,7 +323,7 @@ export function Navbar({
         </div>
       </div>
       {/* Phones and tablets: the views of the current group, as a segmented control. */}
-      <ScopeBar active={active} />
+      <ScopeBar active={active} onOpenTerminal={onOpenTerminal} onWarmTerminal={onWarmTerminal} terminalRunning={terminalRunning} />
     </header>
   );
 }

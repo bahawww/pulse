@@ -1,8 +1,19 @@
 import { type JSX, type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { prefersReducedMotion } from '../lib/motion';
+import { FileReplaceIcon, LogOutIcon, TrashIcon } from './icons';
+
+/** The glyph says what will happen: every caller picks one. */
+type ConfirmIcon = 'logout' | 'delete' | 'replace';
+
+const ICONS: Readonly<Record<ConfirmIcon, (size: number) => JSX.Element>> = {
+  logout: (size) => <LogOutIcon size={size} />,
+  delete: (size) => <TrashIcon size={size} />,
+  replace: (size) => <FileReplaceIcon size={size} />,
+};
 
 interface ConfirmDialogProps {
   readonly open: boolean;
+  readonly icon: ConfirmIcon;
   readonly title: string;
   readonly message: string;
   readonly confirmLabel: string;
@@ -18,7 +29,7 @@ const EXIT_MS = 200;
  * stray Enter never confirms. Escape or a click outside cancels. Stays mounted
  * for its exit animation after `open` turns false.
  */
-export function ConfirmDialog({ open, title, message, confirmLabel, onConfirm, onCancel }: ConfirmDialogProps): JSX.Element | null {
+export function ConfirmDialog({ open, icon, title, message, confirmLabel, onConfirm, onCancel }: ConfirmDialogProps): JSX.Element | null {
   const [mounted, setMounted] = useState(open);
   const [closing, setClosing] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -75,11 +86,7 @@ export function ConfirmDialog({ open, title, message, confirmLabel, onConfirm, o
       <div className="confirm-backdrop" aria-hidden="true" onClick={onCancel} />
       <div className="confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-msg">
         <span className="confirm-icon" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-            <polyline points="16 17 21 12 16 7" />
-            <line x1="21" y1="12" x2="9" y2="12" />
-          </svg>
+          {ICONS[icon](22)}
         </span>
         <h2 id="confirm-title" className="confirm-title">
           {title}

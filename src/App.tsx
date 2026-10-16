@@ -28,6 +28,7 @@ import { GoHint } from './components/GoHint';
 import { Loading, SkeletonCard } from './components/Skeleton';
 import { Rail, Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
+import { ChatFab, type ChatSignal } from './components/ChatFab';
 import { VIEWS } from './lib/views';
 import { SpendPanel } from './components/SpendPanel';
 import { TelemetryGrid } from './components/TelemetryGrid';
@@ -37,6 +38,8 @@ type TerminalModule = typeof import('./components/TerminalWorkspace');
 const loadTerminal = (): Promise<TerminalModule> => import('./components/TerminalWorkspace');
 type ChartsModule = typeof import('./components/ChartViews');
 const loadCharts = (): Promise<ChartsModule> => import('./components/ChartViews');
+type ChatModule = typeof import('./components/chat/ChatView');
+const loadChat = (): Promise<ChatModule> => import('./components/chat/ChatView');
 /** Views drawn with TimeChart; they wait on the chart chunk. */
 const CHART_VIEWS: ReadonlySet<string> = new Set(['trends', 'hardware', 'workload', 'capacity']);
 
@@ -82,6 +85,15 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   const canAct = can(user, 'services:control');
   const canShell = can(user, 'terminal');
   const canLogs = can(user, 'view:logs');
+  const canChat = can(user, 'chat');
+
+  // Like the terminal, the chat mounts on first open and is then only hidden:
+  // its stream keeps following the agent, and the floating button shows when
+  // it works or waits for an answer.
+  const [chatState, setChatState] = useState<'never' | 'open' | 'hidden'>('never');
+  const [chatSignal, setChatSignal] = useState<ChatSignal>({ busy: false, asking: false });
+  const chatOpenRef = useRef(false);
+  chatOpenRef.current = chatState === 'open';
 
   // "G then letter" jumps to a view (letters in lib/views.ts). G arms it for
   // GO_WINDOW_MS; the ref drives the key handler, the state shows the hint, and
@@ -124,6 +136,59 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       .then((m) => setCharts(m))
       .catch(() => undefined);
   }, []);
+  // The chat is its own chunk too: fetched on intent (hover or a finger on its button) or when opened.
+  const [Chat, setChat] = useState<ChatModule['ChatView'] | null>(null);
+  const fetchChat = useCallback(() => {
+    void loadChat()
+      .then((m) => setChat(() => m.ChatView))
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (chatState !== 'never' && !Chat) fetchChat();
+  }, [chatState, Chat, fetchChat]);
+
+  // Opening the chat adds a history entry, so the phone's back button minimizes
+  // it instead of leaving Pulse. Minimize goes back through that entry.
+  const openChat = useCallback(() => {
+    setPaletteOpen(false);
+    setChatState('open');
+    if (!(window.history.state as { pulseChat?: boolean } | null)?.pulseChat) window.history.pushState({ pulseChat: true }, '');
+  }, []);
+  const minimizeChat = useCallback(() => {
+    if ((window.history.state as { pulseChat?: boolean } | null)?.pulseChat) window.history.back();
+    else setChatState((st) => (st === 'open' ? 'hidden' : st));
+  }, []);
+  useEffect(() => {
+    // A reload keeps the entry's flag but not the open chat.
+    if ((window.history.state as { pulseChat?: boolean } | null)?.pulseChat) window.history.replaceState(null, '');
+    const onPop = () => {
+      const inChat = !!(window.history.state as { pulseChat?: boolean } | null)?.pulseChat;
+      setChatState((st) => (inChat ? (st === 'never' ? st : 'open') : st === 'open' ? 'hidden' : st));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  // #chat (the chat used to be a view) opens it over the first view: on load and when typed in.
+  useEffect(() => {
+    if (!canChat) return undefined;
+    const check = () => {
+      if (window.location.hash !== '#chat') return;
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${VIEWS[0]?.id ?? 'overview'}`);
+      openChat();
+    };
+    check();
+    window.addEventListener('hashchange', check);
+    return () => window.removeEventListener('hashchange', check);
+  }, [canChat, openChat]);
+  const onChatSignal = useCallback((next: ChatSignal) => {
+    setChatSignal((prev) => (prev.busy === next.busy && prev.asking === next.asking ? prev : next));
+  }, []);
+  // The agent stops to ask while the chat is minimized: say so once.
+  const askedRef = useRef(false);
+  useEffect(() => {
+    if (chatSignal.asking && !askedRef.current && chatState === 'hidden') notify('OpenCode is waiting for your answer in Chat');
+    askedRef.current = chatSignal.asking;
+  }, [chatSignal.asking, chatState, notify]);
   useEffect(() => {
     // The terminal chunk is the biggest one (xterm, ~170 KB gzipped). Touch
     // devices and Save-Data connections fetch it on intent instead: a finger
@@ -164,6 +229,8 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       const target = e.target as HTMLElement | null;
       // Keystrokes inside the terminal belong to the shell (Ctrl+K, "/", "[" ...).
       if (target instanceof Element && target.closest('.tw')) return;
+      // The open chat covers the dashboard: its shortcuts would act unseen.
+      if (chatOpenRef.current) return;
       // An open confirmation owns the keyboard.
       if (target instanceof Element && target.closest('.confirm-root')) return;
       const typing = Boolean(target && (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName) || target.closest('.pop')));
@@ -191,6 +258,12 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
         if (next) {
           e.preventDefault();
           window.location.hash = next.id;
+        }
+        // G then I opens the chat (not a view any more, but the letter stays).
+        if (!next && canChat && e.key.toLowerCase() === 'i') {
+          e.preventDefault();
+          openChat();
+          return;
         }
         // Escape just cancels; any other key goes on to its usual meaning.
         if (next || e.key === 'Escape') return;
@@ -222,7 +295,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [hostMode, notify, paletteOpen, toggleSidebar, armGo, disarmGo, canShell]);
+  }, [hostMode, notify, paletteOpen, toggleSidebar, armGo, disarmGo, canShell, canChat, openChat]);
 
   const samples = history?.samples ?? NO_SAMPLES;
   const system = data?.system ?? null;
@@ -267,6 +340,8 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
         user={user}
         onLogout={requestLogout}
         onOpenTerminal={canShell ? () => setTerminal('open') : undefined}
+        onWarmTerminal={canShell && !Workspace ? fetchTerminal : undefined}
+        terminalRunning={terminal === 'hidden'}
         active={view}
       />
 
@@ -458,12 +533,16 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       </div>
 
       {/* Phones and tablets: bottom navigation (hidden at desktop sizes). */}
-      <TabBar
-        active={view}
-        onOpenTerminal={canShell ? () => setTerminal('open') : undefined}
-        onWarmTerminal={canShell && !Workspace ? fetchTerminal : undefined}
-        terminalRunning={terminal === 'hidden'}
-      />
+      <TabBar active={view} terminalRunning={terminal === 'hidden'} />
+
+      {/* Hidden only once the chat is really there, so a tap never shows nothing. */}
+      {canChat && <ChatFab signal={chatSignal} hidden={chatState === 'open' && !!Chat} onOpen={openChat} onWarm={Chat ? undefined : fetchChat} />}
+
+      {canChat && chatState !== 'never' && Chat && (
+        <ErrorBoundary label="the chat">
+          <Chat open={chatState === 'open'} onMinimize={minimizeChat} onNotify={notify} onSignal={onChatSignal} />
+        </ErrorBoundary>
+      )}
 
       <CommandPalette
         open={paletteOpen}
@@ -475,6 +554,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
         onRefresh={refresh}
         onNotify={notify}
         onOpenTerminal={canShell ? () => setTerminal('open') : undefined}
+        onOpenChat={canChat ? openChat : undefined}
         onInstall={install.canInstall ? install.install : undefined}
       />
 
@@ -506,6 +586,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
 
       <ConfirmDialog
         open={askLogout}
+        icon="logout"
         title="Log out of Pulse?"
         message="You will need your username and password to sign in again."
         confirmLabel="Log out"

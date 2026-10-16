@@ -9,8 +9,13 @@ import type { Permission } from '../shared/contract';
  * the overview). Letters must stay unique.
  */
 const ALL_VIEW_GROUPS = [
-  { title: 'Overview', items: [{ id: 'overview', label: 'Overview', key: 'o' }] },
-  { title: 'Services', items: [{ id: 'applications', label: 'Applications', key: 'a' }] },
+  {
+    title: 'Overview',
+    items: [
+      { id: 'overview', label: 'Overview', key: 'o' },
+      { id: 'applications', label: 'Applications', key: 'a' },
+    ],
+  },
   {
     title: 'Monitoring',
     items: [
@@ -59,6 +64,12 @@ const VIEW_NEEDS: Readonly<Record<ViewId, readonly Permission[]>> = {
   users: ['users:manage'],
 };
 
+/**
+ * The group whose scope bar also offers the terminal (an overlay, not a view),
+ * and whose tab shows the dot while a shell runs hidden. Phones keep three tabs.
+ */
+export const TERMINAL_GROUP = 'Operations';
+
 function groupsFor(perms: ReadonlySet<string>): readonly { readonly title: string; readonly items: readonly View[] }[] {
   return ALL_VIEW_GROUPS.map((group) => ({
     title: group.title,
@@ -92,6 +103,23 @@ export function setViewAccess(permissions: readonly string[]): void {
 /** The first view this login may open; overview when it may open none (the app says so). */
 function defaultView(): ViewId {
   return VIEWS[0]?.id ?? 'overview';
+}
+
+type ViewGroup = (typeof VIEW_GROUPS)[number];
+
+/** The view last opened in each group, by group title (tab bar and rail share it). */
+const lastSeen = new Map<string, ViewId>();
+
+/** Remembers `id` as its group's place, so the group's tab or rail icon returns to it. */
+export function noteView(id: ViewId): void {
+  const group = VIEW_GROUPS.find((g) => g.items.some((i) => i.id === id));
+  if (group) lastSeen.set(group.title, id);
+}
+
+/** Where a group's tab or rail icon leads: the view last opened in it, else its first. */
+export function groupTarget(group: ViewGroup): ViewId {
+  const seen = lastSeen.get(group.title);
+  return seen && group.items.some((i) => i.id === seen) ? seen : (group.items[0]?.id ?? 'overview');
 }
 
 /** "G O" style label for a view's shortcut. */
