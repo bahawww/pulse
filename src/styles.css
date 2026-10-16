@@ -2590,6 +2590,12 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 36px;
+  /* Entrances that tilt in 3D (Trends unfolds, Hardware swings) briefly
+     reach past the screen edge. Unclipped, that overflow makes a phone zoom
+     the page out a step, which resizes the viewport, cancels the view
+     transition and jolts the tab bar. The page's edges are the screen's
+     edges, so nothing visible is cut; `clip` (not hidden) keeps sticky working. */
+  overflow-x: clip;
 }
 
 /* ---------- 4. Surfaces ---------------------------------------------------
