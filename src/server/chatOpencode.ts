@@ -1,9 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type {
+  ChatCommand,
   ChatEvent,
+  ChatSubagent,
   ChatHistory,
   ChatMessage,
   ChatMessageInfo,
@@ -129,7 +132,7 @@ function upstreamMessage(body: unknown, status: number): string {
   return typeof msg === 'string' && msg ? msg.slice(0, 300) : `OpenCode answered ${status}`;
 }
 
-async function call<T>(method: string, route: string, query?: Readonly<Record<string, string | undefined>>, body?: unknown): Promise<T> {
+async function call<T>(method: string, route: string, query?: Readonly<Record<string, string | undefined>>, body?: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const creds = credentials();
   if (!creds) {
     setUpstream('unconfigured');
@@ -145,7 +148,7 @@ async function call<T>(method: string, route: string, query?: Readonly<Record<st
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     // A slow answer says nothing about the server being down; only a refused connection does.
@@ -184,6 +187,10 @@ interface OcSession {
   parentID?: string;
   model?: { id: string; providerID: string };
   time: { created: number; updated: number; archived?: number };
+  revert?: { messageID: string };
+  share?: { url: string };
+  permission?: { permission: string; pattern: string; action: string }[];
+  metadata?: Record<string, unknown>;
 }
 interface OcMessage {
   id: string;
@@ -194,6 +201,8 @@ interface OcMessage {
   providerID?: string;
   modelID?: string;
   error?: { name?: string; data?: { message?: string } };
+  cost?: number;
+  tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
 }
 interface OcToolState {
   status: 'pending' | 'running' | 'completed' | 'error';
@@ -230,8 +239,69 @@ type OcStatus = { type: 'idle' } | { type: 'busy' } | { type: 'retry'; message: 
 const directories = new Map<string, string>();
 const busy = new Map<string, boolean>();
 
+/**
+ * Auto mode. Kept in the session's own metadata (`pulseAuto`), so it holds on
+ * every device and across restarts. OpenCode's PATCH adds permission rules and
+ * never removes one, so switching its rules back and forth would pile them up
+ * and unsettle the defaults; Pulse answers the requests instead (Allow once),
+ * for the session and the subagent sessions it starts.
+ */
+const AUTO_KEY = 'pulseAuto';
+/** Session id to what auto mode needs: its flag and its parent. */
+const sessionInfo = new Map<string, { auto: boolean; parentID: string | null; at: number }>();
+const INFO_TTL_MS = 5 * 60_000;
+
+function remember(s: OcSession): void {
+  sessionInfo.set(s.id, { auto: s.metadata?.[AUTO_KEY] === true, parentID: s.parentID ?? null, at: Date.now() });
+}
+
+/** Whether the last session rule that covers bash says ask (Pulse-made sessions do). */
+function asksForBash(s: OcSession): boolean {
+  const rules = (s.permission ?? []).filter((r) => r.permission === 'bash' || r.permission === '*');
+  return rules.length > 0 && rules[rules.length - 1]!.action === 'ask';
+}
+
+/** Auto mode for this session or the one that started it (subagents ask under their own id). */
+async function autoFor(id: string): Promise<boolean> {
+  let cur: string | null = id;
+  for (let depth = 0; cur && depth < 6; depth += 1) {
+    let info = sessionInfo.get(cur);
+    if (!info || Date.now() - info.at > INFO_TTL_MS) {
+      try {
+        remember(await call<OcSession>('GET', `/session/${cur}`));
+      } catch {
+        return false;
+      }
+      info = sessionInfo.get(cur);
+    }
+    if (!info) return false;
+    if (info.auto) return true;
+    cur = info.parentID;
+  }
+  return false;
+}
+
+/** Answers a request with Allow once; false when that did not work. */
+async function allowOnce(p: OcPermission): Promise<boolean> {
+  try {
+    await call('POST', `/permission/${p.id}/reply`, { directory: await directoryOf(p.sessionID) }, { reply: 'once' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function onPermissionAsked(p: OcPermission): Promise<void> {
+  if ((await autoFor(p.sessionID)) && (await allowOnce(p))) {
+    console.log(`[chat] auto mode allowed ${p.permission} in ${p.sessionID}`);
+    return;
+  }
+  emit({ type: 'permission', permission: toPermission(p) });
+}
+
 function toSession(s: OcSession): ChatSession {
   directories.set(s.id, s.directory);
+  remember(s);
   return {
     id: s.id,
     agent: 'opencode',
@@ -241,6 +311,10 @@ function toSession(s: OcSession): ChatSession {
     updatedAt: s.time.updated,
     busy: busy.get(s.id) ?? false,
     model: s.model ? { providerID: s.model.providerID, modelID: s.model.id } : null,
+    revertMessageID: s.revert?.messageID ?? null,
+    shareUrl: s.share?.url ?? null,
+    auto: s.metadata?.[AUTO_KEY] === true,
+    asks: asksForBash(s),
   };
 }
 
@@ -323,6 +397,17 @@ function toInfo(m: OcMessage): ChatMessageInfo {
     completedAt: m.time.completed ?? null,
     model,
     error: errorText(m.error),
+    tokens:
+      m.role === 'assistant' && m.tokens
+        ? {
+            input: m.tokens.input ?? 0,
+            output: m.tokens.output ?? 0,
+            reasoning: m.tokens.reasoning ?? 0,
+            cacheRead: m.tokens.cache?.read ?? 0,
+            cacheWrite: m.tokens.cache?.write ?? 0,
+          }
+        : null,
+    cost: m.cost ?? 0,
   };
 }
 
@@ -359,6 +444,7 @@ function handle(w: Wrapped): void {
     case 'session.created':
     case 'session.updated': {
       const info = p.info as OcSession | undefined;
+      if (info) remember(info);
       if (!info || info.parentID || info.time.archived) return;
       emit({ type: 'session', session: toSession(info) });
       return;
@@ -406,7 +492,7 @@ function handle(w: Wrapped): void {
       emit({ type: 'delta', sessionID: sid, messageID: String(p.messageID ?? ''), partID: String(p.partID ?? ''), delta: p.delta });
       return;
     case 'permission.asked':
-      emit({ type: 'permission', permission: toPermission(p as unknown as OcPermission) });
+      void onPermissionAsked(p as unknown as OcPermission);
       return;
     case 'permission.replied':
       emit({ type: 'permission.replied', sessionID: sid, id: String(p.requestID ?? '') });
@@ -511,6 +597,39 @@ async function statuses(directory: string): Promise<Record<string, OcStatus>> {
 }
 
 let providerCache: { at: number; list: ChatProviderList } | null = null;
+let commandCache: { at: number; list: ChatCommand[] } | null = null;
+let agentCache: { at: number; list: ChatSubagent[] } | null = null;
+const LIST_TTL_MS = 60_000;
+/** Commands and compaction answer only when the whole reply is done. */
+const LONG_CALL_MS = 30 * 60_000;
+
+/**
+ * Starts a call that answers only when the agent is done (command, compact)
+ * and returns at once; the reply arrives on the event stream, a failure as an
+ * error event of that session.
+ */
+function detached(id: string, route: string, directory: string, body: unknown): void {
+  void call('POST', route, { directory }, body, LONG_CALL_MS).catch((err: unknown) => {
+    emit({ type: 'error', sessionID: id, message: err instanceof Error ? err.message : 'the command failed' });
+  });
+}
+
+/** `rel` inside `root`, or null when it points out of it. */
+function inside(root: string, rel: string): string | null {
+  const abs = path.resolve(root, rel);
+  return abs === root || abs.startsWith(root.endsWith(path.sep) ? root : root + path.sep) ? abs : null;
+}
+
+/** The model to use when none is picked: the session's, else the first provider default. */
+async function modelFor(id: string, picked: ChatModelRef | null): Promise<ChatModelRef> {
+  if (picked) return picked;
+  const s = await call<OcSession>('GET', `/session/${id}`);
+  if (s.model) return { providerID: s.model.providerID, modelID: s.model.id };
+  const p = await opencode.providers();
+  const [providerID, modelID] = Object.entries(p.defaults)[0] ?? [];
+  if (!providerID || !modelID) throw new ChatError(400, 'pick a model first');
+  return { providerID, modelID };
+}
 
 export const opencode: ChatAdapter = {
   agent: 'opencode',
@@ -590,11 +709,146 @@ export const opencode: ChatAdapter = {
     directories.delete(id);
   },
 
-  async prompt(id, text, model) {
-    await call('POST', `/session/${id}/prompt_async`, { directory: await directoryOf(id) }, {
-      parts: [{ type: 'text', text }],
-      ...(model ? { model } : {}),
+  async prompt(id, text, model, mentions) {
+    const directory = await directoryOf(id);
+    const parts: unknown[] = [{ type: 'text', text }];
+    const agents = mentions.some((m) => m.type === 'agent') ? new Set((await opencode.subagents()).map((a) => a.name)) : null;
+    const seen = new Set<string>();
+    for (const m of mentions) {
+      const token = `@${m.value}`;
+      // Only mentions still in the text as a whole word (not the start of a longer path), once each.
+      const hit = new RegExp(`(^|\\s)${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$)`).exec(text);
+      if (!hit || seen.has(token)) continue;
+      const start = hit.index + hit[1]!.length;
+      seen.add(token);
+      const source = { value: token, start, end: start + token.length };
+      if (m.type === 'agent') {
+        if (agents?.has(m.value)) parts.push({ type: 'agent', name: m.value, source });
+        continue;
+      }
+      // Like the OpenCode TUI: a file:// part the server reads in (a folder: its listing).
+      const dir = m.value.endsWith('/');
+      const rel = m.value.replace(/\/+$/, '') || '.';
+      const abs = inside(directory, rel);
+      if (!abs) continue;
+      parts.push({
+        type: 'file',
+        mime: dir ? 'application/x-directory' : 'text/plain',
+        filename: m.value,
+        url: pathToFileURL(abs).href,
+        source: { type: 'file', path: rel, text: source },
+      });
+    }
+    await call('POST', `/session/${id}/prompt_async`, { directory }, { parts, ...(model ? { model } : {}) });
+  },
+
+  async commands() {
+    if (commandCache && Date.now() - commandCache.at < LIST_TTL_MS) return commandCache.list;
+    const raw = await call<{ name: string; description?: string; source?: string; template: string; hints?: string[] }[]>('GET', '/command', {
+      directory: CHAT_DIRECTORY,
     });
+    const list: ChatCommand[] = raw.map((c) => ({
+      name: c.name,
+      description: (c.description ?? '').slice(0, 200),
+      source: c.source === 'mcp' || c.source === 'skill' ? c.source : 'command',
+      args: (c.hints ?? []).length > 0 || /\$ARGUMENTS|\$\d/.test(c.template),
+    }));
+    commandCache = { at: Date.now(), list };
+    return list;
+  },
+
+  async subagents() {
+    if (agentCache && Date.now() - agentCache.at < LIST_TTL_MS) return agentCache.list;
+    const raw = await call<{ name: string; description?: string; mode: string; hidden?: boolean }[]>('GET', '/agent', { directory: CHAT_DIRECTORY });
+    const list = raw.filter((a) => a.mode !== 'primary' && !a.hidden).map((a) => ({ name: a.name, description: (a.description ?? '').slice(0, 200) }));
+    agentCache = { at: Date.now(), list };
+    return list;
+  },
+
+  async findFiles(id, query) {
+    const directory = id ? await directoryOf(id) : CHAT_DIRECTORY;
+    const q = query.trim();
+    if (q) {
+      // The index (git projects). The home directory has none, so the listing below covers it.
+      const hits = await call<string[]>('GET', '/find/file', { directory, query: q, dirs: 'true', limit: '30' }).catch(() => [] as string[]);
+      if (hits.length) return hits.map((p) => ({ path: p, dir: p.endsWith('/') }));
+    }
+    // Complete the path typed so far, like a shell: list its folder, match the last part.
+    const slash = q.lastIndexOf('/');
+    const folder = slash >= 0 ? q.slice(0, slash) : '';
+    const part = (slash >= 0 ? q.slice(slash + 1) : q).toLowerCase();
+    if (!inside(directory, folder || '.')) return [];
+    const nodes = await call<{ name: string; path: string; type: string }[]>('GET', '/file', { directory, path: folder || '.' }).catch(() => []);
+    return nodes
+      .filter((n) => (part ? n.name.toLowerCase().includes(part) : true) && (part.startsWith('.') || !n.name.startsWith('.')))
+      .sort((a, b) => Number(!a.name.toLowerCase().startsWith(part)) - Number(!b.name.toLowerCase().startsWith(part)) || (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1))
+      .slice(0, 30)
+      .map((n) => {
+        const dir = n.type === 'directory';
+        const p = n.path.replace(/\/+$/, '');
+        return { path: dir ? `${p}/` : p, dir };
+      });
+  },
+
+  async command(id, name, args, model) {
+    if (!(await opencode.commands()).some((c) => c.name === name)) throw new ChatError(404, `no command /${name}`);
+    detached(id, `/session/${id}/command`, await directoryOf(id), {
+      command: name,
+      arguments: args,
+      ...(model ? { model: `${model.providerID}/${model.modelID}` } : {}),
+    });
+  },
+
+  async compact(id, model) {
+    const m = await modelFor(id, model);
+    detached(id, `/session/${id}/summarize`, await directoryOf(id), { providerID: m.providerID, modelID: m.modelID });
+  },
+
+  async undo(id) {
+    const directory = await directoryOf(id);
+    const s = await call<OcSession>('GET', `/session/${id}`);
+    const raw = await call<{ info: OcMessage; parts: OcPart[] }[]>('GET', `/session/${id}/message`, { limit: String(HISTORY_LIMIT) });
+    // The last prompt not yet reverted (OpenCode ids sort by time).
+    const limit = s.revert?.messageID;
+    const target = [...raw].reverse().find((m) => m.info.role === 'user' && (!limit || m.info.id < limit));
+    if (!target) throw new ChatError(400, 'nothing to undo');
+    await call('POST', `/session/${id}/revert`, { directory }, { messageID: target.info.id });
+    const text = target.parts
+      .filter((p) => p.type === 'text' && !p.synthetic && !p.ignored)
+      .map((p) => p.text ?? '')
+      .join('\n');
+    return { text };
+  },
+
+  async redo(id) {
+    await call('POST', `/session/${id}/unrevert`, { directory: await directoryOf(id) });
+  },
+
+  async share(id) {
+    const s = await call<OcSession>('POST', `/session/${id}/share`, { directory: await directoryOf(id) });
+    if (!s.share?.url) throw new ChatError(502, 'OpenCode gave no link');
+    return { url: s.share.url };
+  },
+
+  async setAuto(id, on) {
+    const directory = await directoryOf(id);
+    const s = await call<OcSession>('GET', `/session/${id}`);
+    const metadata = { ...(s.metadata ?? {}) };
+    if (on) metadata[AUTO_KEY] = true;
+    else delete metadata[AUTO_KEY];
+    const next = await call<OcSession>('PATCH', `/session/${id}`, { directory }, { metadata });
+    remember(next);
+    console.log(`[chat] auto mode ${on ? 'on' : 'off'} for ${id}`);
+    if (on) {
+      // What was already waiting goes on too: this session's and its subagents'.
+      const pending = await call<OcPermission[]>('GET', '/permission', { directory }).catch(() => [] as OcPermission[]);
+      for (const p of pending) if (await autoFor(p.sessionID)) await allowOnce(p);
+    }
+    return toSession(next);
+  },
+
+  async unshare(id) {
+    await call('DELETE', `/session/${id}/share`, { directory: await directoryOf(id) });
   },
 
   async abort(id) {
@@ -611,7 +865,10 @@ export const opencode: ChatAdapter = {
 
   async providers() {
     if (providerCache && Date.now() - providerCache.at < PROVIDERS_TTL_MS) return providerCache.list;
-    const raw = await call<{ providers: { id: string; name: string; models: Record<string, { id: string; name?: string }> }[]; default: Record<string, string> }>(
+    const raw = await call<{
+      providers: { id: string; name: string; models: Record<string, { id: string; name?: string; limit?: { context?: number } }> }[];
+      default: Record<string, string>;
+    }>(
       'GET',
       '/config/providers',
       { directory: CHAT_DIRECTORY },
@@ -621,7 +878,7 @@ export const opencode: ChatAdapter = {
         id: p.id,
         name: p.name,
         models: Object.values(p.models)
-          .map((m) => ({ id: m.id, name: m.name || m.id }))
+          .map((m) => ({ id: m.id, name: m.name || m.id, context: m.limit?.context ?? 0 }))
           .sort((a, b) => a.name.localeCompare(b.name)),
       })),
       defaults: raw.default,

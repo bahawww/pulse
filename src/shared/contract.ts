@@ -694,6 +694,15 @@ export interface ChatSession {
   readonly busy: boolean;
   /** The model the session last used, if known. */
   readonly model: ChatModelRef | null;
+  /** After /undo: this message and everything after it are reverted (hidden until /redo). */
+  readonly revertMessageID: string | null;
+  /** Public link after /share. */
+  readonly shareUrl: string | null;
+  /** Auto mode: Pulse answers every permission request of this chat with Allow (off by default). */
+  readonly auto: boolean;
+  /** The session's own rules make the agent ask before bash. False for sessions
+   *  made elsewhere with OpenCode's defaults, which never ask: auto changes nothing there. */
+  readonly asks: boolean;
 }
 
 export interface ChatTextPart {
@@ -728,6 +737,15 @@ export interface ChatFilePart {
 
 export type ChatPart = ChatTextPart | ChatToolPart | ChatFilePart;
 
+/** Tokens one reply used. */
+export interface ChatTokens {
+  readonly input: number;
+  readonly output: number;
+  readonly reasoning: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+}
+
 export interface ChatMessageInfo {
   readonly id: string;
   readonly sessionID: string;
@@ -737,6 +755,9 @@ export interface ChatMessageInfo {
   readonly model: ChatModelRef | null;
   /** Why the reply stopped early (aborted, provider error), if it did. */
   readonly error: string;
+  /** Replies only: what the model read and wrote, and what it cost (USD). */
+  readonly tokens: ChatTokens | null;
+  readonly cost: number;
 }
 
 export interface ChatMessage extends ChatMessageInfo {
@@ -759,9 +780,42 @@ export interface ChatPermission {
 }
 
 export interface ChatProviderList {
-  readonly providers: readonly { readonly id: string; readonly name: string; readonly models: readonly { readonly id: string; readonly name: string }[] }[];
+  readonly providers: readonly {
+    readonly id: string;
+    readonly name: string;
+    /** `context`: the model's context window in tokens, 0 when unknown. */
+    readonly models: readonly { readonly id: string; readonly name: string; readonly context: number }[];
+  }[];
   /** Provider id to its default model id. */
   readonly defaults: Readonly<Record<string, string>>;
+}
+
+/** A slash command the agent offers (OpenCode: its own and custom commands, MCP prompts, skills). */
+export interface ChatCommand {
+  readonly name: string;
+  readonly description: string;
+  readonly source: 'command' | 'mcp' | 'skill';
+  /** It takes text after its name ($ARGUMENTS in its template). */
+  readonly args: boolean;
+}
+
+/** A subagent that @name hands the task to. */
+export interface ChatSubagent {
+  readonly name: string;
+  readonly description: string;
+}
+
+/** A path for @, relative to the session's directory; folders end in "/". */
+export interface ChatFileHit {
+  readonly path: string;
+  readonly dir: boolean;
+}
+
+/** An @mention picked in the composer, sent with the prompt that contains it. */
+export interface ChatMention {
+  readonly type: 'file' | 'agent';
+  /** The path (folders end in "/") or the agent name, as written after @. */
+  readonly value: string;
 }
 
 /** What GET /api/chat/sessions/:id/messages answers. */

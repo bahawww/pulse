@@ -1,14 +1,15 @@
 import { type JSX, type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { prefersReducedMotion } from '../lib/motion';
-import { FileReplaceIcon, LogOutIcon, TrashIcon } from './icons';
+import { FileReplaceIcon, LogOutIcon, TrashIcon, WarningIcon } from './icons';
 
 /** The glyph says what will happen: every caller picks one. */
-type ConfirmIcon = 'logout' | 'delete' | 'replace';
+type ConfirmIcon = 'logout' | 'delete' | 'replace' | 'warning';
 
 const ICONS: Readonly<Record<ConfirmIcon, (size: number) => JSX.Element>> = {
   logout: (size) => <LogOutIcon size={size} />,
   delete: (size) => <TrashIcon size={size} />,
   replace: (size) => <FileReplaceIcon size={size} />,
+  warning: (size) => <WarningIcon size={size} />,
 };
 
 interface ConfirmDialogProps {

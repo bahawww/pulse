@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import type {
+  ChatCommand,
   ChatEvent,
+  ChatFileHit,
+  ChatMention,
+  ChatSubagent,
   ChatHistory,
   ChatMessage,
   ChatModelRef,
@@ -93,7 +97,7 @@ function withMessage(messages: readonly ChatMessage[], id: string, role: 'user' 
     return next;
   }
   // A part before its message: a placeholder the message event fills in.
-  const blank: ChatMessage = { id, sessionID, role, createdAt: Date.now(), completedAt: null, model: null, error: '', parts: [] };
+  const blank: ChatMessage = { id, sessionID, role, createdAt: Date.now(), completedAt: null, model: null, error: '', tokens: null, cost: 0, parts: [] };
   return [...messages, fn(blank)].sort(byTime);
 }
 
@@ -177,7 +181,24 @@ export interface Chat {
   readonly model: ChatModelRef | null;
   readonly setModel: (m: ChatModelRef | null) => void;
   readonly open: (id: string | null) => void;
-  readonly send: (text: string) => Promise<void>;
+  readonly send: (text: string, mentions?: readonly ChatMention[]) => Promise<void>;
+  /** The agent's own slash commands (OpenCode commands, MCP prompts, skills). */
+  readonly commands: readonly ChatCommand[];
+  /** Subagents for @name. */
+  readonly subagents: readonly ChatSubagent[];
+  /** Paths for @, in the open session's directory. */
+  readonly findFiles: (query: string) => Promise<readonly ChatFileHit[]>;
+  readonly runCommand: (name: string, args: string) => Promise<void>;
+  readonly compact: () => Promise<void>;
+  /** Reverts the last prompt; answers its text (for the composer), or null. */
+  readonly undo: () => Promise<string | null>;
+  readonly redo: () => Promise<void>;
+  /** Answers the public link, or null. */
+  readonly share: () => Promise<string | null>;
+  readonly unshare: () => Promise<void>;
+  /** Auto mode of the open chat, or of the next one when none is open yet. */
+  readonly auto: boolean;
+  readonly setAuto: (on: boolean) => Promise<void>;
   readonly abort: () => Promise<void>;
   readonly answer: (p: ChatPermission, reply: 'once' | 'always' | 'reject') => Promise<void>;
   readonly rename: (id: string, title: string) => Promise<void>;
@@ -194,6 +215,12 @@ export function useChat(notify: (text: string) => void): Chat {
   const [loadingThread, setLoadingThread] = useState(false);
   const [pending, setPending] = useState('');
   const [providers, setProviders] = useState<ChatProviderList | null>(null);
+  const [commands, setCommands] = useState<readonly ChatCommand[]>([]);
+  const [subagents, setSubagents] = useState<readonly ChatSubagent[]>([]);
+  /** Auto mode picked before the chat exists; applied when it is made. Never stored: off on every visit. */
+  const [autoNext, setAutoNext] = useState(false);
+  const autoNextRef = useRef(false);
+  autoNextRef.current = autoNext;
   const [model, setModelState] = useState<ChatModelRef | null>(storedModel);
   const [epoch, setEpoch] = useState(0);
 
@@ -214,6 +241,7 @@ export function useChat(notify: (text: string) => void): Chat {
     writeStored(SESSION_KEY, id);
     setCurrentId(id);
     setPending('');
+    setAutoNext(false);
   }, []);
 
   const setModel = useCallback((m: ChatModelRef | null) => {
@@ -249,9 +277,16 @@ export function useChat(notify: (text: string) => void): Chat {
     }
   }, [open]);
 
+  // The model list, and what / and @ offer.
   const loadProviders = useCallback(() => {
     void api<ChatProviderList>('GET', '/api/chat/providers')
       .then(setProviders)
+      .catch(() => undefined);
+    void api<{ commands: ChatCommand[] }>('GET', '/api/chat/commands')
+      .then((r) => setCommands(r.commands))
+      .catch(() => undefined);
+    void api<{ agents: ChatSubagent[] }>('GET', '/api/chat/agents')
+      .then((r) => setSubagents(r.agents))
       .catch(() => undefined);
   }, []);
 
@@ -363,24 +398,34 @@ export function useChat(notify: (text: string) => void): Chat {
     };
   }, [currentId, epoch, loadAll, loadProviders, applyUpstream, open]);
 
+  /** The open session, made first when there is none (a new chat). */
+  const ensureSession = useCallback(async (): Promise<string> => {
+    const open = currentRef.current;
+    if (open) return open;
+    const { session: made } = await api<{ session: ChatSession }>('POST', '/api/chat/sessions', {});
+    const id = made.id;
+    let session = made;
+    if (autoNextRef.current) {
+      session = (await api<{ session: ChatSession }>('POST', `/api/chat/sessions/${id}/auto`, { on: true })).session;
+      setAutoNext(false);
+    }
+    setSessions((list) => [session, ...(list ?? []).filter((s) => s.id !== session.id)]);
+    writeStored(SESSION_KEY, id);
+    currentRef.current = id;
+    setCurrentId(id);
+    // Let the new session's stream connect first, or the start of the reply is missed.
+    const started = Date.now();
+    while (streamReady.current?.id !== id && Date.now() - started < 3000) await new Promise((r) => setTimeout(r, 30));
+    await Promise.race([streamReady.current?.wait, new Promise((r) => setTimeout(r, 3000))]);
+    return id;
+  }, []);
+
   const send = useCallback(
-    async (text: string) => {
-      let id = currentRef.current;
+    async (text: string, mentions: readonly ChatMention[] = []) => {
       setPending(text);
       try {
-        if (!id) {
-          const { session } = await api<{ session: ChatSession }>('POST', '/api/chat/sessions', {});
-          id = session.id;
-          setSessions((list) => [session, ...(list ?? []).filter((s) => s.id !== session.id)]);
-          writeStored(SESSION_KEY, id);
-          currentRef.current = id;
-          setCurrentId(id);
-          // Let the new session's stream connect first, or the start of the reply is missed.
-          const started = Date.now();
-          while (streamReady.current?.id !== id && Date.now() - started < 3000) await new Promise((r) => setTimeout(r, 30));
-          await Promise.race([streamReady.current?.wait, new Promise((r) => setTimeout(r, 3000))]);
-        }
-        await api('POST', `/api/chat/sessions/${id}/prompt`, { text, ...(model ? { model } : {}) });
+        const id = await ensureSession();
+        await api('POST', `/api/chat/sessions/${id}/prompt`, { text, ...(model ? { model } : {}), ...(mentions.length ? { mentions } : {}) });
       } catch (err) {
         setPending('');
         const message = err instanceof Error ? err.message : 'could not send';
@@ -389,8 +434,99 @@ export function useChat(notify: (text: string) => void): Chat {
         throw err;
       }
     },
-    [model],
+    [model, ensureSession],
   );
+
+  const fail = useCallback((err: unknown, what: string) => {
+    const message = err instanceof Error ? err.message : what;
+    notifyRef.current(message);
+  }, []);
+
+  const runCommand = useCallback(
+    async (name: string, args: string) => {
+      try {
+        const id = await ensureSession();
+        await api('POST', `/api/chat/sessions/${id}/command`, { command: name, arguments: args, ...(model ? { model } : {}) });
+      } catch (err) {
+        fail(err, 'the command failed');
+      }
+    },
+    [model, ensureSession, fail],
+  );
+
+  const compact = useCallback(async () => {
+    const id = currentRef.current;
+    if (!id) return;
+    try {
+      await api('POST', `/api/chat/sessions/${id}/compact`, model ? { model } : {});
+      notifyRef.current('Compacting the chat');
+    } catch (err) {
+      fail(err, 'could not compact');
+    }
+  }, [model, fail]);
+
+  const undo = useCallback(async () => {
+    const id = currentRef.current;
+    if (!id) return null;
+    try {
+      return (await api<{ text: string }>('POST', `/api/chat/sessions/${id}/undo`)).text;
+    } catch (err) {
+      fail(err, 'could not undo');
+      return null;
+    }
+  }, [fail]);
+
+  const redo = useCallback(async () => {
+    const id = currentRef.current;
+    if (!id) return;
+    await api('POST', `/api/chat/sessions/${id}/redo`).catch((err: unknown) => fail(err, 'could not redo'));
+  }, [fail]);
+
+  const share = useCallback(async () => {
+    const id = currentRef.current;
+    if (!id) return null;
+    try {
+      return (await api<{ url: string }>('POST', `/api/chat/sessions/${id}/share`)).url;
+    } catch (err) {
+      fail(err, 'could not share');
+      return null;
+    }
+  }, [fail]);
+
+  const unshare = useCallback(async () => {
+    const id = currentRef.current;
+    if (!id) return;
+    await api('DELETE', `/api/chat/sessions/${id}/share`)
+      .then(() => notifyRef.current('The public link is gone'))
+      .catch((err: unknown) => fail(err, 'could not unshare'));
+  }, [fail]);
+
+  const setAuto = useCallback(
+    async (on: boolean) => {
+      const id = currentRef.current;
+      if (!id) {
+        setAutoNext(on);
+        return;
+      }
+      try {
+        const { session } = await api<{ session: ChatSession }>('POST', `/api/chat/sessions/${id}/auto`, { on });
+        setSessions((list) => list?.map((s) => (s.id === id ? session : s)) ?? list);
+      } catch (err) {
+        fail(err, 'could not change auto mode');
+      }
+    },
+    [fail],
+  );
+
+  const findFiles = useCallback(async (query: string) => {
+    const qs = new URLSearchParams({ q: query });
+    if (currentRef.current) qs.set('session', currentRef.current);
+    try {
+      return (await api<{ files: ChatFileHit[] }>('GET', `/api/chat/files?${qs.toString()}`)).files;
+    } catch {
+      return [];
+    }
+  }, []);
 
   const abort = useCallback(async () => {
     const id = currentRef.current;
@@ -455,5 +591,16 @@ export function useChat(notify: (text: string) => void): Chat {
     rename,
     remove,
     retry,
+    commands,
+    subagents,
+    findFiles,
+    runCommand,
+    compact,
+    undo,
+    redo,
+    share,
+    unshare,
+    auto: currentId ? !!sessions?.find((s) => s.id === currentId)?.auto : autoNext,
+    setAuto,
   };
 }

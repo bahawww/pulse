@@ -297,6 +297,14 @@ export function FileReplaceIcon({ size = 16 }: IconProps): JSX.Element {
   );
 }
 
+export function WarningIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)}>
+      <path d="M10.3 3.9 2.4 17.5a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" />
+    </svg>
+  );
+}
+
 export function TrashIcon({ size = 16 }: IconProps): JSX.Element {
   return (
     <svg {...base(size)}>

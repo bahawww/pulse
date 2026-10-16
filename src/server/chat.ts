@@ -1,6 +1,6 @@
 import type { Express, Request, RequestHandler, Response } from 'express';
 
-import { chatEventSession, type ChatEvent, type ChatModelRef } from '../shared/contract.js';
+import { chatEventSession, type ChatEvent, type ChatMention, type ChatModelRef } from '../shared/contract.js';
 import { ChatError, type ChatAdapter } from './chatAdapter.js';
 import { opencode } from './chatOpencode.js';
 import { onSessionEnd, requirePerm, userOf } from './session.js';
@@ -174,18 +174,53 @@ function model(v: unknown): ChatModelRef | null {
   return { providerID: m.providerID, modelID: m.modelID };
 }
 
-/** Prompt bodies may be longer than the app-wide 16 KB JSON cap (see index.ts). */
-export const CHAT_PROMPT_PATH = /^\/api\/chat\/sessions\/[^/]+\/prompt$/;
+const COMMAND_NAME = /^[\w.:@/-]{1,120}$/;
+const MAX_MENTIONS = 40;
+
+/** @mentions sent with a prompt: files (relative paths) and agent names. */
+function mentions(v: unknown): ChatMention[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.length > MAX_MENTIONS) throw new ChatError(400, 'bad mentions');
+  return v.map((m: { type?: unknown; value?: unknown }) => {
+    const ok = (m.type === 'file' || m.type === 'agent') && typeof m.value === 'string' && m.value.length > 0 && m.value.length <= 500 && !/[\0\n]/.test(m.value);
+    if (!ok) throw new ChatError(400, 'bad mention');
+    return { type: m.type as 'file' | 'agent', value: m.value as string };
+  });
+}
+
+/** Prompt (and command) bodies may be longer than the app-wide 16 KB JSON cap (see index.ts). */
+export const CHAT_PROMPT_PATH = /^\/api\/chat\/sessions\/[^/]+\/(prompt|command)$/;
 
 export function registerChatRoutes(app: Express, readLimiter: RequestHandler, writeLimiter: RequestHandler): void {
   // Every /api/chat route, known or not, answers 403 without the permission.
   app.use('/api/chat', requirePerm('chat'));
+
+  // Follow the agent from boot, not from the first open tab: auto mode answers
+  // permission requests even while nobody has the chat open.
+  adapter.start(broadcast);
 
   app.get('/api/chat/status', readLimiter, wrap(async () => ({ agent: adapter.agent, status: await adapter.probe(), directory: adapter.directory })));
 
   app.get('/api/chat/events', openEvents);
 
   app.get('/api/chat/providers', readLimiter, wrap(() => adapter.providers()));
+
+  app.get('/api/chat/commands', readLimiter, wrap(async () => ({ commands: await adapter.commands() })));
+
+  app.get('/api/chat/agents', readLimiter, wrap(async () => ({ agents: await adapter.subagents() })));
+
+  // @ completion: paths in the session's directory (the default one before the first message).
+  app.get(
+    '/api/chat/files',
+    readLimiter,
+    wrap(async (req) => {
+      const session = typeof req.query.session === 'string' && req.query.session ? req.query.session : null;
+      if (session && !SESSION_ID.test(session)) throw new ChatError(400, 'bad session id');
+      const q = typeof req.query.q === 'string' ? req.query.q : '';
+      if (q.length > 300 || /[\0\n]/.test(q)) throw new ChatError(400, 'bad query');
+      return { files: await adapter.findFiles(session, q) };
+    }),
+  );
 
   app.get('/api/chat/sessions', readLimiter, wrap(async () => ({ sessions: await adapter.listSessions() })));
 
@@ -219,7 +254,59 @@ export function registerChatRoutes(app: Express, readLimiter: RequestHandler, wr
       const text = typeof b.text === 'string' ? b.text.trim() : '';
       if (!text) throw new ChatError(400, 'message required');
       if (text.length > PROMPT_MAX) throw new ChatError(413, `message longer than ${PROMPT_MAX} characters`);
-      await adapter.prompt(id, text, model(b.model));
+      await adapter.prompt(id, text, model(b.model), mentions(b.mentions));
+    }),
+  );
+
+  app.post(
+    '/api/chat/sessions/:id/command',
+    writeLimiter,
+    wrap(async (req) => {
+      const id = sessionParam(req);
+      const b = body(req);
+      const name = typeof b.command === 'string' ? b.command : '';
+      if (!COMMAND_NAME.test(name)) throw new ChatError(400, 'bad command');
+      const args = typeof b.arguments === 'string' ? b.arguments.trim() : '';
+      if (args.length > PROMPT_MAX) throw new ChatError(413, `arguments longer than ${PROMPT_MAX} characters`);
+      await adapter.command(id, name, args, model(b.model));
+    }),
+  );
+
+  app.post(
+    '/api/chat/sessions/:id/compact',
+    writeLimiter,
+    wrap(async (req) => {
+      await adapter.compact(sessionParam(req), model(body(req).model));
+    }),
+  );
+
+  app.post('/api/chat/sessions/:id/undo', writeLimiter, wrap((req) => adapter.undo(sessionParam(req))));
+
+  app.post(
+    '/api/chat/sessions/:id/redo',
+    writeLimiter,
+    wrap(async (req) => {
+      await adapter.redo(sessionParam(req));
+    }),
+  );
+
+  app.post('/api/chat/sessions/:id/share', writeLimiter, wrap((req) => adapter.share(sessionParam(req))));
+
+  app.post(
+    '/api/chat/sessions/:id/auto',
+    writeLimiter,
+    wrap(async (req) => {
+      const on = body(req).on;
+      if (typeof on !== 'boolean') throw new ChatError(400, 'on must be true or false');
+      return { session: await adapter.setAuto(sessionParam(req), on) };
+    }),
+  );
+
+  app.delete(
+    '/api/chat/sessions/:id/share',
+    writeLimiter,
+    wrap(async (req) => {
+      await adapter.unshare(sessionParam(req));
     }),
   );
 

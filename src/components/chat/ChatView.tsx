@@ -1,13 +1,14 @@
-import { type FormEvent, type JSX, type KeyboardEvent, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type JSX, type KeyboardEvent, type ReactNode, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import '../../chat.css';
-import type { ChatMessage, ChatModelRef, ChatPermission, ChatProviderList, ChatSession, ChatUpstream } from '../../shared/contract';
-import { formatAgo } from '../../lib/format';
+import type { ChatFileHit, ChatMention, ChatMessage, ChatModelRef, ChatPermission, ChatProviderList, ChatSession, ChatTokens, ChatUpstream } from '../../shared/contract';
+import { formatAgo, formatTokens, formatUsd } from '../../lib/format';
 import { prefersReducedMotion } from '../../lib/motion';
 import type { ChatSignal } from '../ChatFab';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { ArrowDownIcon, CheckIcon, ChatIcon, ChevronDownIcon, ListIcon, MinimizeIcon, MoreIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from '../icons';
 import { Markdown } from './Markdown';
+import { BUILTIN_ALIASES, BUILTIN_COMMANDS, type BuiltinName, type Suggestion, SuggestList, agentSuggestions, findTrigger, slashSuggestions } from './Suggest';
 import { PermissionCard, ToolCard } from './Parts';
 import { type Chat, useChat } from './useChat';
 
@@ -93,8 +94,8 @@ function modelName(list: ChatProviderList | null, m: ChatModelRef): string {
   return p?.models.find((x) => x.id === m.modelID)?.name ?? m.modelID;
 }
 
-function ModelPicker({ chat }: { readonly chat: Chat }): JSX.Element {
-  const [open, setOpen] = useState(false);
+/** Open state lives in the composer, so /models can open it. */
+function ModelPicker({ chat, open, setOpen }: { readonly chat: Chat; readonly open: boolean; readonly setOpen: (open: boolean) => void }): JSX.Element {
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const effective = chat.model ?? chat.current?.model ?? null;
@@ -112,7 +113,7 @@ function ModelPicker({ chat }: { readonly chat: Chat }): JSX.Element {
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [open]);
+  }, [open, setOpen]);
 
   const groups = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -133,7 +134,7 @@ function ModelPicker({ chat }: { readonly chat: Chat }): JSX.Element {
 
   return (
     <div className="pop-anchor chat-model">
-      <button type="button" className="chat-model-btn" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={effective ? `${effective.providerID}/${effective.modelID}` : 'The agent picks its default'}>
+      <button type="button" className="chat-model-btn" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} title={effective ? `${effective.providerID}/${effective.modelID}` : 'The agent picks its default'}>
         <span>{label}</span>
         <ChevronDownIcon size={13} />
       </button>
@@ -198,14 +199,14 @@ const Message = memo(function Message({
 }): JSX.Element | null {
   if (message.role === 'user') {
     const text = message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('\n').trim();
-    const files = message.parts.filter((p) => p.type === 'file');
+    // Files named in the text as @path are marked there; only the others get a chip.
+    const files = message.parts.filter((p) => p.type === 'file' && !text.includes(`@${p.filename}`));
     if (!text && files.length === 0) return null;
     return (
       <div className="chat-msg is-user">
-        <div className="chat-bubble">
-          {text}
+        <UserBubble text={text}>
           {files.map((f) => f.type === 'file' && <span key={f.id} className="chat-file">{f.filename}</span>)}
-        </div>
+        </UserBubble>
       </div>
     );
   }
@@ -246,11 +247,37 @@ const Message = memo(function Message({
   );
 });
 
+/** Above this a prompt (a command's or skill's whole template) is folded. */
+const FOLD_CHARS = 700;
+
+/** A prompt as typed: @mentions marked, a long one folded. */
+function UserBubble({ text, children }: { readonly text: string; readonly children?: ReactNode }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const long = text.length > FOLD_CHARS;
+  const shown = long && !open ? `${text.slice(0, FOLD_CHARS).trimEnd()}…` : text;
+  const pieces = shown.split(/(@[^\s]+)/g);
+  return (
+    <div className="chat-bubble">
+      {pieces.map((piece, i) => (i % 2 === 1 ? <span key={i} className="chat-mention">{piece}</span> : piece))}
+      {children}
+      {long && (
+        <button type="button" className="chat-fold" onClick={() => setOpen(!open)}>
+          {open ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Thread({ chat }: { readonly chat: Chat }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const [away, setAway] = useState(false);
   const t = chat.thread;
+  // After /undo the reverted messages stay in OpenCode until /redo or the next prompt: not shown.
+  const revert = chat.current?.revertMessageID ?? null;
+  const messages = t ? (revert ? t.messages.filter((m) => m.id < revert) : t.messages) : [];
+  const undone = t ? t.messages.length - messages.length : 0;
 
   // Permissions whose tool card is not on screen (another message, or no call id).
   const shownCalls = useMemo(() => new Set(t?.messages.flatMap((m) => m.parts.map((p) => (p.type === 'tool' ? p.callID : '')))), [t?.messages]);
@@ -282,7 +309,7 @@ function Thread({ chat }: { readonly chat: Chat }): JSX.Element {
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   };
 
-  const empty = !t || (t.messages.length === 0 && !chat.pending);
+  const empty = !t || (messages.length === 0 && !chat.pending && undone === 0);
   return (
     <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
       <div className="chat-thread">
@@ -298,9 +325,14 @@ function Thread({ chat }: { readonly chat: Chat }): JSX.Element {
           </div>
         )}
         {empty && chat.loadingThread && <p className="chat-muted chat-loading">Loading conversation…</p>}
-        {t?.messages.map((m) => (
-          <Message key={m.id} message={m} permissions={t.permissions} onAnswer={chat.answer} />
+        {messages.map((m) => (
+          <Message key={m.id} message={m} permissions={t!.permissions} onAnswer={chat.answer} />
         ))}
+        {undone > 0 && (
+          <div className="chat-undone">
+            {undone === 1 ? '1 message' : `${undone} messages`} undone · <code>/redo</code> brings {undone === 1 ? 'it' : 'them'} back
+          </div>
+        )}
         {chat.pending && (
           <div className="chat-msg is-user is-pending">
             <div className="chat-bubble">{chat.pending}</div>
@@ -334,9 +366,36 @@ function Thread({ chat }: { readonly chat: Chat }): JSX.Element {
 // Composer
 // ---------------------------------------------------------------------------
 
-function Composer({ chat, disabled, active }: { readonly chat: Chat; readonly disabled: boolean; readonly active: boolean }): JSX.Element {
+interface ComposerProps {
+  readonly chat: Chat;
+  readonly disabled: boolean;
+  readonly active: boolean;
+  readonly onNotify: (text: string) => void;
+  /** /sessions */
+  readonly onSessions: () => void;
+  /** /rename with no title: the header's rename field. */
+  readonly onRename: () => void;
+  /** /context */
+  readonly onUsage: () => void;
+  /** /auto and the Auto button: ChatView asks before turning it on. */
+  readonly onAuto: () => void;
+}
+
+/** "@value" as a whole word in `text` (not the start of a longer path). */
+function hasToken(text: string, value: string): boolean {
+  const esc = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|\\s)@${esc}(?=\\s|$)`).test(text);
+}
+
+function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUsage, onAuto }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
+  const [caret, setCaret] = useState(0);
   const [sending, setSending] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [hidden, setHidden] = useState<string | null>(null);
+  const [activeItem, setActiveItem] = useState(0);
+  const [files, setFiles] = useState<{ readonly query: string; readonly hits: readonly ChatFileHit[] } | null>(null);
+  const mentions = useRef<ChatMention[]>([]);
   const ref = useRef<HTMLTextAreaElement>(null);
   const busy = !!chat.thread?.busy;
 
@@ -353,38 +412,242 @@ function Composer({ chat, disabled, active }: { readonly chat: Chat; readonly di
     if (active && !window.matchMedia('(pointer: coarse)').matches) ref.current?.focus();
   }, [chat.currentId, active]);
 
+  const trigger = disabled ? null : findTrigger(text, caret);
+  const triggerAt = trigger ? `${trigger.kind}:${trigger.start}` : '';
+  const triggerKey = trigger ? `${triggerAt}:${trigger.query}` : '';
+  // Escape hides the list until this trigger is gone (another one, or none).
+  const shown = !!trigger && hidden !== triggerAt;
+  useEffect(() => setActiveItem(0), [triggerKey]);
+  useEffect(() => setHidden((h) => (h === triggerAt ? h : null)), [triggerAt]);
+
+  // Files for @, a moment after typing stops.
+  const mentionQuery = trigger?.kind === 'mention' ? trigger.query : null;
+  const { findFiles } = chat;
+  useEffect(() => {
+    if (mentionQuery === null) return undefined;
+    let alive = true;
+    const t = window.setTimeout(() => {
+      void findFiles(mentionQuery).then((hits) => {
+        if (alive) setFiles({ query: mentionQuery, hits });
+      });
+    }, 120);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, [mentionQuery, findFiles]);
+
+  const loading = mentionQuery !== null && files?.query !== mentionQuery;
+  const items: Suggestion[] = !shown
+    ? []
+    : trigger.kind === 'slash'
+      ? slashSuggestions(trigger.query, chat.commands, !!chat.currentId)
+      : [
+          ...agentSuggestions(trigger.query, chat.subagents),
+          ...(files?.query === mentionQuery ? files.hits.map((f): Suggestion => ({ kind: 'file', file: f })) : []),
+        ];
+  // A "/" with nothing to offer is just text ("/etc/hosts is ..."); "@" says what it is doing.
+  const listOpen = shown && (items.length > 0 || trigger.kind === 'mention');
+
+  const put = (next: string, pos = next.length) => {
+    setText(next);
+    setCaret(pos);
+    window.requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.setSelectionRange(pos, pos);
+    });
+  };
+
+  const runBuiltin = async (name: BuiltinName, args: string) => {
+    switch (name) {
+      case 'new':
+        chat.open(null);
+        return;
+      case 'sessions':
+        onSessions();
+        return;
+      case 'models':
+        setPickerOpen(true);
+        return;
+      case 'context':
+        onUsage();
+        return;
+      case 'auto':
+        onAuto();
+        return;
+      case 'rename':
+        if (args && chat.currentId) await chat.rename(chat.currentId, args.slice(0, 200));
+        else onRename();
+        return;
+      case 'compact':
+        await chat.compact();
+        return;
+      case 'undo': {
+        const back = await chat.undo();
+        if (back !== null) put(back);
+        return;
+      }
+      case 'redo':
+        await chat.redo();
+        return;
+      case 'share': {
+        const url = await chat.share();
+        if (!url) return;
+        await navigator.clipboard?.writeText(url).catch(() => undefined);
+        onNotify(`Public link copied: ${url}`);
+        return;
+      }
+      case 'unshare':
+        await chat.unshare();
+        return;
+    }
+  };
+
+  const pick = (s: Suggestion) => {
+    if (!trigger) return;
+    const before = text.slice(0, trigger.start);
+    const after = text.slice(caret);
+    const insert = (value: string) => put(before + value + after, (before + value).length);
+    switch (s.kind) {
+      case 'builtin':
+        put('');
+        void runBuiltin(s.name, '');
+        return;
+      case 'command':
+        // One that takes text waits for it; the rest runs now.
+        if (s.command.args) insert(`/${s.command.name} `);
+        else {
+          put('');
+          void chat.runCommand(s.command.name, '');
+        }
+        return;
+      case 'agent':
+        mentions.current.push({ type: 'agent', value: s.agent.name });
+        insert(`@${s.agent.name} `);
+        return;
+      case 'file':
+        mentions.current.push({ type: 'file', value: s.file.path });
+        // A folder stays open, to go on into it.
+        insert(s.file.dir ? `@${s.file.path}` : `@${s.file.path} `);
+        return;
+    }
+  };
+
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
     const value = text.trim();
     if (!value || sending || disabled) return;
+    const slash = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(value);
+    if (slash) {
+      const typed = slash[1]!;
+      const args = (slash[2] ?? '').trim();
+      const name = BUILTIN_ALIASES[typed] ?? typed;
+      const builtin = BUILTIN_COMMANDS.find((c) => c.name === name && (!!chat.currentId || !c.session));
+      if (builtin) {
+        put('');
+        void runBuiltin(builtin.name, args);
+        return;
+      }
+      const command = chat.commands.find((c) => c.name === typed);
+      if (command) {
+        put('');
+        setSending(true);
+        void chat.runCommand(command.name, args).finally(() => setSending(false));
+        return;
+      }
+    }
+    const used = mentions.current.filter((m, i, all) => hasToken(value, m.value) && all.findIndex((o) => o.value === m.value) === i);
+    mentions.current = [];
     setSending(true);
-    setText('');
+    put('');
     chat
-      .send(value)
+      .send(value, used)
       .catch(() => setText((t) => t || value))
       .finally(() => setSending(false));
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (listOpen && items.length > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setActiveItem((a) => (a + step + items.length) % items.length);
+        return;
+      }
+      if ((e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) || e.key === 'Tab') {
+        e.preventDefault();
+        pick(items[Math.min(activeItem, items.length - 1)]!);
+        return;
+      }
+    }
+    if (listOpen && e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setHidden(triggerAt);
+      return;
+    }
     // Enter sends on a keyboard; on touch it is a new line (the button sends).
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia('(pointer: coarse)').matches) submit();
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia('(pointer: coarse)').matches) {
+      e.preventDefault();
+      submit();
+    }
   };
 
   return (
-    <form className="chat-composer" onSubmit={submit}>
+    <form className={`chat-composer${chat.auto ? ' is-auto' : ''}`} onSubmit={submit}>
+      {listOpen && (
+        <SuggestList
+          items={items}
+          resetKey={triggerKey}
+          active={Math.min(activeItem, Math.max(0, items.length - 1))}
+          loading={loading}
+          empty={trigger.kind === 'mention' ? 'No agent or file matches' : 'No command matches'}
+          onPick={pick}
+          onHover={setActiveItem}
+        />
+      )}
       <textarea
         ref={ref}
         rows={1}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          setCaret(e.target.selectionStart);
+        }}
+        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onBlur={() => setHidden(triggerAt)}
+        onFocus={() => setHidden(null)}
         onKeyDown={onKey}
-        placeholder={disabled ? 'OpenCode is unavailable' : 'Message OpenCode'}
+        placeholder={disabled ? 'OpenCode is unavailable' : 'Message OpenCode · / commands · @ files and agents'}
         aria-label="Message"
+        aria-autocomplete="list"
+        aria-expanded={listOpen}
+        aria-controls={listOpen ? 'chat-suggest' : undefined}
+        aria-activedescendant={listOpen && items.length > 0 ? `chat-suggest-${Math.min(activeItem, items.length - 1)}` : undefined}
         disabled={disabled}
         maxLength={100_000}
       />
       <div className="chat-composer-bar">
-        <ModelPicker chat={chat} />
+        <div className="chat-composer-tools">
+          <ModelPicker chat={chat} open={pickerOpen} setOpen={setPickerOpen} />
+          {chat.current && !chat.current.asks && !chat.auto ? (
+            <span className="chat-auto is-default" title="Made outside Pulse with OpenCode's defaults: it runs commands without asking anyway.">
+              No approval
+            </span>
+          ) : (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={chat.auto}
+              className={`chat-auto${chat.auto ? ' is-on' : ''}`}
+              onClick={onAuto}
+              title={chat.auto ? 'Auto mode is on: commands and edits run without asking. Click to turn off.' : 'Auto mode: let OpenCode run commands and edits without asking'}
+            >
+              <span className="chat-auto-switch" aria-hidden="true" />
+              Auto
+            </button>
+          )}
+        </div>
         {busy && !text.trim() ? (
           <button type="button" className="chat-send is-stop" onClick={() => void chat.abort()} aria-label="Stop">
             <StopIcon size={14} />
@@ -396,6 +659,138 @@ function Composer({ chat, disabled, active }: { readonly chat: Chat; readonly di
         )}
       </div>
     </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Context and usage
+// ---------------------------------------------------------------------------
+
+interface Usage {
+  /** Tokens in the context now: everything the last reply read and wrote. */
+  readonly context: number;
+  /** The model's window, 0 when unknown. */
+  readonly limit: number;
+  readonly model: ChatModelRef | null;
+  readonly last: ChatTokens;
+  readonly total: ChatTokens;
+  readonly cost: number;
+  readonly replies: number;
+}
+
+const NO_TOKENS: ChatTokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+
+/** Like the OpenCode TUI: the context is the last reply's input + output + reasoning + cache. */
+function usageOf(messages: readonly ChatMessage[], providers: ChatProviderList | null): Usage | null {
+  const replies = messages.filter((m) => m.role === 'assistant' && m.tokens);
+  const last = [...replies].reverse().find((m) => m.tokens && m.tokens.input + m.tokens.output + m.tokens.cacheRead > 0);
+  if (!last?.tokens) return null;
+  const t = last.tokens;
+  const total = replies.reduce<ChatTokens>(
+    (acc, m) => ({
+      input: acc.input + m.tokens!.input,
+      output: acc.output + m.tokens!.output,
+      reasoning: acc.reasoning + m.tokens!.reasoning,
+      cacheRead: acc.cacheRead + m.tokens!.cacheRead,
+      cacheWrite: acc.cacheWrite + m.tokens!.cacheWrite,
+    }),
+    NO_TOKENS,
+  );
+  const model = last.model;
+  const limit = model ? (providers?.providers.find((p) => p.id === model.providerID)?.models.find((m) => m.id === model.modelID)?.context ?? 0) : 0;
+  return {
+    context: t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite,
+    limit,
+    model,
+    last: t,
+    total,
+    cost: replies.reduce((acc, m) => acc + m.cost, 0),
+    replies: replies.length,
+  };
+}
+
+function TokenRows({ t }: { readonly t: ChatTokens }): JSX.Element {
+  return (
+    <dl className="chat-usage-grid">
+      <dt>Input</dt>
+      <dd>{formatTokens(t.input)}</dd>
+      <dt>Output</dt>
+      <dd>{formatTokens(t.output)}</dd>
+      <dt>Reasoning</dt>
+      <dd>{formatTokens(t.reasoning)}</dd>
+      <dt>Cache read</dt>
+      <dd>{formatTokens(t.cacheRead)}</dd>
+      <dt>Cache write</dt>
+      <dd>{formatTokens(t.cacheWrite)}</dd>
+    </dl>
+  );
+}
+
+/** Header button (a ring filling with the context) and its panel; /context opens it too. */
+function UsageButton({ usage, providers, open, setOpen }: { readonly usage: Usage; readonly providers: ChatProviderList | null; readonly open: boolean; readonly setOpen: (open: boolean) => void }): JSX.Element {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [open, setOpen]);
+
+  const share = usage.limit > 0 ? Math.min(1, usage.context / usage.limit) : 0;
+  const pct = Math.round(share * 100);
+  const tone = share >= 0.9 ? 'is-crit' : share >= 0.7 ? 'is-warn' : '';
+  const R = 7;
+  const C = 2 * Math.PI * R;
+  return (
+    <div className="pop-anchor">
+      <button
+        type="button"
+        className={`chat-usage-btn ${tone}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        title={usage.limit ? `Context ${formatTokens(usage.context)} of ${formatTokens(usage.limit)} tokens` : `Context ${formatTokens(usage.context)} tokens`}
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <circle cx="9" cy="9" r={R} className="chat-usage-track" />
+          <circle cx="9" cy="9" r={R} className="chat-usage-fill" strokeDasharray={`${C * share} ${C}`} transform="rotate(-90 9 9)" />
+        </svg>
+        <span>{usage.limit ? `${pct}%` : formatTokens(usage.context)}</span>
+      </button>
+      {open && (
+        <>
+          <div className="pop-backdrop" aria-hidden="true" onClick={() => setOpen(false)} />
+          <div className="pop chat-usage-pop" role="dialog" aria-label="Context and usage">
+            <div className="chat-usage-title">Context</div>
+            <div className={`chat-usage-bar ${tone}`}>
+              <span style={{ transform: `scaleX(${share})` }} />
+            </div>
+            <p className="chat-usage-line">
+              {formatTokens(usage.context)}
+              {usage.limit ? ` of ${formatTokens(usage.limit)} tokens · ${pct}% used` : ' tokens (window size unknown)'}
+            </p>
+            {usage.model && <p className="chat-usage-model">{modelName(providers, usage.model)} · {usage.model.providerID}</p>}
+            <div className="chat-usage-title">Last reply</div>
+            <TokenRows t={usage.last} />
+            <div className="chat-usage-title">
+              This chat · {usage.replies} {usage.replies === 1 ? 'reply' : 'replies'}
+            </div>
+            <TokenRows t={usage.total} />
+            <dl className="chat-usage-grid">
+              <dt>Cost</dt>
+              <dd>{formatUsd(usage.cost)}</dd>
+            </dl>
+            <p className="chat-usage-hint">
+              Near the limit? <code>/compact</code> summarizes the chat so far.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -471,6 +866,18 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
   const [listOpen, setListOpen] = useState(false);
   const [deleting, setDeleting] = useState<ChatSession | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
+  const [askAuto, setAskAuto] = useState(false);
+  // Turning auto mode on asks first; off is at once.
+  const toggleAuto = () => {
+    if (chat.auto) void chat.setAuto(false);
+    else setAskAuto(true);
+  };
+  const usage = useMemo(() => {
+    const revert = chat.current?.revertMessageID;
+    const msgs = chat.thread?.messages ?? [];
+    return usageOf(revert ? msgs.filter((m) => m.id < revert) : msgs, chat.providers);
+  }, [chat.thread?.messages, chat.current?.revertMessageID, chat.providers]);
   const up = chat.upstream === 'up' || chat.upstream === 'loading';
   const status = chat.upstream !== 'up' && chat.upstream !== 'loading' ? UPSTREAM_TEXT[chat.upstream] : null;
 
@@ -575,6 +982,7 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
                 {chat.upstream === 'loading' ? 'Connecting' : chat.upstream === 'auth' ? 'Auth failed' : 'Offline'}
               </span>
             )}
+            {chat.current && !renaming && usage && <UsageButton usage={usage} providers={chat.providers} open={usageOpen} setOpen={setUsageOpen} />}
             {chat.current && !renaming && (
               <ChatMenu
                 onRename={() => setRenaming({ id: chat.current!.id, title: chat.current!.title })}
@@ -600,9 +1008,34 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
           )}
 
           <Thread chat={chat} />
-          <Composer chat={chat} disabled={!up} active={open} />
+          <Composer
+            chat={chat}
+            disabled={!up}
+            active={open}
+            onNotify={onNotify}
+            onSessions={() => {
+              if (window.matchMedia('(max-width: 899px)').matches) setListOpen(true);
+              else document.querySelector<HTMLElement>('.chat-side .chat-session.is-current .chat-session-main, .chat-side .chat-session-main')?.focus();
+            }}
+            onRename={() => chat.current && setRenaming({ id: chat.current.id, title: chat.current.title })}
+            onUsage={() => (usage ? setUsageOpen(true) : onNotify('No reply yet in this chat, so no usage to show'))}
+            onAuto={toggleAuto}
+          />
         </section>
       </div>
+
+      <ConfirmDialog
+        open={askAuto}
+        icon="warning"
+        title="Turn on auto mode?"
+        message="OpenCode will run every shell command and file edit in this chat without asking, as bahar, who has sudo. It stays on for this chat until you turn it off."
+        confirmLabel="Turn on"
+        onCancel={() => setAskAuto(false)}
+        onConfirm={() => {
+          setAskAuto(false);
+          void chat.setAuto(true);
+        }}
+      />
 
       <ConfirmDialog
         open={deleting !== null}
