@@ -8,6 +8,7 @@ import { CheckIcon, MoonIcon, SearchIcon, SunIcon, TerminalIcon } from './icons'
 import { NotificationBell } from './NotificationBell';
 import { ScopeBar } from './TabBar';
 import { postJson } from '../lib/csrf';
+import { PASSWORD_MIN } from '../shared/contract';
 
 interface NavbarProps {
   readonly theme: Theme;
@@ -380,11 +381,15 @@ function OwnPassword({ onNotify }: { readonly onNotify: (message: string) => voi
           onNotify('The new passwords do not match');
           return;
         }
+        if ([...next].length < PASSWORD_MIN) {
+          onNotify(`The new password needs at least ${PASSWORD_MIN} characters`);
+          return;
+        }
         setBusy(true);
         void postJson('/api/auth/password', { current: data.get('current'), next })
           .then(async (res) => {
             if (res.ok) {
-              onNotify('Password changed');
+              onNotify('Password changed · your other devices were logged out');
               setOpen(false);
             } else onNotify(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'failed');
           })
@@ -393,8 +398,8 @@ function OwnPassword({ onNotify }: { readonly onNotify: (message: string) => voi
       }}
     >
       <input name="current" type="password" required autoComplete="current-password" placeholder="Current password" className={input} autoFocus />
-      <input name="next" type="password" required autoComplete="new-password" placeholder="New password" className={input} />
-      <input name="again" type="password" required autoComplete="new-password" placeholder="New password again" className={input} />
+      <input name="next" type="password" required minLength={PASSWORD_MIN} autoComplete="new-password" placeholder={`New password (min ${PASSWORD_MIN})`} className={input} />
+      <input name="again" type="password" required minLength={PASSWORD_MIN} autoComplete="new-password" placeholder="New password again" className={input} />
       <span className="tw:flex tw:gap-2">
         <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
           Save

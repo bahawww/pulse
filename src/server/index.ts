@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 
-import type { Service, StatsPayload } from '../shared/contract.js';
+import { PASSWORD_MIN, UNIT_SERVICES, type Permission, type Service, type StatsPayload } from '../shared/contract.js';
 import { checkAllServices } from './probe.js';
 import { getSystemSnapshot } from './collect/index.js';
 import { record, query, getHistory, historyStats, maxSpanMs, rehydrate } from './history.js';
@@ -26,12 +26,13 @@ import {
   loginLocked,
   loginSucceeded,
   passwordConfigured,
-  passwordWeak,
+  passwordShort,
   peerAddress,
   renewSession,
   requirePerm,
   requireSession,
   sameOrigin,
+  sessionAccounts,
   sessionHash,
   setCookie,
   userOf,
@@ -41,15 +42,16 @@ import { performAction, refreshAllowlist } from './actions.js';
 import { readLogs, listUnits } from './logs.js';
 import { checkReachability } from './reachability.js';
 import { getSpend } from './spend.js';
-import { detachedShells, handleUpgrade } from './terminal.js';
+import { closeTerminals, detachedShells, handleUpgrade } from './terminal.js';
 import { getSessions, killSession, renameSession } from './tmux.js';
 import { CSRF_HEADER, csrfToken, csrfValid } from './csrf.js';
 import { onServicesChange, rescan, serviceList, setHidden, startDiscovery } from './discover.js';
 import { registerFileRoutes, UPLOAD_PATH } from './files.js';
-import { openStream, publish } from './stream.js';
+import { closeStreams, openStream, publish, publishScoped } from './stream.js';
+import { scopeSamples, scopeStats, seriesKey } from './scope.js';
 import { closeDb, dbConfigured, dbError, migrate } from './db.js';
 import { registerUserRoutes } from './userRoutes.js';
-import { ensureSuperadmin } from './users.js';
+import { ensureSuperadmin, getUser } from './users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -347,11 +349,16 @@ app.get('/api/stream', (req: Request, res: Response) => {
   openStream(req, res, res.locals.sessionHash as string);
 });
 
+/** The logged-in reader's permissions (requireSession left the session hash). */
+function permissionsOf(res: Response): readonly Permission[] {
+  return userOf(res.locals.sessionHash as string)?.permissions ?? [];
+}
+
 app.get('/api/stats', apiLimiter, (_req: Request, res: Response) => {
   void getStats()
     .then((payload) => {
       res.setHeader('Cache-Control', 'no-store');
-      res.json(payload);
+      res.json(scopeStats(payload, permissionsOf(res)));
     })
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : 'unknown error';
@@ -366,6 +373,8 @@ app.get('/api/stats', apiLimiter, (_req: Request, res: Response) => {
  */
 const HISTORY_CACHE_SHORT_MS = 2_000;
 const HISTORY_CACHE_LONG_MS = 15_000;
+/** Keyed by the requested span, which any number can be: expired answers are dropped and the map is capped. */
+const HISTORY_CACHE_MAX = 16;
 const historyCache = new Map<string, { at: number; body: string }>();
 
 /**
@@ -390,7 +399,9 @@ app.get('/api/history', (req: Request, res: Response) => {
   const windowMs = Number.isFinite(requested) && requested > 0 ? Math.min(requested, 24 * 3_600_000) : 20 * 60_000;
 
   const defaultView = windowMs === 20 * 60_000 && !req.query.ms;
-  const key = defaultView ? 'default' : String(windowMs);
+  // The series this login may read are part of the key (src/server/scope.ts).
+  const permissions = permissionsOf(res);
+  const key = `${defaultView ? 'default' : String(windowMs)}|${seriesKey(permissions)}`;
   const ttl = windowMs > 3_600_000 ? HISTORY_CACHE_LONG_MS : HISTORY_CACHE_SHORT_MS;
   const hit = historyCache.get(key);
   if (hit && Date.now() - hit.at < ttl) {
@@ -403,6 +414,7 @@ app.get('/api/history', (req: Request, res: Response) => {
   const body = JSON.stringify(
     {
       ...payload,
+      samples: scopeSamples(payload.samples, permissions),
       maxSpanMs: Math.max(payload.maxSpanMs, maxSpanMs()),
       storage: {
         ...stats,
@@ -415,7 +427,11 @@ app.get('/api/history', (req: Request, res: Response) => {
     },
     roundForWire,
   );
-  historyCache.set(key, { at: Date.now(), body });
+  const now = Date.now();
+  for (const [k, v] of historyCache) if (now - v.at >= HISTORY_CACHE_LONG_MS) historyCache.delete(k);
+  historyCache.delete(key);
+  if (historyCache.size >= HISTORY_CACHE_MAX) historyCache.delete(historyCache.keys().next().value!);
+  historyCache.set(key, { at: now, body });
   res.type('application/json').send(body);
 });
 
@@ -481,7 +497,8 @@ const reachLimiter = rateLimit({
   message: { error: 'Too many reachability checks' },
 });
 
-app.get('/api/reachability', reachLimiter, (_req: Request, res: Response) => {
+// Reach and spend is one view, opened by view:overview (VIEW_NEEDS in src/lib/views.ts).
+app.get('/api/reachability', reachLimiter, requirePerm('view:overview'), (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   void checkReachability()
     .then((report) => res.json(report))
@@ -500,7 +517,7 @@ const spendLimiter = rateLimit({
   message: { error: 'Too many spend requests' },
 });
 
-app.get('/api/spend', spendLimiter, (_req: Request, res: Response) => {
+app.get('/api/spend', spendLimiter, requirePerm('view:overview'), (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   void getSpend()
     .then((report) => res.json(report))
@@ -670,14 +687,22 @@ if (fs.existsSync(CLIENT_DIR)) {
 // `express.static` with fallthrough:false calls next(err) with a plain ENOENT
 // for a missing asset. That is a 404, not a server fault — returning 500 here
 // turned every stale/missing bundle into a false alarm in the logs.
-app.use((err: NodeJS.ErrnoException, _req: Request, res: Response, next: NextFunction) => {
+// The JSON body parser fails with its own 4xx (400 malformed, 413 too large,
+// 415 bad charset). Those are the client's mistake: answer with that status and
+// log nothing. As a 500 with a stack trace, any anonymous POST filled the journal.
+app.use((err: NodeJS.ErrnoException & { status?: unknown }, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
     next(err);
     return;
   }
-  const status = err?.code === 'ENOENT' ? 404 : 500;
+  const clientError = typeof err?.status === 'number' && err.status >= 400 && err.status < 500 ? err.status : null;
+  const status = clientError ?? (err?.code === 'ENOENT' ? 404 : 500);
   if (status === 500) console.error('[vps-dashboard] unhandled error:', err);
-  res.status(status).type('text/plain').send(status === 404 ? 'Not Found' : 'Internal Server Error');
+  if (req.path.startsWith('/api/')) {
+    res.status(status).json({ error: status === 413 ? 'request body too large' : status === 500 ? 'internal error' : status === 404 ? 'not found' : 'bad request' });
+    return;
+  }
+  res.status(status).type('text/plain').send(status === 404 ? 'Not Found' : status === 500 ? 'Internal Server Error' : 'Bad Request');
 });
 
 const server = app.listen(PORT, HOST, () => {
@@ -685,9 +710,13 @@ const server = app.listen(PORT, HOST, () => {
   startDiscovery(PORT);
 
   if (!passwordConfigured()) {
-    console.warn('[vps-dashboard] NO ADMIN_PASSWORD set — nobody can log in, the API stays locked');
-  } else if (passwordWeak()) {
-    console.warn('[vps-dashboard] ADMIN_PASSWORD is shorter than 12 characters — use a longer one');
+    console.warn(
+      dbConfigured()
+        ? '[vps-dashboard] no ADMIN_PASSWORD set — no break-glass login while MySQL is down'
+        : '[vps-dashboard] NO ADMIN_PASSWORD and no user database — nobody can log in, the API stays locked',
+    );
+  } else if (passwordShort()) {
+    console.warn(`[vps-dashboard] ADMIN_PASSWORD is shorter than ${PASSWORD_MIN} characters, the rule for everyone's own password`);
   }
   if (SCRIPT_HASHES.length === 0 && fs.existsSync(CLIENT_DIR)) {
     console.warn('[vps-dashboard] no inline script hashes found; the theme bootstrap will be blocked by CSP');
@@ -713,16 +742,44 @@ async function keepSuperadmin(): Promise<void> {
   } catch (err) {
     console.warn('[users] superadmin check failed:', err instanceof Error ? err.message : err);
   }
+  await syncSessions();
 }
-void migrate().then(async (ok) => {
-  if (!ok) {
-    console.warn(`[vps-dashboard] user database unavailable: ${dbError() ?? 'unknown'} — only the env admin can log in`);
+
+/**
+ * A session copies the account's name, role and permissions at login, renews
+ * itself while used and survives restarts, so an account edited outside the
+ * app (phpMyAdmin, scripts/user.mjs) stayed logged in with its old rights for
+ * good. On the same timer: a deleted, disabled or changed account is logged out.
+ * A database that does not answer changes nothing.
+ */
+async function syncSessions(): Promise<void> {
+  try {
+    for (const [id, given] of sessionAccounts()) {
+      const now = await getUser(id);
+      const stale = !now || now.disabled || given.some((s) => s.name !== now.username || s.role !== now.role || s.permissions.join() !== now.permissions.join());
+      if (stale) console.log(`[users] ${destroyUserSessions(id)} session(s) of #${id} ended: account ${now ? 'changed' : 'deleted'} outside the app`);
+    }
+  } catch (err) {
+    console.warn('[users] session check failed:', err instanceof Error ? err.message : err);
+  }
+}
+// At boot MySQL (a Docker container) is often not up yet when this service
+// starts. One failed try used to be final: no migrations and no superadmin
+// check until the next restart. Keep trying until it answers.
+const MIGRATE_RETRY_MS = 30_000;
+let migrateWarned = false;
+async function startUserStore(): Promise<void> {
+  if (!(await migrate())) {
+    if (!migrateWarned) console.warn(`[vps-dashboard] user database unavailable: ${dbError() ?? 'unknown'} — only the env admin can log in until it answers`);
+    migrateWarned = true;
+    if (dbConfigured()) setTimeout(() => void startUserStore(), MIGRATE_RETRY_MS).unref();
     return;
   }
   await keepSuperadmin();
   console.log(`[vps-dashboard] user database ready, superadmin ${ADMIN_USER}`);
   setInterval(() => void keepSuperadmin(), SUPERADMIN_CHECK_MS).unref();
-});
+}
+void startUserStore();
 
 // Browser terminal (WebSocket -> SSH). Has its own, stricter gate in terminal.ts.
 server.on('upgrade', handleUpgrade);
@@ -811,7 +868,7 @@ const sampler = setInterval(() => {
       // created after boot becomes controllable without a server restart. Stopped
       // services stay on it: a service that was just stopped must still be startable.
       refreshAllowlist(
-        payload.services.map((s) => s.id),
+        payload.services.map((s) => s.id).filter((id) => UNIT_SERVICES.has(id)),
         payload.system.docker.map((c) => c.name),
       );
 
@@ -819,7 +876,7 @@ const sampler = setInterval(() => {
       // never fire on data that was never recorded.
       const { fired } = evaluate(DEFAULT_RULES, payload.system, latency, Date.now());
       // Push to open tabs: telemetry every tick, alerts only when they change.
-      publish('stats', payload);
+      publishScoped('stats', (permissions) => scopeStats(payload, permissions));
       publish('alerts', snapshot(DEFAULT_RULES, channelStatus()), true);
       for (const event of fired) {
         void notify(event).catch((err: unknown) =>
@@ -843,7 +900,15 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     // opened (older runtime), where it is a no-op.
     closeStore();
     void closeDb();
+    // Open event streams and terminal sockets never end on their own, so
+    // server.close() used to wait out the 8 s timer and exit 1 on every restart
+    // with a tab open (systemd: "Failed with result 'exit-code'"). End them;
+    // both reconnect by themselves once the server is back.
+    closeStreams();
+    closeTerminals();
     server.close(() => process.exit(0));
-    setTimeout(() => process.exit(1), 8000).unref();
+    // A download or upload in flight gets a moment, then everything is cut.
+    setTimeout(() => server.closeAllConnections(), 2000).unref();
+    setTimeout(() => process.exit(0), 4000).unref();
   });
 }

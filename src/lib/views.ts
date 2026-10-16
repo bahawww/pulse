@@ -42,7 +42,8 @@ const HIDDEN_VIEWS: ReadonlySet<ViewId> = new Set<ViewId>(['reach-and-spend']);
 
 /**
  * What opens each view. A view shows when the login holds any one of these.
- * The server enforces the same for the data behind them (logs, files, users).
+ * The server enforces the same for the data behind them: logs, files, users, and
+ * the telemetry (src/server/scope.ts cuts stats, the stream and history per view).
  */
 const VIEW_NEEDS: Readonly<Record<ViewId, readonly Permission[]>> = {
   overview: ['view:overview'],

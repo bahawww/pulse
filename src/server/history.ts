@@ -61,6 +61,13 @@ const MAX_POINTS = 720;
 const raw: HistorySample[] = [];
 const archive: HistorySample[] = [];
 let lastArchivedAt = 0;
+/**
+ * The raw samples behind the archive's newest bucket. A roll runs every 15s but
+ * a bucket spans a minute, so later rolls in the same minute re-average this
+ * list into that bucket instead of adding new ones.
+ */
+let openBucket: HistorySample[] = [];
+let openBucketAt = -1;
 
 // ---------------------------------------------------------------------------
 // Averaging helpers
@@ -198,12 +205,30 @@ function rollArchive(now: number): void {
   if (stale.length === 0) return;
   raw.splice(0, stale.length);
 
-  // Bucket start, so the timestamp says which minute it represents.
-  const bucketStart = Math.floor(now / ARCHIVE_BUCKET_MS) * ARCHIVE_BUCKET_MS;
-  const previous = archive[archive.length - 1];
-  const t = previous && bucketStart <= previous.t ? previous.t + ARCHIVE_BUCKET_MS : bucketStart;
-
-  archive.push(collapse(stale, t));
+  // Each sample goes into the minute it was taken in, so a bucket's timestamp
+  // says which minute it represents. Pushing one bucket per roll and bumping
+  // its time a minute past the last one made the archive run four times faster
+  // than the clock: after two hours of uptime a 6h chart reached six hours
+  // into the future.
+  const byMinute = new Map<number, HistorySample[]>();
+  for (const s of stale) {
+    const t = Math.floor(s.t / ARCHIVE_BUCKET_MS) * ARCHIVE_BUCKET_MS;
+    const list = byMinute.get(t);
+    if (list) list.push(s);
+    else byMinute.set(t, [s]);
+  }
+  for (const [t, list] of byMinute) {
+    const newest = archive[archive.length - 1];
+    if (newest && newest.t === t && openBucketAt === t) {
+      openBucket.push(...list);
+      archive[archive.length - 1] = collapse(openBucket, t);
+    } else if (!newest || t > newest.t) {
+      openBucket = [...list];
+      openBucketAt = t;
+      archive.push(collapse(openBucket, t));
+    }
+    // An older minute (the clock stepped back) is left out; the store keeps the rows.
+  }
   if (archive.length > ARCHIVE_CAPACITY) archive.splice(0, archive.length - ARCHIVE_CAPACITY);
 }
 
@@ -246,6 +271,8 @@ export function record(input: RecordInput): void {
       raw.length = 0;
       archive.length = 0;
       lastArchivedAt = 0;
+      openBucket = [];
+      openBucketAt = -1;
       // The in-memory window restarts so the chart draws a gap instead of a
       // cliff, but the stored history is NOT wiped: those rows are real
       // measurements and a process restart must not delete them.
@@ -406,6 +433,8 @@ export function clearHistory(): void {
   raw.length = 0;
   archive.length = 0;
   lastArchivedAt = 0;
+  openBucket = [];
+  openBucketAt = -1;
   wipeStore();
 }
 
@@ -445,6 +474,12 @@ export function rehydrate(): number {
   const minuteRows = bucketBy(older, ARCHIVE_BUCKET_MS, since);
   archive.push(...minuteRows);
   if (archive.length > ARCHIVE_CAPACITY) archive.splice(0, archive.length - ARCHIVE_CAPACITY);
+  // The newest minute is usually still running: the next roll adds to it.
+  const newest = archive[archive.length - 1];
+  if (newest) {
+    openBucketAt = newest.t;
+    openBucket = older.filter((s) => Math.floor(s.t / ARCHIVE_BUCKET_MS) * ARCHIVE_BUCKET_MS === newest.t);
+  }
 
   // The newest row is already current, so rollArchive would refuse to run until
   // the next interval. Seeding lastArchivedAt from the newest stored row keeps

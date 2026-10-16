@@ -9,7 +9,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { csrfValid, WS_PROTOCOL, wsToken } from './csrf.js';
 import { isValid, onSessionEnd, peerAddress, sessionHash, userOf } from './session.js';
 import { TMUX_RE } from './tmux.js';
-import { HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, writeKnownHosts } from './sshLocal.js';
+import { DATA_DIR, HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, writeKnownHosts } from './sshLocal.js';
 
 /**
  * Browser terminal: WebSocket <-> node-pty.
@@ -40,7 +40,9 @@ import { HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, wri
  * the recent output replayed. Only the login that started a shell can attach it.
  * Login shells in ssh mode go further: they run inside dtach (see
  * PERSIST_DETACH_MS), so they also survive a restart of this process; after
- * one, any admin holding the shell's id can reattach it (no replay then).
+ * one, the login that started the shell reattaches it (no replay then). Who
+ * that is lives in data/terminal-owners.json, since the shell objects do not
+ * survive the restart.
  *
  * Wire format: output goes out as binary frames of raw UTF-8 (no JSON escaping,
  * no base64), control messages as JSON text frames. Input comes in as binary
@@ -155,6 +157,8 @@ const shells = new Map<string, Shell>();
 
 onSessionEnd((hash) => {
   for (const s of [...shells.values()]) if (s.login === hash) kill(s, 'logged out', 4401);
+  // Its shells from before a restart, not picked up yet, go too.
+  for (const sid of [...orphans.keys()]) if (owners.get(sid) === hash) endOrphan(sid);
 });
 
 type Out =
@@ -261,8 +265,55 @@ function endSession(sid: string): void {
   child.on('error', () => undefined);
 }
 
+/**
+ * The login (session hash) that started each dtach shell. After a restart it
+ * decides who may pick an orphan up: every terminal user used to be offered,
+ * and a new tab adopted, everyone else's shells. Shells from before this file
+ * existed have no entry and stay open to any terminal user.
+ */
+const OWNERS_FILE = `${DATA_DIR}/terminal-owners.json`;
+const owners = new Map<string, string>(loadOwners());
+
+function loadOwners(): [string, string][] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(OWNERS_FILE, 'utf8')) as unknown;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((e): e is [string, string] => Array.isArray(e) && typeof e[0] === 'string' && SID_RE.test(e[0]) && typeof e[1] === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function setOwner(sid: string, login: string | null): void {
+  if (login === null) {
+    if (!owners.delete(sid)) return;
+  } else {
+    if (owners.get(sid) === login) return;
+    owners.set(sid, login);
+  }
+  try {
+    const tmp = `${OWNERS_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify([...owners]), { mode: 0o600 });
+    fs.renameSync(tmp, OWNERS_FILE);
+  } catch (err) {
+    console.warn('[terminal] could not save shell owners:', err instanceof Error ? err.message : err);
+  }
+}
+
+function mayAdopt(sid: string, login: string): boolean {
+  const owner = owners.get(sid);
+  return owner === undefined || owner === login;
+}
+
 /** Sessions found at start with no shell object yet: ended unless someone reattaches in time. */
 const orphans = new Map<string, NodeJS.Timeout>();
+
+function endOrphan(sid: string): void {
+  clearTimeout(orphans.get(sid));
+  orphans.delete(sid);
+  endSession(sid);
+  setOwner(sid, null);
+}
 
 function adoptOrphans(): void {
   let names: string[];
@@ -272,16 +323,22 @@ function adoptOrphans(): void {
     return;
   }
   for (const sid of names) {
-    if (!SID_RE.test(sid) || shells.has(sid) || orphans.has(sid) || !hasSocket(sid)) continue;
-    const t = setTimeout(() => {
-      orphans.delete(sid);
-      console.log(`[terminal] end orphan ${sid.slice(0, 8)}: detached too long`);
-      endSession(sid);
-    }, PERSIST_DETACH_MS);
-    t.unref();
-    orphans.set(sid, t);
+    if (SID_RE.test(sid) && !shells.has(sid) && hasSocket(sid)) addOrphan(sid);
   }
+  // Shells that ended while this process was down.
+  for (const sid of [...owners.keys()]) if (!orphans.has(sid) && !shells.has(sid)) setOwner(sid, null);
   if (orphans.size > 0) console.log(`[terminal] ${orphans.size} persistent shell(s) waiting to be reattached`);
+}
+
+/** Starts the clock on a dtach session that has no shell object: ended unless someone reattaches in time. */
+function addOrphan(sid: string): void {
+  if (orphans.has(sid)) return;
+  const t = setTimeout(() => {
+    console.log(`[terminal] end orphan ${sid.slice(0, 8)}: detached too long`);
+    endOrphan(sid);
+  }, PERSIST_DETACH_MS);
+  t.unref();
+  orphans.set(sid, t);
 }
 
 adoptOrphans();
@@ -403,6 +460,7 @@ function touch(s: Shell): void {
 function kill(s: Shell, reason: string, code = 1000): void {
   if (!shells.delete(s.id)) return;
   if (s.persist && !s.exited) endSession(s.id);
+  if (s.persist) setOwner(s.id, null);
   if (s.idle) clearTimeout(s.idle);
   if (s.detach) clearTimeout(s.detach);
   cancelFlush(s);
@@ -416,6 +474,17 @@ function kill(s: Shell, reason: string, code = 1000): void {
     }
   }
   if (s.ws && s.ws.readyState === s.ws.OPEN) s.ws.close(code, reason);
+  s.ws = null;
+}
+
+/** A dtach shell whose ssh link died: it becomes an orphan its owner picks up again by id. */
+function linkLost(s: Shell): void {
+  if (!shells.delete(s.id)) return;
+  if (s.idle) clearTimeout(s.idle);
+  if (s.detach) clearTimeout(s.detach);
+  addOrphan(s.id);
+  console.log(`[terminal] link to ${s.id.slice(0, 8)} lost; the shell runs on in dtach (${shells.size} left)`);
+  if (s.ws && s.ws.readyState === s.ws.OPEN) s.ws.close(1012, 'link lost, reattach');
   s.ws = null;
 }
 
@@ -449,6 +518,7 @@ function create(login: string, cols: number, rows: number, target: Target | null
     exited: false,
   };
   shells.set(s.id, s);
+  if (persist) setOwner(id, login);
   touch(s);
   p.onData((d) => {
     remember(s, d);
@@ -459,6 +529,14 @@ function create(login: string, cols: number, rows: number, target: Target | null
     s.exited = true;
     cancelFlush(s);
     flush(s);
+    // Only the ssh link died, and the shell lives on in dtach: on a restart of
+    // this service systemd stops the ssh client together with it. Told "exited",
+    // the browser dropped the shell's id and started a new one, and the owner
+    // entry went too. Now the browser reconnects and reattaches it.
+    if (s.persist && hasSocket(s.id)) {
+      linkLost(s);
+      return;
+    }
     emit(s, { t: 'exit', code: exitCode, signal });
     kill(s, `shell exited ${exitCode}`);
   });
@@ -487,8 +565,17 @@ export interface DetachedShell {
 export function detachedShells(login: string): DetachedShell[] {
   const out: DetachedShell[] = [];
   for (const s of shells.values()) if (s.login === login && !s.ws && !s.exited) out.push({ sid: s.id, started: s.started, target: s.target, tmux: s.tmux });
-  for (const sid of orphans.keys()) if (hasSocket(sid)) out.push({ sid, started: null, target: null, tmux: null });
+  for (const sid of orphans.keys()) if (hasSocket(sid) && mayAdopt(sid, login)) out.push({ sid, started: null, target: null, tmux: null });
   return out.sort((a, b) => (a.started ?? 0) - (b.started ?? 0));
+}
+
+/**
+ * Closes every terminal socket, for shutdown, with 1012 (service restart): the
+ * browser reconnects on its own. Shells are not killed: login shells live on in
+ * dtach and are reattached after the restart.
+ */
+export function closeTerminals(): void {
+  for (const ws of wss.clients) ws.close(1012, 'server restarting');
 }
 
 /** Call from server.on('upgrade'). Leaves other upgrade paths untouched. */
@@ -513,7 +600,7 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
   const existing = sid ? shells.get(sid) : undefined;
   const resumable = existing && existing.login === login ? existing : undefined;
   // A dtach session with no shell object (this process restarted): reattach it by its id.
-  const orphan = !existing && sid && SID_RE.test(sid) && hasSocket(sid) ? sid : null;
+  const orphan = !existing && sid && SID_RE.test(sid) && hasSocket(sid) && mayAdopt(sid, login) ? sid : null;
   if (!resumable && shells.size >= MAX_SESSIONS) return deny('429 Too Many Requests', 'too many terminal windows');
   const cols = clampSize(url.searchParams.get('cols'), 1, 500, 80);
   const rows = clampSize(url.searchParams.get('rows'), 1, 200, 24);

@@ -1,6 +1,6 @@
 import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { can, isHiddenContainer, type HistorySample, type Service } from './shared/contract';
+import { can, isHiddenContainer, UNIT_SERVICES, type HistorySample, type Service } from './shared/contract';
 import { useNow } from './hooks/useNow';
 import { useStats } from './hooks/useStats';
 import { useHistory } from './hooks/useHistory';
@@ -404,7 +404,9 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                   {canAct && (
                   <div className={canLogs ? 'span-5' : 'span-12'}>
                     <ActionsPanel
-                      systemdTargets={(data?.services ?? []).map((svc) => ({ id: svc.id, running: svc.status.online }))}
+                      systemdTargets={(data?.services ?? [])
+                        .filter((svc) => UNIT_SERVICES.has(svc.id))
+                        .map((svc) => ({ id: svc.id, running: svc.status.online }))}
                       dockerTargets={(system?.docker ?? [])
                         .filter((c) => !isHiddenContainer(c.name))
                         .map((c) => ({ id: c.id, name: c.name, running: c.state === 'running' }))}

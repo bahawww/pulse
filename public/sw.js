@@ -7,6 +7,15 @@
  * instead of a blank screen. */
 const CACHE = 'pulse-v16';
 const OFFLINE = '/offline.html';
+/** Every deploy adds fresh fingerprinted files; past this many, the oldest go. */
+const MAX_ASSETS = 60;
+
+function trim(cache) {
+  return cache.keys().then((keys) => {
+    const assets = keys.filter((k) => new URL(k.url).pathname.startsWith('/assets/'));
+    return Promise.all(assets.slice(0, Math.max(0, assets.length - MAX_ASSETS)).map((k) => cache.delete(k)));
+  });
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -46,7 +55,7 @@ self.addEventListener('fetch', (event) => {
           fetch(request).then((res) => {
             if (res.ok) {
               const copy = res.clone();
-              void caches.open(CACHE).then((cache) => cache.put(request, copy));
+              void caches.open(CACHE).then((cache) => cache.put(request, copy).then(() => trim(cache)));
             }
             return res;
           }),

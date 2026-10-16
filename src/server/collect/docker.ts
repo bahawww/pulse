@@ -141,7 +141,9 @@ export async function collectDocker(limit = 24): Promise<DockerContainer[]> {
 
   return list.slice(0, limit).map((c) => {
     const stats = statsFor.get(c.Id);
-    const name = (c.Names?.[0] ?? c.Id).replace(/^\//, '').slice(0, 28);
+    // The full name: it is also the target of service actions (actions.ts), and
+    // a shortened one names no container. The UI cuts long names with CSS.
+    const name = (c.Names?.[0] ?? c.Id).replace(/^\//, '');
     const health = /\(healthy\)/.test(c.Status ?? '')
       ? 'healthy'
       : /\(unhealthy\)/.test(c.Status ?? '')

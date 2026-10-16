@@ -24,7 +24,7 @@ import type { SessionUser } from './session.js';
  * a new role or permission list applies at once.
  */
 
-type EndSessions = (userId: number) => number;
+type EndSessions = (userId: number, keep?: string) => number;
 
 function actor(res: Response): Actor {
   return res.locals.actor as Actor;
@@ -103,7 +103,8 @@ export function registerUserRoutes(app: Express, limiter: RequestHandler, endSes
       const body = req.body as { username?: unknown; password?: unknown; role?: unknown; permissions?: unknown };
       if (!validUsername(body.username)) throw new UserError('username: 2-64 chars, a-z 0-9 . _ - , starting with a letter or digit');
       if (!isRole(body.role)) throw new UserError('role must be viewer, operator or admin');
-      const problem = passwordProblem(body.password);
+      // The superadmin may give a new account any password; an admin keeps to the rule.
+      const problem = passwordProblem(body.password, actor(res).role !== 'superadmin');
       if (problem) throw new UserError(problem);
       const user = await createUser(actor(res), body.username, body.password as string, body.role, permissionList(body.permissions) ?? null);
       res.status(201).json({ user });
@@ -148,11 +149,12 @@ export function registerUserRoutes(app: Express, limiter: RequestHandler, endSes
     wrap('password', async (req, res) => {
       const id = idParam(req);
       const password = (req.body as { password?: unknown }).password;
-      const problem = passwordProblem(password);
+      // Free for the superadmin setting someone else's; their own keeps to the rule.
+      const problem = passwordProblem(password, id === actor(res).id || actor(res).role !== 'superadmin');
       if (problem) throw new UserError(problem);
       const user = await setPassword(actor(res), id, password as string);
-      // The superadmin's own reset keeps this session; everyone else is logged out.
-      if (id !== actor(res).id) endSessions(id);
+      // Everyone with that account is logged out, except the superadmin's own current session.
+      endSessions(id, id === actor(res).id ? (res.locals.sessionHash as string | undefined) : undefined);
       res.json({ ok: true });
       return user.username;
     }),
@@ -179,9 +181,11 @@ export function registerUserRoutes(app: Express, limiter: RequestHandler, endSes
       if (a.id === null) throw new UserError('the break-glass login has no account to change', 400);
       const body = req.body as { current?: unknown; next?: unknown };
       if (typeof body.current !== 'string') throw new UserError('current password required');
-      const problem = passwordProblem(body.next);
+      const problem = passwordProblem(body.next, true);
       if (problem) throw new UserError(problem);
       await changeOwnPassword(a.id, body.current, body.next as string);
+      // A new password is what you set after a leak: other devices log in again.
+      endSessions(a.id, res.locals.sessionHash as string | undefined);
       res.json({ ok: true });
       return `#${a.id}`;
     }),

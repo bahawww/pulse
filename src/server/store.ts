@@ -309,21 +309,23 @@ export function load(since: number, until: number, limit = 5000): HistorySample[
   let slice = rows;
   if (rows.length > limit) slice = rows.slice(rows.length - limit);
 
-  return slice.map((r) => ({
-    t: r.t,
-    cpu: r.cpu,
-    ram: r.ram,
-    disk: r.disk,
-    netRx: r.net_rx,
-    netTx: r.net_tx,
-    ...(parseJson<Record<string, number>>(r.latency) ? { latency: parseJson<Record<string, number>>(r.latency)! } : {}),
-    ...(parseJson<Record<string, ContainerSample>>(r.containers)
-      ? { containers: parseJson<Record<string, ContainerSample>>(r.containers)! }
-      : {}),
-    ...(parseJson<Record<string, ProcessSample>>(r.processes)
-      ? { processes: parseJson<Record<string, ProcessSample>>(r.processes)! }
-      : {}),
-  }));
+  // Each JSON column is parsed once: a 24h read is ~17,000 rows.
+  return slice.map((r) => {
+    const latency = parseJson<Record<string, number>>(r.latency);
+    const containers = parseJson<Record<string, ContainerSample>>(r.containers);
+    const processes = parseJson<Record<string, ProcessSample>>(r.processes);
+    return {
+      t: r.t,
+      cpu: r.cpu,
+      ram: r.ram,
+      disk: r.disk,
+      netRx: r.net_rx,
+      netTx: r.net_tx,
+      ...(latency ? { latency } : {}),
+      ...(containers ? { containers } : {}),
+      ...(processes ? { processes } : {}),
+    };
+  });
 }
 
 /** Oldest stored timestamp, or null when the store is empty or closed. */

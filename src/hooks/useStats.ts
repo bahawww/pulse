@@ -82,10 +82,15 @@ export function useStats() {
       };
     }
 
+    // This run's own flag. `aborted` is shared and the next run sets it false
+    // again, so a poll still in flight when the stream came back used to see
+    // false after its await and keep a second polling loop going for good.
+    let stopped = false;
     const schedule = (delay: number) => {
       timer.current = setTimeout(async () => {
-        if (aborted.current) return;
+        if (stopped) return;
         await fetchOnce();
+        if (stopped) return;
         // Exponential backoff capped at 30s: 5s, 10s, 20s, 30s, 30s...
         const backoff = failureCount.current === 0 ? POLL_INTERVAL_MS : Math.min(5000 * 2 ** failureCount.current, 30000);
         schedule(backoff);
@@ -93,7 +98,7 @@ export function useStats() {
     };
 
     const onVisibility = () => {
-      if (document.visibilityState === 'visible' && !aborted.current) {
+      if (document.visibilityState === 'visible' && !stopped) {
         if (timer.current) clearTimeout(timer.current);
         void fetchOnce();
         schedule(POLL_INTERVAL_MS);
@@ -105,6 +110,7 @@ export function useStats() {
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
+      stopped = true;
       aborted.current = true;
       if (timer.current) clearTimeout(timer.current);
       document.removeEventListener('visibilitychange', onVisibility);

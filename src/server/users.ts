@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import {
   effectivePermissions,
   isPermission,
+  PASSWORD_MIN,
   ROLE_RANK,
   roleCeiling,
   type AssignableRole,
@@ -26,6 +27,8 @@ import { getPool } from './db.js';
  *  - an admin with `users:manage`: only viewers and operators (role up to
  *    operator, permissions, disabled, delete). Not usernames or passwords.
  *  - everyone: their own password, with the current one.
+ * Passwords: at least PASSWORD_MIN characters, except one the superadmin sets
+ * for someone else (a reset, or a new account), which may be anything non-empty.
  * Nobody changes their own role, permissions or status, and the last enabled
  * admin-or-above is never removed. ensureSuperadmin keeps exactly one
  * superadmin, re-created from the env account if it goes missing.
@@ -80,9 +83,10 @@ export function validUsername(v: unknown): v is string {
   return typeof v === 'string' && USERNAME_RE.test(v);
 }
 
-/** Any non-empty password is accepted: no length or character rules (owner's choice). */
-export function passwordProblem(v: unknown): string | null {
+/** Never empty. `strict` adds the length rule (see the top of this file); no other rules (owner's choice). */
+export function passwordProblem(v: unknown, strict: boolean): string | null {
   if (typeof v !== 'string' || v.length === 0) return 'password required';
+  if (strict && [...v].length < PASSWORD_MIN) return `password must be at least ${PASSWORD_MIN} characters`;
   return null;
 }
 
@@ -194,10 +198,18 @@ function mayAssign(a: Actor, role: AssignableRole): void {
   if (!isSuper(a) && ROLE_RANK[role] >= ROLE_RANK.admin) throw new UserError('only the superadmin can make admins', 403);
 }
 
-/** Keeps a requested list to known keys within the role's ceiling. */
-function cleanPermissions(role: Role, wanted: readonly unknown[]): Permission[] {
-  const ceiling = new Set<string>(roleCeiling(role));
-  return wanted.filter((p): p is Permission => isPermission(p) && ceiling.has(p));
+/**
+ * The permission list to store (null = the role's defaults): known keys within
+ * the role's ceiling. Anyone but the superadmin hands out only what they hold
+ * themselves; a permission they lack keeps its state in `current` (empty for a
+ * new user). Otherwise an admin without, say, service control could create an
+ * operator who has it, and log in as that operator.
+ */
+function permissionsToStore(a: Actor, role: Role, wanted: readonly unknown[] | null, current: readonly Permission[]): string | null {
+  const ceiling = roleCeiling(role);
+  const want = new Set<unknown>((wanted ?? ceiling).filter(isPermission));
+  const list = ceiling.filter((p) => (isSuper(a) || a.permissions.includes(p) ? want.has(p) : current.includes(p)));
+  return wanted === null && list.length === ceiling.length ? null : JSON.stringify(list);
 }
 
 // ------------------------------------------------------------------ changes
@@ -205,7 +217,7 @@ function cleanPermissions(role: Role, wanted: readonly unknown[]): Permission[] 
 export async function createUser(a: Actor, username: string, password: string, role: AssignableRole, permissions: readonly unknown[] | null): Promise<UserRow> {
   mayManageUsers(a);
   mayAssign(a, role);
-  const perms = permissions === null ? null : JSON.stringify(cleanPermissions(role, permissions));
+  const perms = permissionsToStore(a, role, permissions, []);
   const hash = await hashPassword(password);
   try {
     const [res] = await db().query<ResultSetHeader>('INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)', [username, hash, role, perms]);
@@ -236,8 +248,8 @@ export async function updateUser(a: Actor, id: number, change: UserChange): Prom
   const disabled = change.disabled ?? target.disabled;
   // A role change without a new list resets to the new role's defaults: the old list was for another ceiling.
   let perms: string | null | undefined;
-  if (change.permissions !== undefined) perms = change.permissions === null ? null : JSON.stringify(cleanPermissions(role, change.permissions));
-  else if (change.role !== undefined && change.role !== target.role) perms = null;
+  if (change.permissions !== undefined) perms = permissionsToStore(a, role, change.permissions, target.permissions);
+  else if (change.role !== undefined && change.role !== target.role) perms = permissionsToStore(a, role, null, target.permissions);
   if (perms === undefined) await db().query('UPDATE users SET role = ?, disabled = ? WHERE id = ?', [role, disabled ? 1 : 0, id]);
   else await db().query('UPDATE users SET role = ?, disabled = ?, permissions = ? WHERE id = ?', [role, disabled ? 1 : 0, perms, id]);
   return (await getUser(id))!;

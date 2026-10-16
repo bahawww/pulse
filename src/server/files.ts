@@ -363,7 +363,8 @@ async function upload(req: Request, res: Response): Promise<void> {
   const cmd =
     `${check}; t=$(mktemp ${shq(`${dir}/.upload.XXXXXX`)}) || exit 1; trap 'rm -f "$t"' EXIT HUP INT TERM; ` +
     `cat > "$t"; n=$(wc -c < "$t"); [ "$n" -eq ${length} ] || { echo 'upload incomplete' >&2; exit ${EXIT_INCOMPLETE}; }; ` +
-    `chmod "$(printf %o $((0666 & ~0$(umask))))" "$t" && mv -f -- "$t" ${qt}`;
+    // -T: a folder with the file's name is an error, not a place to move the temp file into.
+    `chmod "$(printf %o $((0666 & ~0$(umask))))" "$t" && mv -fT -- "$t" ${qt}`;
   const child = spawnRemote(cmd);
   if (typeof child === 'string') {
     req.resume();

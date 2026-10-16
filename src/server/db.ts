@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import mysql, { type Pool } from 'mysql2/promise';
+import mysql, { type Connection, type Pool, type PoolOptions } from 'mysql2/promise';
 
 /**
  * MySQL connection for the user store (stack in /opt/pulse-db, loopback only).
@@ -26,20 +26,22 @@ export function dbConfigured(): boolean {
   return Boolean(process.env.DB_PASSWORD);
 }
 
-export function getPool(): Pool | null {
-  if (pool || !dbConfigured()) return pool;
-  pool = mysql.createPool({
+function settings(): PoolOptions {
+  return {
     host: process.env.DB_HOST ?? '127.0.0.1',
     port: Number(process.env.DB_PORT ?? 3306),
     database: process.env.DB_NAME ?? 'pulse',
     user: process.env.DB_USER ?? 'pulse',
     password: process.env.DB_PASSWORD,
-    connectionLimit: 5,
     connectTimeout: 3000,
     // DATETIME/TIMESTAMP come back as Date; the API sends epoch ms.
     dateStrings: false,
-    multipleStatements: true,
-  });
+  };
+}
+
+export function getPool(): Pool | null {
+  if (pool || !dbConfigured()) return pool;
+  pool = mysql.createPool({ ...settings(), connectionLimit: 5 });
   return pool;
 }
 
@@ -53,20 +55,26 @@ export function dbError(): string | null {
 }
 
 export async function migrate(): Promise<boolean> {
-  const p = getPool();
-  if (!p) {
+  if (!dbConfigured()) {
     lastError = 'DB_PASSWORD not set';
     return false;
   }
+  let conn: Connection | null = null;
   try {
+    // A migration file holds several statements. Only this one-off connection
+    // allows that: on the shared pool it would also let an injected "; DROP ..."
+    // ride along with any query.
+    conn = await mysql.createConnection({ ...settings(), multipleStatements: true });
     const files = fs.readdirSync(SQL_DIR).filter((f) => f.endsWith('.sql')).sort();
-    for (const file of files) await p.query(fs.readFileSync(path.join(SQL_DIR, file), 'utf8'));
+    for (const file of files) await conn.query(fs.readFileSync(path.join(SQL_DIR, file), 'utf8'));
     ready = true;
     lastError = null;
     return true;
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
     return false;
+  } finally {
+    await conn?.end().catch(() => undefined);
   }
 }
 

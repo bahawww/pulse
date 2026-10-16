@@ -240,10 +240,11 @@ export function evaluate(
       const breach = active.get(k);
 
       if (!breach) {
-        // Not yet breaching. Clear hysteresis: the value must come back below
-        // (limit - margin) before a new episode can start, so a value sitting
-        // exactly on the limit cannot oscillate.
-        if (c.value < c.threshold - CLEAR_MARGIN) continue;
+        // Not yet breaching: an episode starts at the limit. The margin only
+        // applies to clearing (below), which is what keeps a value sitting on
+        // the line from oscillating. Starting at (limit - margin) fired
+        // "CPU at 76% (limit 80%)".
+        if (c.value < c.threshold) continue;
         active.set(k, { metric: c.metric, since: now, count: 1, lastValue: c.value, lastThreshold: c.threshold });
         const breach = active.get(k);
         if (breach) breach.count = 1;

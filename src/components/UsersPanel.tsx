@@ -1,5 +1,6 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  PASSWORD_MIN,
   PERMISSIONS,
   ROLE_RANK,
   roleCeiling,
@@ -99,7 +100,10 @@ export function UsersPanel({ me, onNotify }: UsersPanelProps): JSX.Element {
 
   const edit = (u: UserRow) =>
     setDraft({ id: u.id, username: u.username, password: '', role: u.role, disabled: u.disabled, permissions: new Set(u.permissions) });
-  const create = () => setDraft({ id: null, username: '', password: '', role: 'viewer', disabled: false, permissions: new Set(roleCeiling('viewer')) });
+  /** What I may hand out; null = anything (the superadmin). Same rule as the server. */
+  const mine = useMemo(() => (isSuper ? null : new Set<Permission>(me.permissions)), [isSuper, me.permissions]);
+  const create = () =>
+    setDraft({ id: null, username: '', password: '', role: 'viewer', disabled: false, permissions: new Set(roleCeiling('viewer').filter((p) => !mine || mine.has(p))) });
 
   const original = draft?.id != null ? (users?.find((u) => u.id === draft.id) ?? null) : null;
 
@@ -246,6 +250,8 @@ export function UsersPanel({ me, onNotify }: UsersPanelProps): JSX.Element {
           draft={draft}
           original={original}
           isSuper={isSuper}
+          mine={mine}
+          passwordMin={!isSuper || (draft.id !== null && draft.id === me.id) ? PASSWORD_MIN : undefined}
           canManage={draft.id === null || (original !== null && mayManage(original))}
           assignable={assignable}
           busy={busy}
@@ -276,6 +282,10 @@ interface EditorProps {
   readonly draft: Draft;
   readonly original: UserRow | null;
   readonly isSuper: boolean;
+  /** The permissions I may grant or take away; null = all of them. Others stay as they are. */
+  readonly mine: ReadonlySet<Permission> | null;
+  /** Length rule for the password typed here; undefined when the superadmin sets someone else's (free). */
+  readonly passwordMin: number | undefined;
   /** Role, status and permissions can be changed (or this is a new user). */
   readonly canManage: boolean;
   readonly assignable: readonly AssignableRole[];
@@ -286,9 +296,10 @@ interface EditorProps {
   readonly onDelete?: () => void;
 }
 
-function Editor({ draft, original, isSuper, canManage, assignable, busy, onChange, onSave, onCancel, onDelete }: EditorProps): JSX.Element {
+function Editor({ draft, original, isSuper, mine, passwordMin, canManage, assignable, busy, onChange, onSave, onCancel, onDelete }: EditorProps): JSX.Element {
   const creating = draft.id === null;
   const ceiling = useMemo(() => new Set<Permission>(roleCeiling(draft.role)), [draft.role]);
+  const held = (p: Permission) => !mine || mine.has(p);
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
   const toggle = (p: Permission) => {
     const next = new Set(draft.permissions);
@@ -296,8 +307,11 @@ function Editor({ draft, original, isSuper, canManage, assignable, busy, onChang
     else next.add(p);
     set({ permissions: next });
   };
+  /** `pick` for what I hold; the rest keeps its current state (the server does the same). */
+  const choose = (role: Role, pick: (p: Permission) => boolean) =>
+    new Set(roleCeiling(role).filter((p) => (held(p) ? pick(p) : draft.permissions.has(p))));
   // A new role starts from its defaults, like the server does.
-  const changeRole = (role: Role) => set({ role, permissions: new Set(roleCeiling(role)) });
+  const changeRole = (role: Role) => set({ role, permissions: choose(role, () => true) });
   const lockedPerms = !canManage || draft.role === 'superadmin';
   const granted = [...draft.permissions].filter((p) => ceiling.has(p)).length;
 
@@ -330,8 +344,9 @@ function Editor({ draft, original, isSuper, canManage, assignable, busy, onChang
             value={draft.password}
             onChange={(e) => set({ password: e.currentTarget.value })}
             required={creating}
+            minLength={passwordMin}
             autoComplete="new-password"
-            placeholder={creating ? '' : isSuper ? 'leave blank to keep' : 'superadmin only'}
+            placeholder={creating ? (passwordMin ? `min ${passwordMin} characters` : '') : isSuper ? 'leave blank to keep' : 'superadmin only'}
             disabled={!creating && !isSuper}
           />
         </label>
@@ -363,10 +378,10 @@ function Editor({ draft, original, isSuper, canManage, assignable, busy, onChang
           </span>
           {!lockedPerms && (
             <span className="tw:flex tw:gap-2">
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: new Set(ceiling) })}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: choose(draft.role, () => true) })}>
                 All
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: new Set() })}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: choose(draft.role, () => false) })}>
                 None
               </button>
             </span>
@@ -378,13 +393,14 @@ function Editor({ draft, original, isSuper, canManage, assignable, busy, onChang
             <span className="tw:text-[12px] tw:font-semibold tw:text-fg-2">{g}</span>
             {PERMISSIONS.filter((p) => p.group === g).map((p) => {
               const allowed = ceiling.has(p.key);
+              const mayChange = allowed && held(p.key);
               return (
                 <label
                   key={p.key}
-                  className={`tw:flex tw:items-center tw:gap-2 tw:text-[13px] ${allowed ? 'tw:text-fg' : 'tw:text-fg-3'}`}
-                  title={allowed ? p.key : `Needs the ${p.min} role`}
+                  className={`tw:flex tw:items-center tw:gap-2 tw:text-[13px] ${mayChange ? 'tw:text-fg' : 'tw:text-fg-3'}`}
+                  title={!allowed ? `Needs the ${p.min} role` : mayChange ? p.key : 'You do not have this permission, so you cannot give or take it'}
                 >
-                  <input type="checkbox" checked={allowed && draft.permissions.has(p.key)} disabled={!allowed} onChange={() => toggle(p.key)} />
+                  <input type="checkbox" checked={allowed && draft.permissions.has(p.key)} disabled={!mayChange} onChange={() => toggle(p.key)} />
                   {p.label}
                   {!allowed && <span className="tw:text-[11px]">· {p.min}+</span>}
                 </label>

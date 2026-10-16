@@ -92,7 +92,8 @@ export function CommandPalette({
         id: `open-${svc.id}`,
         category: 'Open',
         title: svc.name,
-        description: usesSubdomain(svc, hostMode) ? url : `${svc.description.slice(0, 80)}… :${svc.port}`,
+        // The ellipsis only when something was cut ("on port 8088.… :8088" read as broken).
+        description: usesSubdomain(svc, hostMode) ? url : `${svc.description.length > 80 ? `${svc.description.slice(0, 80)}…` : svc.description} :${svc.port}`,
         hint: svc.status.online ? 'online' : 'offline',
         color: SERVICE_COLOR[svc.id],
         icon: <ServiceIconGlyph icon={svc.icon} size={16} />,

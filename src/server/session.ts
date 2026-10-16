@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
-import { roleCeiling, type Permission, type Role } from '../shared/contract.js';
+import { PASSWORD_MIN, roleCeiling, type Permission, type Role } from '../shared/contract.js';
 import { authenticate } from './users.js';
 
 /**
@@ -85,9 +85,9 @@ export function envAdminPassword(): string {
   return PASSWORD;
 }
 
-/** A password this short falls to an online guess run far sooner than the lockout suggests. */
-export function passwordWeak(): boolean {
-  return PASSWORD.length > 0 && PASSWORD.length < 12;
+/** Shorter than the rule every login's own password keeps to (PASSWORD_MIN). */
+export function passwordShort(): boolean {
+  return PASSWORD.length > 0 && [...PASSWORD].length < PASSWORD_MIN;
 }
 
 /** Both fields are always compared, so timing does not reveal which was wrong. */
@@ -182,11 +182,26 @@ export function userOf(hash: string): SessionUser | null {
   return rec ? { id: rec.userId, name: rec.user, role: rec.role, permissions: rec.permissions } : null;
 }
 
-/** Ends every session of one account: after a role change, disable, password reset or delete. */
-export function destroyUserSessions(userId: number): number {
+/** What each account's sessions were given at login, per account id. Break-glass logins have no account. */
+export function sessionAccounts(): Map<number, SessionUser[]> {
+  const out = new Map<number, SessionUser[]>();
+  for (const rec of sessions.values()) {
+    if (rec.userId === null) continue;
+    const list = out.get(rec.userId) ?? [];
+    list.push({ id: rec.userId, name: rec.user, role: rec.role, permissions: rec.permissions });
+    out.set(rec.userId, list);
+  }
+  return out;
+}
+
+/**
+ * Ends every session of one account: after a role change, disable, password
+ * reset or delete. `keep` spares one (the person changing their own password).
+ */
+export function destroyUserSessions(userId: number, keep?: string): number {
   let n = 0;
   for (const [hash, rec] of sessions) {
-    if (rec.userId === userId) {
+    if (rec.userId === userId && hash !== keep) {
       destroy(hash);
       n += 1;
     }
@@ -322,8 +337,12 @@ export function loginLocked(key: string): boolean {
 }
 
 export function loginFailed(key: string): void {
+  const now = Date.now();
+  // Entries are only cleared when the same client comes back; one guess from
+  // each of many addresses (IPv6 hands out plenty) would pile up for good.
+  if (fails.size > 10_000) for (const [k, f] of fails) if (now - f.since > FAIL_WINDOW_MS) fails.delete(k);
   const f = fails.get(key);
-  if (!f || Date.now() - f.since > FAIL_WINDOW_MS) fails.set(key, { n: 1, since: Date.now() });
+  if (!f || now - f.since > FAIL_WINDOW_MS) fails.set(key, { n: 1, since: now });
   else f.n += 1;
 }
 

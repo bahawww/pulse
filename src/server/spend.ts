@@ -80,8 +80,13 @@ async function openDatabase(): Promise<SqliteDatabase | { readonly error: string
     const scratchDir = process.env.DASHBOARD_DATA_DIR ?? path.join(process.cwd(), 'data');
     fs.mkdirSync(scratchDir, { recursive: true });
     const tmp = path.join(scratchDir, 'spend-scratch.sqlite');
+    removeScratch(tmp);
     fs.copyFileSync(DB_PATH, tmp);
-    const db = new sqlite.DatabaseSync(tmp, { readOnly: true });
+    // 9router runs in WAL mode: its newest rows sit in the -wal file until a
+    // checkpoint. Copied along, SQLite reads them; without it they were missing.
+    if (fs.existsSync(`${DB_PATH}-wal`)) fs.copyFileSync(`${DB_PATH}-wal`, `${tmp}-wal`);
+    // Not read-only: replaying the copied WAL needs a writable -shm. It is our own copy.
+    const db = new sqlite.DatabaseSync(tmp, {});
     return db;
   } catch (err) {
     return { error: `could not read 9router database: ${err instanceof Error ? err.message : 'unknown'}` };
@@ -217,20 +222,36 @@ async function buildReport(): Promise<SpendReport> {
     };
   } finally {
     db.close();
+    const scratchDir = process.env.DASHBOARD_DATA_DIR ?? path.join(process.cwd(), 'data');
+    removeScratch(path.join(scratchDir, 'spend-scratch.sqlite'));
+  }
+}
+
+/** The scratch copy and its WAL files. Disposable: a leftover is not worth failing a request over. */
+function removeScratch(file: string): void {
+  for (const f of [file, `${file}-wal`, `${file}-shm`]) {
     try {
-      const scratchDir = process.env.DASHBOARD_DATA_DIR ?? path.join(process.cwd(), 'data');
-      fs.unlinkSync(path.join(scratchDir, 'spend-scratch.sqlite'));
+      fs.rmSync(f, { force: true });
     } catch {
-      /* the copy is disposable; a leftover is not worth failing a request over */
+      /* left for the next build to try again */
     }
   }
 }
 
+/** One build at a time: two at once copied over, and deleted, each other's scratch file. */
+let building: Promise<SpendReport> | null = null;
+
 export async function getSpend(): Promise<SpendReport> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.report;
-  const report = await buildReport();
-  cache = { at: Date.now(), report };
-  return report;
+  building ??= buildReport()
+    .then((report) => {
+      cache = { at: Date.now(), report };
+      return report;
+    })
+    .finally(() => {
+      building = null;
+    });
+  return building;
 }
 
 export function spendSource(): string {

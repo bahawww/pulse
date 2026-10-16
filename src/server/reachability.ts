@@ -135,7 +135,7 @@ async function checkOne(target: ReachabilityTarget): Promise<ReachabilityResult>
       detail:
         localStatus === null
           ? 'local service not answering, and no external checker configured'
-          : `service answers locally (${localStatus}ms) but external reachability was NOT verified — set REACHABILITY_CHECKER_URL`,
+          : `service answers locally (HTTP ${localStatus}, ${localMs}ms) but external reachability was NOT verified — set REACHABILITY_CHECKER_URL`,
     };
   }
 

@@ -201,9 +201,13 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
     }
   }, [error, listing, open]);
 
+  // Reloads the folder on screen now. Bound to `dir` at render, an upload that
+  // finished after you moved on reloaded, and so went back to, its own folder.
+  const dirRef = useRef(dir);
+  dirRef.current = dir;
   const refresh = useCallback(() => {
-    if (dir) void open(dir);
-  }, [dir, open]);
+    if (dirRef.current) void open(dirRef.current);
+  }, [open]);
 
   // Preview the selected file: images straight from download, text via preview.
   useEffect(() => {

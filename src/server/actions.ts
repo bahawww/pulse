@@ -46,6 +46,7 @@ const CONTAINER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
  * System units are allowed by a polkit rule (see vault/access.md); without it a
  * service with no login session is refused with "Interactive authentication
  * required". An id missing here is treated as a system unit of the same name.
+ * Only ids in UNIT_SERVICES (shared/contract.ts) reach the allowlist.
  */
 interface Control {
   readonly scope: 'system' | 'user';
@@ -136,8 +137,10 @@ function run(
       [...args],
       { timeout: 20_000, maxBuffer: MAX_OUTPUT * 4, encoding: 'utf8', env: env ?? process.env },
       (err, stdout, stderr) => {
-        const code =
-          err && typeof (err as { code?: unknown }).code === 'number' ? ((err as { code: number }).code) : 0;
+        // A non-zero exit carries its number. A timeout, a missing binary
+        // (ENOENT) or an overflowing output carries no number but still failed:
+        // those used to read as exit 0, "succeeded".
+        const code = !err ? 0 : typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : -1;
         resolve({ stdout: (stdout || stderr || '').slice(0, MAX_OUTPUT), code });
       },
     );
@@ -233,7 +236,7 @@ export async function performAction(
   const ok = code === 0;
   const message = ok
     ? `${request.action} ${request.name} succeeded`
-    : `${request.action} ${request.name} failed (exit ${code})`;
+    : `${request.action} ${request.name} failed (${code === -1 ? 'timed out or could not run' : `exit ${code}`})`;
   const durationMs = Date.now() - started;
 
   // Only actions that ran reach the audit log. A refused or expired token changed

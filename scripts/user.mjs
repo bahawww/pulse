@@ -8,7 +8,8 @@
 //   node scripts/user.mjs passwd <name>                            (asks for the password)
 //
 // Reads DB_* from /opt/pulse/.env. The hash format must match src/server/users.ts.
-// Open sessions of a changed account end only when the server restarts.
+// Open sessions of a changed account end within 5 minutes (the server's
+// session check, src/server/index.ts syncSessions).
 
 import { randomBytes, scrypt as scryptCb } from 'node:crypto';
 import fs from 'node:fs';

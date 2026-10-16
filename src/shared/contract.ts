@@ -362,6 +362,13 @@ export type AssignableRole = Exclude<Role, 'superadmin'>;
 
 export const ROLE_RANK: Readonly<Record<Role, number>> = { viewer: 0, operator: 1, admin: 2, superadmin: 3 };
 
+/**
+ * Shortest password a person may pick for themselves, or an admin for a new
+ * account. The superadmin setting someone else's password is free of it
+ * (owner's choice). Enforced in src/server/users.ts, shown in the forms.
+ */
+export const PASSWORD_MIN = 8;
+
 export function roleAtLeast(role: Role, min: Role): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[min];
 }
@@ -612,6 +619,14 @@ export const SERVICES: readonly ServiceCategoryMeta[] = [
     themeClass: 'icon-theme-coolify',
   },
 ] as const;
+
+/**
+ * Curated services that run as systemd units, so service control can start,
+ * stop and restart them (src/server/actions.ts maps each id to its unit).
+ * Coolify and the scanned services run in Docker and are controlled as
+ * containers; offered as units they only failed with "unit not found".
+ */
+export const UNIT_SERVICES: ReadonlySet<string> = new Set(['hermes', '9router', 'opencode', 'novnc']);
 
 /** Services whose Cloudflare path differs from the local port path. */
 export const SUBDOMAIN_PATHS: Readonly<Record<string, string>> = {
