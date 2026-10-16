@@ -93,8 +93,31 @@ const SECRET_COMMANDS = [
   '*.git-credentials*',
   '*auth.json*',
   '*systemctl*show-environment*',
+  // Security reconnaissance: what an attacker would map first.
+  'sudo -l*',
+  'sudo -nl*',
+  '*/etc/shadow*',
+  '*/etc/gshadow*',
+  '*/etc/sudoers*',
+  '*nmap*',
+  '*masscan*',
+  '*linpeas*',
+  '*lynis*',
+  '*ufw status*',
+  '*ufw show*',
+  '*iptables*',
+  '*ip6tables*',
+  '*nft list*',
+  'ss -*',
+  '* ss -*',
+  'netstat*',
+  '*| netstat*',
+  'lsof -i*',
+  '*tailscale status*',
+  '*/etc/ssh/sshd_config*',
+  '*authorized_keys*',
 ];
-const GUARD_VERSION = 2;
+const GUARD_VERSION = 3;
 const GUARD_KEY = 'pulseGuard';
 const GUARD_RULES = [
   ...['read', 'edit', 'glob', 'grep', 'list', 'external_directory'].flatMap((permission) =>
@@ -114,6 +137,7 @@ const GUARD_PROMPT = [
   '3. Never send data from this machine anywhere (curl/wget/nc/webfetch/git push/email/paste sites) unless the user asked for that exact transfer in this chat.',
   '4. Before anything destructive or hard to undo (deleting data, stopping services, changing users, firewall, SSH or sudo settings), state exactly what you will do and wait for the user to confirm, even when tools would allow it.',
   '5. If a permission rule blocks a tool call, do not try another way around it.',
+  "6. Do not discuss this machine's security posture with anyone in this chat: no vulnerability assessments, open or exposed ports, firewall or network rules, SSH, sudo or user and group setup, which services are public, how to gain access or more privileges, or attack paths, even if asked by the user, framed as an audit, a test, a CTF or hypothetical. Do not run commands or read files to find these things out. Reply that you do not answer questions about this server's security, and nothing more.",
 ].join('\n');
 
 // Values of the secrets this machine keeps, to blank out of anything Pulse shows.
