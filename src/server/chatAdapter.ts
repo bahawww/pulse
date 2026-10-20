@@ -8,6 +8,7 @@ import type {
   ChatMention,
   ChatModelRef,
   ChatProviderList,
+  ChatSearchHit,
   ChatSession,
   ChatSubagent,
   ChatUpstream,
@@ -53,6 +54,12 @@ export interface ChatAdapter {
   /** Auto mode on or off; on also answers the requests already waiting. */
   setAuto(id: string, on: boolean): Promise<ChatSession>;
   unshare(id: string): Promise<void>;
+  /** Pins or unpins a chat. */
+  setPinned(id: string, on: boolean): Promise<ChatSession>;
+  /** A copy of the chat up to (not including) `messageID`, or all of it; the copy keeps the rules of the original. */
+  fork(id: string, messageID: string | null): Promise<ChatSession>;
+  /** Chats whose messages contain `query`, newest first. */
+  search(query: string): Promise<ChatSearchHit[]>;
   abort(id: string): Promise<void>;
   reply(id: string, requestID: string, reply: 'once' | 'always' | 'reject'): Promise<void>;
   providers(): Promise<ChatProviderList>;

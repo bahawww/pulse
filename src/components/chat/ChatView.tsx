@@ -1,18 +1,19 @@
 import { type FormEvent, type JSX, type KeyboardEvent, type ReactNode, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import '../../chat.css';
-import type { ChatFileHit, ChatMention, ChatMessage, ChatModelRef, ChatPermission, ChatProviderList, ChatSession, ChatTokens, ChatUpstream } from '../../shared/contract';
+import type { ChatFileHit, ChatMention, ChatMessage, ChatModelRef, ChatPermission, ChatProviderList, ChatSearchHit, ChatSession, ChatTokens, ChatUpstream } from '../../shared/contract';
 import { formatAgo, formatTokens, formatUsd } from '../../lib/format';
 import { prefersReducedMotion } from '../../lib/motion';
 import type { ChatSignal } from '../ChatFab';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { ArrowDownIcon, BellIcon, CheckIcon, ChatIcon, ChevronDownIcon, CopyIcon, FileIcon, ListIcon, MicIcon, MinimizeIcon, MoreIcon, PaperclipIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon, XIcon } from '../icons';
+import { ArrowDownIcon, BellIcon, CheckIcon, ChatIcon, ChevronDownIcon, CopyIcon, DownloadIcon, FileIcon, ForkIcon, ListIcon, MicIcon, MinimizeIcon, MoreIcon, PaperclipIcon, PencilIcon, PinIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon, XIcon } from '../icons';
 import type { AskRequest } from '../../lib/chatBus';
 import { ACCEPT, AttachError, BODY_CHARS, MAX_ATTACHMENTS, TOTAL_CHARS, type Attachment, prepareFile, sizeLabel } from './attach';
 import { copyText } from './clip';
 import { ContextMenu } from './ContextMenu';
 import { TEMPLATES, resolveAsk } from './context';
 import { loadDraft, saveDraft } from './drafts';
+import { downloadText, exportName, toMarkdown } from './exportMd';
 import { Markdown } from './Markdown';
 import { notifyEnabled, notifySupported, setNotifyEnabled, showAlert, vibrate } from './notify';
 import { type Dictation, startDictation, voiceSupported } from './voice';
@@ -48,9 +49,56 @@ interface ListProps {
   readonly onPick: () => void;
 }
 
-/** New chat, then one row per session. Rename and delete live in the open chat's menu. */
+type Origin = 'all' | 'pulse' | 'other';
+
+const GROUP_ORDER = ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Earlier'] as const;
+
+function groupOf(at: number, now: number): (typeof GROUP_ORDER)[number] {
+  const day = new Date(now).setHours(0, 0, 0, 0);
+  if (at >= day) return 'Today';
+  if (at >= day - 86_400_000) return 'Yesterday';
+  if (at >= day - 6 * 86_400_000) return 'Previous 7 days';
+  return 'Earlier';
+}
+
+/** New chat, a filter, then the chats grouped by day (pinned first). Enter in the filter searches inside the chats. */
 function SessionList({ chat, onPick }: ListProps): JSX.Element {
   const now = Date.now();
+  const [filter, setFilter] = useState('');
+  const [origin, setOrigin] = useState<Origin>('all');
+  const [found, setFound] = useState<{ q: string; hits: readonly ChatSearchHit[]; error: string } | null>(null);
+  const [searching, setSearching] = useState(false);
+  const needle = filter.trim().toLowerCase();
+
+  const groups = useMemo(() => {
+    const rows = (chat.sessions ?? []).filter(
+      (s) => (origin === 'all' || (origin === 'pulse') === s.fromPulse) && (!needle || s.title.toLowerCase().includes(needle)),
+    );
+    const by = new Map<string, ChatSession[]>();
+    for (const s of rows) {
+      const g = s.pinned ? 'Pinned' : groupOf(s.updatedAt, Date.now());
+      by.set(g, [...(by.get(g) ?? []), s]);
+    }
+    return GROUP_ORDER.filter((g) => by.has(g)).map((g) => [g, by.get(g)!] as const);
+  }, [chat.sessions, origin, needle]);
+
+  const runSearch = (e: FormEvent) => {
+    e.preventDefault();
+    const q = filter.trim();
+    if (q.length < 2 || searching) return;
+    setSearching(true);
+    chat
+      .search(q)
+      .then((hits) => setFound({ q, hits, error: '' }))
+      .catch((err: unknown) => setFound({ q, hits: [], error: err instanceof Error ? err.message : 'search failed' }))
+      .finally(() => setSearching(false));
+  };
+
+  const open = (id: string) => {
+    chat.open(id);
+    onPick();
+  };
+
   return (
     <>
       <button
@@ -64,31 +112,79 @@ function SessionList({ chat, onPick }: ListProps): JSX.Element {
         <PlusIcon size={15} />
         New chat
       </button>
-      <div className="chat-sessions" role="list">
-        {chat.sessions === null && <p className="chat-muted">{chat.upstream === 'up' || chat.upstream === 'loading' ? 'Loading…' : 'Chats show here once OpenCode is back.'}</p>}
-        {chat.sessions?.length === 0 && <p className="chat-muted">No chats yet.</p>}
-        {chat.sessions?.map((s) => (
-          <div key={s.id} role="listitem" className={`chat-session${s.id === chat.currentId ? ' is-current' : ''}`}>
-            <button
-              type="button"
-              className="chat-session-main"
-              aria-current={s.id === chat.currentId ? 'true' : undefined}
-              onClick={() => {
-                chat.open(s.id);
-                onPick();
-              }}
-            >
-              <span className="chat-session-title">
-                {s.busy && <span className="chat-busy-dot" aria-label="working" />}
-                {s.title || 'Untitled'}
-              </span>
-              <span className="chat-session-meta">
-                {formatAgo(now - s.updatedAt)}
-                {dirLabel(s.directory, chat.directory) && <span className="chat-dir">{dirLabel(s.directory, chat.directory)}</span>}
-              </span>
-            </button>
-          </div>
+      <form className="chat-search" onSubmit={runSearch} role="search">
+        <SearchIcon size={14} />
+        <input
+          value={filter}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            setFound(null);
+          }}
+          placeholder="Filter chats · Enter searches inside"
+          aria-label="Filter chats; press Enter to search inside them"
+          maxLength={100}
+        />
+      </form>
+      <div className="chat-chips" role="group" aria-label="Show chats">
+        {(
+          [
+            ['all', 'All', 'Every chat OpenCode has'],
+            ['pulse', 'Pulse', 'Chats made or used here'],
+            ['other', 'Other', "Chats only seen in OpenCode's own UI"],
+          ] as const
+        ).map(([id, label, hint]) => (
+          <button key={id} type="button" className="chat-chip" aria-pressed={origin === id} title={hint} onClick={() => setOrigin(id)}>
+            {label}
+          </button>
         ))}
+      </div>
+      <div className="chat-sessions" role="list">
+        {searching && <p className="chat-muted">Searching inside chats…</p>}
+        {found && !searching && (
+          <>
+            <div className="chat-group-title">
+              {found.error || `${found.hits.length} ${found.hits.length === 1 ? 'chat' : 'chats'} mention “${found.q}”`}
+              <button type="button" className="chat-link" onClick={() => setFound(null)}>
+                Back
+              </button>
+            </div>
+            {found.hits.map((h) => (
+              <div key={h.sessionID} role="listitem" className={`chat-session${h.sessionID === chat.currentId ? ' is-current' : ''}`}>
+                <button type="button" className="chat-session-main" onClick={() => open(h.sessionID)}>
+                  <span className="chat-session-title">{h.title || 'Untitled'}</span>
+                  <span className="chat-session-snippet">{h.snippet}</span>
+                </button>
+              </div>
+            ))}
+          </>
+        )}
+        {!found && !searching && (
+          <>
+            {chat.sessions === null && <p className="chat-muted">{chat.upstream === 'up' || chat.upstream === 'loading' ? 'Loading…' : 'Chats show here once OpenCode is back.'}</p>}
+            {chat.sessions?.length === 0 && <p className="chat-muted">No chats yet.</p>}
+            {chat.sessions && chat.sessions.length > 0 && groups.length === 0 && <p className="chat-muted">No chat matches.</p>}
+            {groups.map(([name, list]) => (
+              <div key={name} className="chat-group">
+                <div className="chat-group-title">{name}</div>
+                {list.map((s) => (
+                  <div key={s.id} role="listitem" className={`chat-session${s.id === chat.currentId ? ' is-current' : ''}`}>
+                    <button type="button" className="chat-session-main" aria-current={s.id === chat.currentId ? 'true' : undefined} onClick={() => open(s.id)}>
+                      <span className="chat-session-title">
+                        {s.busy && <span className="chat-busy-dot" aria-label="working" />}
+                        {s.pinned && <PinIcon size={11} className="chat-pin" />}
+                        {s.title || 'Untitled'}
+                      </span>
+                      <span className="chat-session-meta">
+                        {formatAgo(now - s.updatedAt)}
+                        {dirLabel(s.directory, chat.directory) && <span className="chat-dir">{dirLabel(s.directory, chat.directory)}</span>}
+                      </span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </>
   );
@@ -201,6 +297,8 @@ interface MessageActions {
   readonly copy: (m: ChatMessage) => void;
   readonly edit: (m: ChatMessage) => void;
   readonly retry: () => void;
+  /** Copy the chat up to here into a new one (a user message: up to just before it, its text ready to edit). */
+  readonly fork: (m: ChatMessage) => void;
 }
 
 /** The text of a message: what was typed, or what the agent wrote (not its thinking). */
@@ -227,7 +325,6 @@ function mentionsOf(m: ChatMessage): ChatMention[] {
 function MessageBar({ message, canEdit, canRetry, actions }: { readonly message: ChatMessage; readonly canEdit: boolean; readonly canRetry: boolean; readonly actions: MessageActions }): JSX.Element | null {
   const [copied, setCopied] = useState(false);
   const hasText = messageText(message).length > 0;
-  if (!hasText && !canRetry) return null;
   return (
     <div className="chat-actions">
       {hasText && (
@@ -261,6 +358,15 @@ function MessageBar({ message, canEdit, canRetry, actions }: { readonly message:
           <RefreshIcon size={13} />
         </button>
       )}
+      <button
+        type="button"
+        className="chat-act"
+        aria-label="Branch into a new chat"
+        title={message.role === 'user' ? 'New chat from before this message, its text ready to edit' : 'New chat with everything up to this reply'}
+        onClick={() => actions.fork(message)}
+      >
+        <ForkIcon size={13} />
+      </button>
     </div>
   );
 }
@@ -377,7 +483,7 @@ function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFi
   const undone = t ? t.messages.length - messages.length : 0;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const { undo, send } = chat;
+  const { undo, send, fork } = chat;
   const actions = useMemo<MessageActions>(
     () => ({
       copy: (m) => void copyText(messageText(m)).then((ok) => ok || onNotify('Could not copy')),
@@ -391,8 +497,17 @@ function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFi
         const mentions = mentionsOf(user);
         void undo(user.id).then((text) => (text ? send(text, mentions).catch(() => undefined) : undefined));
       },
+      fork: (m) => {
+        if (m.role === 'user') {
+          void fork(m.id).then((made) => made && onFill(messageText(m)));
+          return;
+        }
+        const list = messagesRef.current;
+        const after = list[list.findIndex((x) => x.id === m.id) + 1];
+        void fork(after?.id);
+      },
     }),
-    [undo, send, onFill, onNotify],
+    [undo, send, fork, onFill, onNotify],
   );
   const idle = !t?.busy && !chat.pending;
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');
@@ -609,13 +724,6 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
     });
   };
 
-  // Edit on a message: its text comes back into the box, the caret at the end.
-  const fillN = fill?.n;
-  useEffect(() => {
-    if (fill) put(fill.text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fillN]);
-
   /** Picked, pasted or dropped files: prepared one by one (shrunk, read), within the count and size budget. */
   const addFiles = async (picked: readonly File[]) => {
     if (picked.length === 0 || disabled) return;
@@ -743,6 +851,13 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
     window.addEventListener('pagehide', flush);
     return () => window.removeEventListener('pagehide', flush);
   }, []);
+
+  // Edit or Ask: the text comes back into the box, the caret at the end. After the draft switch above, so it wins when both happen at once.
+  const fillN = fill?.n;
+  useEffect(() => {
+    if (fill) put(fill.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fillN]);
 
   /** Adds a block of host data after what is typed (or alone), for the person to read before sending. */
   const insertBlock = (block: string) => {
@@ -1201,16 +1316,20 @@ function UsageButton({ usage, providers, open, setOpen }: { readonly usage: Usag
 }
 
 interface ChatMenuProps {
-  /** A chat is open: rename and delete apply. */
+  /** A chat is open: rename, pin, copy, export and delete apply. */
   readonly hasChat: boolean;
+  readonly pinned: boolean;
   readonly onRename: () => void;
+  readonly onPin: () => void;
+  readonly onFork: () => void;
+  readonly onExport: () => void;
   readonly onDelete: () => void;
   /** Alerts (notification, tab mark, vibration) while the chat is out of sight; absent where the browser has none. */
   readonly alerts?: { readonly on: boolean; readonly toggle: () => void };
 }
 
 /** One button for what can be done to the open chat, and the chat settings. */
-function ChatMenu({ hasChat, onRename, onDelete, alerts }: ChatMenuProps): JSX.Element {
+function ChatMenu({ hasChat, pinned, onRename, onPin, onFork, onExport, onDelete, alerts }: ChatMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -1237,10 +1356,24 @@ function ChatMenu({ hasChat, onRename, onDelete, alerts }: ChatMenuProps): JSX.E
           <div className="pop-backdrop" aria-hidden="true" onClick={() => setOpen(false)} />
           <div className="pop chat-menu-pop" role="menu">
             {hasChat && (
-              <button type="button" role="menuitem" className="menu-item" onClick={pick(onRename)}>
-                <PencilIcon size={15} />
-                <span className="menu-item-label">Rename</span>
-              </button>
+              <>
+                <button type="button" role="menuitem" className="menu-item" onClick={pick(onRename)}>
+                  <PencilIcon size={15} />
+                  <span className="menu-item-label">Rename</span>
+                </button>
+                <button type="button" role="menuitem" className="menu-item" onClick={pick(onPin)}>
+                  <PinIcon size={15} />
+                  <span className="menu-item-label">{pinned ? 'Unpin' : 'Pin to the top'}</span>
+                </button>
+                <button type="button" role="menuitem" className="menu-item" onClick={pick(onFork)}>
+                  <ForkIcon size={15} />
+                  <span className="menu-item-label">Copy into a new chat</span>
+                </button>
+                <button type="button" role="menuitem" className="menu-item" onClick={pick(onExport)}>
+                  <DownloadIcon size={15} />
+                  <span className="menu-item-label">Export as Markdown</span>
+                </button>
+              </>
             )}
             {alerts && (
               <button type="button" role="menuitemcheckbox" aria-checked={alerts.on} className="menu-item" onClick={pick(alerts.toggle)}>
@@ -1506,7 +1639,16 @@ export function ChatView({ open, onMinimize, onNotify, onSignal, ask = null, can
             {!renaming && (
               <ChatMenu
                 hasChat={!!chat.current}
+                pinned={chat.current?.pinned ?? false}
                 onRename={() => chat.current && setRenaming({ id: chat.current.id, title: chat.current.title })}
+                onPin={() => chat.current && void chat.pin(chat.current.id, !chat.current.pinned)}
+                onFork={() => void chat.fork()}
+                onExport={() => {
+                  const msgs = visibleMessages(chat);
+                  if (msgs.length === 0) return onNotify('Nothing to export yet');
+                  const title = chat.current?.title || 'Chat';
+                  downloadText(exportName(title), toMarkdown(title, chat.current?.directory ?? '', msgs));
+                }}
                 onDelete={() => setDeleting(chat.current)}
                 alerts={notifySupported() ? { on: alertsOn, toggle: toggleAlerts } : undefined}
               />

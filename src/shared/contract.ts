@@ -758,6 +758,19 @@ export interface ChatSession {
   /** The session's own rules make the agent ask before bash. False for sessions
    *  made elsewhere with OpenCode's defaults, which never ask: auto changes nothing there. */
   readonly asks: boolean;
+  /** Pinned to the top of the list (kept in the session's metadata, so on every device). */
+  readonly pinned: boolean;
+  /** Made or used from Pulse (it carries Pulse's guard); false for one only seen in OpenCode's own UI. */
+  readonly fromPulse: boolean;
+}
+
+/** A chat whose messages contain the searched text. */
+export interface ChatSearchHit {
+  readonly sessionID: string;
+  readonly title: string;
+  readonly updatedAt: number;
+  /** A little text around the match. */
+  readonly snippet: string;
 }
 
 export interface ChatTextPart {

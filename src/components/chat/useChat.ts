@@ -13,6 +13,7 @@ import type {
   ChatPart,
   ChatPermission,
   ChatProviderList,
+  ChatSearchHit,
   ChatSession,
   ChatUpstream,
 } from '../../shared/contract';
@@ -197,6 +198,11 @@ export interface Chat {
   /** Answers the public link, or null. */
   readonly share: () => Promise<string | null>;
   readonly unshare: () => Promise<void>;
+  readonly pin: (id: string, on: boolean) => Promise<void>;
+  /** Copies the open chat up to (not including) a message, or all of it, into a new chat and opens it; answers it. */
+  readonly fork: (messageID?: string) => Promise<ChatSession | null>;
+  /** Text inside the newest chats. */
+  readonly search: (query: string) => Promise<readonly ChatSearchHit[]>;
   /** Auto mode of the open chat, or of the next one when none is open yet. */
   readonly auto: boolean;
   readonly setAuto: (on: boolean) => Promise<void>;
@@ -507,6 +513,38 @@ export function useChat(notify: (text: string) => void): Chat {
       .catch((err: unknown) => fail(err, 'could not unshare'));
   }, [fail]);
 
+  const pin = useCallback(
+    async (id: string, on: boolean) => {
+      try {
+        const { session } = await api<{ session: ChatSession }>('POST', `/api/chat/sessions/${id}/pin`, { on });
+        setSessions((list) => list?.map((s) => (s.id === id ? session : s)) ?? list);
+      } catch (err) {
+        fail(err, 'could not pin');
+      }
+    },
+    [fail],
+  );
+
+  const fork = useCallback(
+    async (messageID?: string) => {
+      const id = currentRef.current;
+      if (!id) return null;
+      try {
+        const { session } = await api<{ session: ChatSession }>('POST', `/api/chat/sessions/${id}/fork`, messageID ? { messageID } : undefined);
+        setSessions((list) => [session, ...(list ?? []).filter((s) => s.id !== session.id)]);
+        open(session.id);
+        notifyRef.current('Copied into a new chat');
+        return session;
+      } catch (err) {
+        fail(err, 'could not fork');
+        return null;
+      }
+    },
+    [fail, open],
+  );
+
+  const search = useCallback(async (query: string) => (await api<{ hits: ChatSearchHit[] }>('GET', `/api/chat/search?q=${encodeURIComponent(query)}`)).hits, []);
+
   const setAuto = useCallback(
     async (on: boolean) => {
       const id = currentRef.current;
@@ -606,6 +644,9 @@ export function useChat(notify: (text: string) => void): Chat {
     redo,
     share,
     unshare,
+    pin,
+    fork,
+    search,
     auto: currentId ? !!sessions?.find((s) => s.id === currentId)?.auto : autoNext,
     setAuto,
   };

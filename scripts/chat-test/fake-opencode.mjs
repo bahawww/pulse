@@ -178,6 +178,7 @@ const server = http.createServer(async (req, res) => {
     streams.clear();
     return json(res, 200, { ok: true });
   }
+  if (route === '/__sessions') return json(res, 200, [...sessions.values()].map((x) => ({ ...x, messageCount: messages.get(x.id)?.length ?? 0 })));
   if (route === '/session/status') return json(res, 200, Object.fromEntries([...status].filter(([, v]) => v !== 'idle').map(([k, v]) => [k, { type: v }])));
   if (route === '/experimental/session') return json(res, 200, [...sessions.values()].sort((a, b) => b.time.updated - a.time.updated));
   if (route === '/session' && method === 'POST') {
@@ -215,6 +216,7 @@ const server = http.createServer(async (req, res) => {
       if (method === 'PATCH') {
         if (typeof body.title === 'string') s.title = body.title;
         if (body.metadata) s.metadata = body.metadata;
+        if (body.permission) s.permission = [...(s.permission ?? []), ...body.permission];
         if (body.time?.archived) s.time.archived = body.time.archived;
         touch(s);
         return json(res, 200, s);
@@ -261,7 +263,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, s);
     }
     if (sub === 'fork') {
-      const f = mkSession({ title: `${s.title} (fork)`, metadata: s.metadata, permission: s.permission });
+      // Like OpenCode: the messages and the metadata are copied, the permission rules are not.
+      const f = mkSession({ title: `${s.title} (fork)`, metadata: s.metadata });
       const cut = body.messageID;
       messages.set(f.id, messages.get(id).filter((x) => !cut || x.info.id < cut).map((x) => JSON.parse(JSON.stringify(x))));
       emit('session.created', { info: f });

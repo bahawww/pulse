@@ -126,6 +126,8 @@ export async function start(opts = {}) {
     },
     /** Test hook of the fake: cut the agent's event streams. */
     dropAgentStream: () => fetch(`http://127.0.0.1:${ocPort}/__drop`, { method: 'POST', headers: { Authorization: `Basic ${Buffer.from('opencode:testpw').toString('base64')}` } }),
+    /** Every session the fake holds, with its rules and message count. */
+    fakeSessions: async () => (await fetch(`http://127.0.0.1:${ocPort}/__sessions`, { headers: { Authorization: `Basic ${Buffer.from('opencode:testpw').toString('base64')}` } })).json(),
     logs: () => ({ pulse: pulse.logs, fake: fake.logs }),
     async close() {
       try {

@@ -14,6 +14,7 @@ import type {
   ChatPart,
   ChatPermission,
   ChatProviderList,
+  ChatSearchHit,
   ChatSession,
   ChatUpstream,
 } from '../shared/contract.js';
@@ -378,6 +379,7 @@ const busy = new Map<string, boolean>();
  * for the session and the subagent sessions it starts.
  */
 const AUTO_KEY = 'pulseAuto';
+const PIN_KEY = 'pulsePin';
 /** Session id to what auto mode needs: its flag and its parent. */
 const sessionInfo = new Map<string, { auto: boolean; parentID: string | null; at: number }>();
 const INFO_TTL_MS = 5 * 60_000;
@@ -453,6 +455,8 @@ function toSession(s: OcSession): ChatSession {
     shareUrl: s.share?.url ?? null,
     auto: s.metadata?.[AUTO_KEY] === true,
     asks: asksForBash(s),
+    pinned: s.metadata?.[PIN_KEY] === true,
+    fromPulse: s.metadata?.[GUARD_KEY] !== undefined,
   };
 }
 
@@ -770,6 +774,63 @@ async function modelFor(id: string, picked: ChatModelRef | null): Promise<ChatMo
   return { providerID, modelID };
 }
 
+const SEARCH_SESSIONS = 40;
+const SEARCH_HITS = 20;
+const SEARCH_TIMEOUT_MS = 8_000;
+let searching = false;
+
+/** One snippet of `text` around the first `needle` (lower case), or null. */
+function snippetOf(text: string, needle: string): string | null {
+  const at = text.toLowerCase().indexOf(needle);
+  if (at < 0) return null;
+  const from = Math.max(0, at - 50);
+  const to = Math.min(text.length, at + needle.length + 70);
+  return `${from > 0 ? '…' : ''}${text.slice(from, to).replace(/\s+/g, ' ').trim()}${to < text.length ? '…' : ''}`;
+}
+
+/**
+ * Looks for text in the messages of the newest chats. OpenCode has no search
+ * over messages, so this reads them (a few at a time, with a time limit) and
+ * only runs on an explicit request. One search at a time.
+ */
+async function searchChats(query: string): Promise<ChatSearchHit[]> {
+  const needle = query.trim().toLowerCase();
+  if (needle.length < 2) throw new ChatError(400, 'type at least 2 characters');
+  if (searching) throw new ChatError(429, 'a search is already running');
+  searching = true;
+  const deadline = Date.now() + SEARCH_TIMEOUT_MS;
+  try {
+    const sessions = (await opencode.listSessions()).slice(0, SEARCH_SESSIONS);
+    const hits: ChatSearchHit[] = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < sessions.length && Date.now() < deadline && hits.length < SEARCH_HITS) {
+        const s = sessions[next++]!;
+        // A match inside a message says more than one in the title.
+        let found: string | null = null;
+        try {
+          const raw = await call<{ info: OcMessage; parts: OcPart[] }[]>('GET', `/session/${s.id}/message`, { limit: String(HISTORY_LIMIT) }, undefined, 4_000);
+          for (const m of raw) {
+            for (const p of m.parts) {
+              if (found || p.type !== 'text' || p.synthetic || p.ignored || !p.text) continue;
+              found = snippetOf(p.text, needle);
+            }
+            if (found) break;
+          }
+        } catch {
+          /* one unreadable chat does not end the search */
+        }
+        const snippet = found ?? (s.title.toLowerCase().includes(needle) ? s.title : null);
+        if (snippet) hits.push({ sessionID: s.id, title: s.title, updatedAt: s.updatedAt, snippet: redact(snippet) });
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    return hits.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, SEARCH_HITS);
+  } finally {
+    searching = false;
+  }
+}
+
 export const opencode: ChatAdapter = {
   agent: 'opencode',
   directory: CHAT_DIRECTORY,
@@ -996,6 +1057,29 @@ export const opencode: ChatAdapter = {
       for (const p of pending) if (await autoFor(p.sessionID)) await allowOnce(p);
     }
     return toSession(next);
+  },
+
+  async setPinned(id, on) {
+    const directory = await directoryOf(id);
+    const s = await call<OcSession>('GET', `/session/${id}`);
+    const metadata = { ...(s.metadata ?? {}) };
+    if (on) metadata[PIN_KEY] = true;
+    else delete metadata[PIN_KEY];
+    return toSession(await call<OcSession>('PATCH', `/session/${id}`, { directory }, { metadata }));
+  },
+
+  async fork(id, messageID) {
+    const directory = await directoryOf(id);
+    const orig = await call<OcSession>('GET', `/session/${id}`);
+    const made = await call<OcSession>('POST', `/session/${id}/fork`, { directory }, messageID ? { messageID } : {});
+    // OpenCode copies the messages and the metadata but not the permission rules. Without them the copy would run
+    // commands without asking and without the secret guard, while its metadata says the guard is there.
+    const fixed = await call<OcSession>('PATCH', `/session/${made.id}`, { directory }, { permission: orig.permission ?? [] });
+    return toSession(fixed);
+  },
+
+  async search(query) {
+    return searchChats(query);
   },
 
   async unshare(id) {

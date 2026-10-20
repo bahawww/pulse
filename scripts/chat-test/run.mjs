@@ -309,6 +309,75 @@ try {
     assert(res.pathName === 200, `a path in the name is cut, not refused: ${res.pathName}`);
     await sleep(1500);
   });
+  
+  // ---- Phase 4 ----
+  const newChat = async () => { await t.ev(`document.querySelector('.chat-new').click()`); await t.waitFor(`!!document.querySelector('.chat-empty')`, 5000, 'new chat'); };
+  await s.check('chats are grouped by day; filter and origin chips work', async () => {
+    await newChat(); await sendText('alpha topic here'); await waitIdle();
+    await newChat(); await sendText('beta subject there zebra-quartz-7'); await waitIdle();
+    assert((await t.ev(`[...document.querySelectorAll('.chat-side .chat-group-title')].map(e=>e.textContent).join('|')`)).includes('Today'), 'no Today group');
+    await t.ev(`(()=>{const el=document.querySelector('.chat-side .chat-search input');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(el,'alpha');el.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+    await t.waitFor(`document.querySelectorAll('.chat-side .chat-session').length === 1 && document.querySelector('.chat-side .chat-session').textContent.includes('alpha')`, 4000, 'filtered to alpha');
+    await t.ev(`(()=>{const el=document.querySelector('.chat-side .chat-search input');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(el,'');el.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+    await t.ev(`[...document.querySelectorAll('.chat-side .chat-chip')].find(b=>b.textContent==='Other').click()`);
+    await t.waitFor(`document.querySelector('.chat-side .chat-sessions').textContent.includes('No chat matches')`, 4000, 'no Other chats');
+    await t.ev(`[...document.querySelectorAll('.chat-side .chat-chip')].find(b=>b.textContent==='All').click()`);
+  });
+  await s.check('Enter in the filter searches inside the chats', async () => {
+    await t.ev(`(()=>{const el=document.querySelector('.chat-side .chat-search input');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(el,'zebra-quartz');el.dispatchEvent(new Event('input',{bubbles:true}));el.form.requestSubmit()})()`);
+    await t.waitFor(`document.querySelector('.chat-side .chat-session-snippet')?.textContent.includes('zebra-quartz-7')`, 12000, 'search hit with a snippet');
+    assert((await t.ev(`document.querySelectorAll('.chat-side .chat-session').length`)) === 1, 'one hit expected');
+    await shot('p4-search');
+    await t.ev(`document.querySelector('.chat-side .chat-link').click()`);
+    await t.ev(`(()=>{const el=document.querySelector('.chat-side .chat-search input');const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;set.call(el,'');el.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  });
+  await s.check('pin moves a chat to the top group and back', async () => {
+    const menu = async (label) => { await t.ev(`document.querySelector('button[aria-label="Chat options"]').click()`); await t.waitFor(`!!document.querySelector('.chat-menu-pop')`, 3000, 'menu'); await t.ev(`[...document.querySelectorAll('.chat-menu-pop:not(.is-leaving) .menu-item')].find(b=>b.textContent.includes(${JSON.stringify(label)})).click()`); };
+    await t.ev(`[...document.querySelectorAll('.chat-side .chat-session-main')].find(b=>b.textContent.includes('alpha')).click()`);
+    await t.waitFor(`document.querySelector('.chat-title')?.textContent.includes('alpha')`, 5000, 'alpha open');
+    await menu('Pin to the top');
+    await t.waitFor(`document.querySelector('.chat-side .chat-group-title')?.textContent === 'Pinned' && document.querySelector('.chat-side .chat-group .chat-session').textContent.includes('alpha')`, 6000, 'pinned group first');
+    await menu('Unpin');
+    await t.waitFor(`![...document.querySelectorAll('.chat-side .chat-group-title')].some(e=>e.textContent==='Pinned')`, 6000, 'unpinned');
+  });
+  await s.check('branch from a reply keeps the rules and copies messages up to it', async () => {
+    await sendText('second turn'); await waitIdle();
+    const before = (await t.fakeSessions()).length;
+    const origRules = (await t.fakeSessions()).find((x) => x.title.startsWith('alpha')).permission;
+    assert(origRules.length > 0, 'original has no rules to compare');
+    await t.ev(`document.querySelectorAll('.chat-msg.is-assistant')[0].querySelector('.chat-act[aria-label="Branch into a new chat"]').click()`);
+    await t.waitFor(`document.querySelector('.chat-title')?.textContent.includes('(fork')`, 8000, 'fork open');
+    const all = await t.fakeSessions();
+    assert(all.length === before + 1, 'fork not created');
+    const fork = all.find((x) => x.title.includes('(fork'));
+    assert(fork.messageCount === 2, `fork has ${fork.messageCount} messages, wanted 2 (turn one)`);
+    assert(JSON.stringify(fork.permission) === JSON.stringify(origRules), `fork rules differ: ${JSON.stringify(fork.permission)}`);
+    assert((await t.ev(`document.querySelectorAll('.chat-msg.is-user').length`)) === 1, 'fork should show one user turn');
+  });
+  await s.check('branch from a user message: earlier turns kept, its text ready to edit', async () => {
+    await t.ev(`[...document.querySelectorAll('.chat-side .chat-session-main')].find(b=>b.textContent.includes('alpha topic here') && !b.textContent.includes('fork')).click()`);
+    await t.waitFor(`document.querySelectorAll('.chat-msg.is-user').length === 2`, 6000, 'two turns');
+    await t.ev(`document.querySelectorAll('.chat-msg.is-user')[1].querySelector('.chat-act[aria-label="Branch into a new chat"]').click()`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value === 'second turn'`, 8000, 'text in the box');
+    assert((await t.ev(`document.querySelectorAll('.chat-msg.is-user').length`)) === 1, 'fork should hold only turn one');
+    await type('');
+  });
+  await s.check('export builds a Markdown file; the whole-chat copy works from the menu', async () => {
+    await t.ev(`(()=>{window.__blob=null;const o=URL.createObjectURL.bind(URL);URL.createObjectURL=(b)=>{window.__blob=b;return o(b)};HTMLAnchorElement.prototype.click=function(){window.__downloadName=this.download}})()`);
+    await t.ev(`document.querySelector('button[aria-label="Chat options"]').click()`);
+    await t.ev(`[...document.querySelectorAll('.chat-menu-pop:not(.is-leaving) .menu-item')].find(b=>b.textContent.includes('Export as Markdown')).click()`);
+    await t.waitFor(`!!window.__blob`, 4000, 'blob made');
+    const md = await t.ev(`window.__blob.text()`);
+    assert(md.startsWith('# ') && md.includes('## You') && md.includes('## Agent'), `markdown: ${md.slice(0, 160)}`);
+    assert(/\.md$/.test(await t.ev(`window.__downloadName`)), 'file name');
+    const before = (await t.fakeSessions()).length;
+    const forksBefore = await t.ev(`performance.getEntriesByType('resource').filter(r=>r.name.includes('/fork')).length`);
+    await t.ev(`document.querySelector('button[aria-label="Chat options"]').click()`);
+    const items = await t.ev(`[...document.querySelectorAll('.chat-menu-pop:not(.is-leaving) .menu-item')].map(b=>b.textContent).join('|')`);
+    await t.ev(`[...document.querySelectorAll('.chat-menu-pop:not(.is-leaving) .menu-item')].find(b=>b.textContent.includes('Copy into a new chat')).click()`);
+    await sleep(1500);
+    assert((await t.fakeSessions()).length === before + 1, `whole-chat copy not made; toast: ${await t.ev(`document.querySelector('.toast')?.textContent ?? ''`)}; title: ${await t.ev(`document.querySelector('.chat-title')?.textContent`)}; items ${items}; forks ${forksBefore}->${await t.ev(`performance.getEntriesByType('resource').filter(r=>r.name.includes('/fork')).length`)}; pulse log: ${t.logs().pulse.split('\n').slice(-4).join(' / ')}`);
+  });
   /*__CHECKS__*/
 } catch (err) {
   console.log('ABORT', err instanceof Error ? err.stack : err);

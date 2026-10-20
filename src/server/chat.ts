@@ -1,4 +1,5 @@
 import type { Express, Request, RequestHandler, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 
 import { chatEventSession, type ChatAttachment, type ChatEvent, type ChatMention, type ChatModelRef } from '../shared/contract.js';
 import { ChatError, type ChatAdapter } from './chatAdapter.js';
@@ -128,6 +129,9 @@ export function closeChat(): void {
 // ---------------------------------------------------------------------------
 
 type Handler = (req: Request, res: Response) => Promise<unknown>;
+
+/** A search reads the messages of up to 40 chats: a handful a minute is plenty. */
+const searchLimiter = rateLimit({ windowMs: 60_000, limit: 8, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many searches' } });
 
 /** Runs a handler; a ChatError becomes its status, anything else a 500. */
 const wrap =
@@ -285,6 +289,17 @@ export function registerChatRoutes(app: Express, readLimiter: RequestHandler, wr
   // What Service control can act on: lets the chat offer a Run button for `systemctl restart x` in an answer.
   app.get('/api/chat/targets', readLimiter, wrap(async () => targetsDetailed()));
 
+  // Text inside the newest chats; reads their messages, so it is its own (small) limit.
+  app.get(
+    '/api/chat/search',
+    searchLimiter,
+    wrap(async (req) => {
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      if (q.length > 100 || /[\0\n]/.test(q)) throw new ChatError(400, 'bad query');
+      return { hits: await adapter.search(q) };
+    }),
+  );
+
   app.get('/api/chat/sessions', readLimiter, wrap(async () => ({ sessions: await adapter.listSessions() })));
 
   app.post(
@@ -363,6 +378,28 @@ export function registerChatRoutes(app: Express, readLimiter: RequestHandler, wr
   );
 
   app.post('/api/chat/sessions/:id/share', writeLimiter, wrap((req) => adapter.share(sessionParam(req))));
+
+  app.post(
+    '/api/chat/sessions/:id/pin',
+    writeLimiter,
+    wrap(async (req) => {
+      const on = body(req).on;
+      if (typeof on !== 'boolean') throw new ChatError(400, 'on must be true or false');
+      return { session: await adapter.setPinned(sessionParam(req), on) };
+    }),
+  );
+
+  // A copy of the chat up to a message (not including it), or all of it. The copy is a new chat.
+  app.post(
+    '/api/chat/sessions/:id/fork',
+    writeLimiter,
+    wrap(async (req) => {
+      const id = sessionParam(req);
+      const m = body(req).messageID;
+      if (m !== undefined && m !== null && (typeof m !== 'string' || !MESSAGE_ID.test(m))) throw new ChatError(400, 'bad message id');
+      return { session: await adapter.fork(id, typeof m === 'string' ? m : null) };
+    }),
+  );
 
   app.post(
     '/api/chat/sessions/:id/auto',
