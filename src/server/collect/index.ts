@@ -6,6 +6,7 @@ import { collectDocker } from './docker.js';
 import { collectFilesystems } from './filesystems.js';
 import { collectMemory } from './memory.js';
 import { collectProcesses } from './processes.js';
+import { collectPsi } from './psi.js';
 
 /**
  * Assembles the full system snapshot.
@@ -77,6 +78,8 @@ export async function getSystemSnapshot(): Promise<SystemMetrics> {
     degraded.push('filesystems');
   }
 
+  const psi = collectPsi();
+
   return {
     hostname: os.hostname(),
     platform: `${os.type()} ${os.release()} (${os.arch()})`,
@@ -91,6 +94,7 @@ export async function getSystemSnapshot(): Promise<SystemMetrics> {
     docker,
     filesystems,
     degraded,
+    psi,
     serverTime: new Date().toISOString(),
   };
 }

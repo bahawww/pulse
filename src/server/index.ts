@@ -12,8 +12,9 @@ import { checkAllServices } from './probe.js';
 import { getSystemSnapshot } from './collect/index.js';
 import { record, query, getHistory, historyStats, maxSpanMs, rehydrate } from './history.js';
 import { openStore, isStoreOpen, storeError, storeCount, storePath, closeStore, recentActions } from './store.js';
-import { DEFAULT_RULES, evaluate, restoreAlertEvents, snapshot } from './alerts.js';
+import { evaluate, getRules, restoreAlertEvents, snapshot, updateAlertRule } from './alerts.js';
 import { channelStatus, notify } from './notify.js';
+import { evaluateGuardrails, registerPerformanceRoutes } from './performance.js';
 import {
   ADMIN_USER,
   clearCookie,
@@ -447,7 +448,7 @@ app.get('/api/history', (req: Request, res: Response) => {
 
 app.get('/api/alerts', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json(snapshot(DEFAULT_RULES, channelStatus()));
+  res.json(snapshot(getRules(), channelStatus()));
 });
 
 // ---------------------------------------------------------------------------
@@ -620,6 +621,28 @@ app.post('/api/services/scan', apiLimiter, requirePerm('services:control'), (_re
 app.get('/api/actions/log', apiLimiter, requirePerm('view:logs'), (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ entries: recentActions(50) });
+});
+
+registerPerformanceRoutes(app, apiLimiter, actionLimiter, requirePerm('services:control'));
+
+app.put('/api/alerts/rules', actionLimiter, requirePerm('services:control'), (req: Request, res: Response) => {
+  const body = req.body as { id?: unknown; enabled?: unknown; limit?: unknown; forSamples?: unknown };
+  if (typeof body.id !== 'string' || !body.id) {
+    res.status(400).json({ error: 'rule id required' });
+    return;
+  }
+  const updated = updateAlertRule(body.id, {
+    ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+    ...(typeof body.limit === 'number' ? { limit: body.limit } : {}),
+    ...(typeof body.forSamples === 'number' ? { forSamples: body.forSamples } : {}),
+  });
+  if (!updated) {
+    res.status(404).json({ error: 'unknown alert rule' });
+    return;
+  }
+  const nextState = snapshot(updated, channelStatus());
+  publish('alerts', nextState, true);
+  res.json(nextState);
 });
 
 app.post('/api/action', actionLimiter, requirePerm('services:control'), (req: Request, res: Response) => {
@@ -891,10 +914,12 @@ const sampler = setInterval(() => {
 
       // Alerts run on the same tick as the samples they judge, so an alert can
       // never fire on data that was never recorded.
-      const { fired } = evaluate(DEFAULT_RULES, payload.system, latency, Date.now());
+      const rules = getRules();
+      const { fired } = evaluate(rules, payload.system, latency, Date.now());
       // Push to open tabs: telemetry every tick, alerts only when they change.
       publishScoped('stats', (permissions) => scopeStats(payload, permissions));
-      publish('alerts', snapshot(DEFAULT_RULES, channelStatus()), true);
+      publish('alerts', snapshot(rules, channelStatus()), true);
+      void evaluateGuardrails(payload.system.memory.percent);
       for (const event of fired) {
         void notify(event).catch((err: unknown) =>
           console.error('[vps-dashboard] alert notify:', err),

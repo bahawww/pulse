@@ -105,6 +105,7 @@ export function scopeStats(payload: StatsPayload, perms: readonly Permission[]):
       processes: may('processes') ? s.processes : [],
       docker: may('docker') ? s.docker : [],
       filesystems: may('filesystems') ? s.filesystems : [],
+      ...(may('memory') && s.psi ? { psi: s.psi } : {}),
     },
   };
 }

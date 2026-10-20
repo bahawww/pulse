@@ -63,6 +63,19 @@ export interface MemoryMetrics {
   /** Swap: total, used, and percent. */
   readonly swapTotalBytes: number;
   readonly swapUsedBytes: number;
+  /** Reclaimable page cache + slab in bytes. */
+  readonly cachedBytes?: number;
+  /** Compressed swap pool in RAM (zswap) in bytes. */
+  readonly zswapBytes?: number;
+}
+
+export interface PsiMetrics {
+  readonly cpuSome10: number;
+  readonly cpuSome60: number;
+  readonly memSome10: number;
+  readonly memFull10: number;
+  readonly ioSome10: number;
+  readonly ioFull10: number;
 }
 
 export interface DiskMetrics {
@@ -123,6 +136,8 @@ export interface ProcessInfo {
   /** Fraction of one CPU, e.g. 0.5 = 50% of a core. */
   readonly cpuFraction: number;
   readonly user: string;
+  /** Linux scheduling priority (-20 to 19). */
+  readonly nice?: number;
 }
 
 export interface DockerContainer {
@@ -154,6 +169,8 @@ export interface SystemMetrics {
   readonly filesystems: readonly FilesystemInfo[];
   /** Set when a collector failed, so the UI can say what is missing. */
   readonly degraded: readonly string[];
+  /** Linux Pressure Stall Information (PSI) from /proc/pressure/*. */
+  readonly psi?: PsiMetrics;
 }
 
 export interface StatsPayload {
@@ -459,12 +476,50 @@ export interface ActionLogEntry {
   /** Epoch ms when the action finished. */
   readonly ts: number;
   /** 'files': an upload, rename, new folder or delete from the file explorer. 'users': an account change. */
-  readonly target: ActionTarget | 'files' | 'users' | 'tmux';
+  readonly target: ActionTarget | 'files' | 'users' | 'tmux' | 'process' | 'maintenance' | 'guardrail';
   readonly name: string;
   readonly action: string;
   readonly ok: boolean;
   readonly message: string;
   readonly durationMs: number;
+}
+
+// ---------------------------------------------------------------------------
+// Performance management & guardrails
+// ---------------------------------------------------------------------------
+
+export type ProcessSignal = 'TERM' | 'KILL' | 'NICE_LOW' | 'NICE_NORMAL';
+
+export interface ProcessActionRequest {
+  readonly pid: number;
+  readonly name: string;
+  readonly signal: ProcessSignal;
+}
+
+export type MaintenanceTask = 'drop-caches' | 'docker-prune' | 'journal-vacuum' | 'reset-failed';
+
+export interface MaintenanceSchedule {
+  readonly autoDockerPruneWeekly: boolean;
+  readonly autoJournalVacuumWeekly: boolean;
+  readonly autoDropCacheOnPressure: boolean;
+  readonly lastRunAt: Readonly<Record<string, number>>;
+}
+
+export interface ResourceLimitTarget {
+  readonly kind: 'systemd-system' | 'systemd-user' | 'docker';
+  readonly id: string;
+  readonly label: string;
+  readonly memoryHighBytes: number | null;
+  readonly memoryMaxBytes: number | null;
+  readonly cpuQuotaPercent: number | null;
+  readonly currentBytes: number;
+}
+
+export interface PerformanceState {
+  readonly limits: readonly ResourceLimitTarget[];
+  readonly schedule: MaintenanceSchedule;
+  readonly reclaimableCacheBytes: number;
+  readonly protectedNames: readonly string[];
 }
 
 // ---------------------------------------------------------------------------

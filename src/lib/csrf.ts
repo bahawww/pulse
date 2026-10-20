@@ -35,8 +35,8 @@ export async function postJson(path: string, body: unknown = {}): Promise<Respon
   return sendJson('POST', path, body);
 }
 
-/** postJson for any state-changing method (PATCH, DELETE). */
-export async function sendJson(method: 'POST' | 'PATCH' | 'DELETE', path: string, body: unknown = {}): Promise<Response> {
+/** postJson for any state-changing method (PUT, PATCH, DELETE). */
+export async function sendJson(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body: unknown = {}): Promise<Response> {
   const send = async () =>
     fetch(path, {
       method,

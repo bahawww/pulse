@@ -41,6 +41,8 @@ export function DeepTelemetry({ system, samples }: DeepTelemetryProps): JSX.Elem
   const busiest = cores.reduce((best, v, i) => (v > best.value ? { index: i, value: v } : best), { index: 0, value: 0 });
   const mem = system.memory;
   const swapPct = mem.swapTotalBytes > 0 ? (mem.swapUsedBytes / mem.swapTotalBytes) * 100 : 0;
+  // Page cache + buffers + reclaimable slab: counted in "available", given back on demand.
+  const cachedPct = mem.totalBytes > 0 ? ((mem.cachedBytes ?? 0) / mem.totalBytes) * 100 : 0;
 
   return (
     <div className="grid">
@@ -99,6 +101,17 @@ export function DeepTelemetry({ system, samples }: DeepTelemetryProps): JSX.Elem
           </div>
           <div className="mem-bar-row">
             <div className="mem-bar-head">
+              <span>RAM cached</span>
+              <span className="mono">
+                {formatPercent(cachedPct)}% · {formatBytes(mem.cachedBytes ?? 0)}
+              </span>
+            </div>
+            <div className="meter">
+              <div className="meter-fill" style={fill(cachedPct, 'var(--s-lat)')} />
+            </div>
+          </div>
+          <div className="mem-bar-row">
+            <div className="mem-bar-head">
               <span>Swap</span>
               <span className="mono">{mem.swapTotalBytes > 0 ? `${formatPercent(swapPct)}%` : 'none'}</span>
             </div>
@@ -113,11 +126,43 @@ export function DeepTelemetry({ system, samples }: DeepTelemetryProps): JSX.Elem
           <dd>{formatBytes(mem.usedBytes)} of {formatBytes(mem.totalBytes)}</dd>
           <dt>Available</dt>
           <dd>{formatBytes(mem.availableBytes)}</dd>
+          {(mem.cachedBytes ?? 0) > 0 && (
+            <>
+              <dt>Page &amp; slab cache</dt>
+              <dd>{formatBytes(mem.cachedBytes ?? 0)} (reclaimable)</dd>
+            </>
+          )}
           <dt>Swap used</dt>
           <dd>
             {formatBytes(mem.swapUsedBytes)} of {formatBytes(mem.swapTotalBytes)}
+            {(mem.zswapBytes ?? 0) > 0 ? ` · zswap ${formatBytes(mem.zswapBytes ?? 0)}` : ''}
           </dd>
         </dl>
+
+        {system.psi && (
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span className="card-sub">Kernel pressure (PSI 10s stall)</span>
+              <span className="tag">
+                {Math.max(system.psi.cpuSome10, system.psi.memSome10, system.psi.ioSome10) < 1 ? 'nominal' : 'contended'}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              <div className="iface" style={{ padding: '6px 8px' }}>
+                <span className="card-sub">CPU</span>
+                <span className="mono">{formatPercent(system.psi.cpuSome10)}%</span>
+              </div>
+              <div className="iface" style={{ padding: '6px 8px' }}>
+                <span className="card-sub">Memory</span>
+                <span className="mono">{formatPercent(system.psi.memSome10)}%</span>
+              </div>
+              <div className="iface" style={{ padding: '6px 8px' }}>
+                <span className="card-sub">Disk I/O</span>
+                <span className="mono">{formatPercent(system.psi.ioSome10)}%</span>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card span-7" aria-labelledby="net-h">

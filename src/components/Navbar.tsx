@@ -200,7 +200,7 @@ export function Navbar({
             )}
           </div>
 
-          <NotificationBell alerts={alerts} onNotify={onNotify} />
+          <NotificationBell alerts={alerts} onNotify={onNotify} canEdit={user.permissions.includes('services:control')} />
 
           <button
             type="button"

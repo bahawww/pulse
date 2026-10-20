@@ -83,7 +83,8 @@ export function TelemetryGrid({ system, samples }: TelemetryGridProps): JSX.Elem
         <Sparkline values={pick('ram')} color="var(--s-mem)" max={100} label="Memory over time" />
         {system ? (
           <span className="kpi-sub">
-            {system.memory.used} of {system.memory.total} · {system.memory.free} free
+            {formatBytes(system.memory.usedBytes)} of {formatBytes(system.memory.totalBytes)} · {formatBytes(system.memory.availableBytes)} free
+            {(system.memory.cachedBytes ?? 0) > 0 && ` · ${formatBytes(system.memory.cachedBytes ?? 0)} cached`}
           </span>
         ) : (
           <Bone w="70%" h={10} />

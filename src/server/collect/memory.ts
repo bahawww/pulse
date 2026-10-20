@@ -52,6 +52,8 @@ export function collectMemory(): MemoryMetrics {
   const swapTotalBytes = kb('SwapTotal');
   const swapFreeBytes = kb('SwapFree');
   const swapUsedBytes = Math.max(0, swapTotalBytes - swapFreeBytes);
+  const cachedBytes = kb('Cached') + kb('Buffers') + kb('SReclaimable');
+  const zswapBytes = kb('Zswap');
 
   return {
     total: humanBytes(totalBytes),
@@ -63,6 +65,8 @@ export function collectMemory(): MemoryMetrics {
     availableBytes,
     swapTotalBytes,
     swapUsedBytes,
+    cachedBytes,
+    zswapBytes,
   };
 }
 

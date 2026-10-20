@@ -5,7 +5,7 @@ import type {
   AlertThresholds,
   SystemMetrics,
 } from '../shared/contract.js';
-import { loadAlertEvents, saveAlertEvent } from './store.js';
+import { loadAlertEvents, loadSetting, saveAlertEvent, saveSetting } from './store.js';
 
 /**
  * Threshold rules over the fixed 5s sample stream.
@@ -317,9 +317,47 @@ export function restoreAlertEvents(now: number): number {
       events.push(e);
     }
   }
+  restoreAlertRules();
   return events.length;
 }
 
 export function activeBreachCount(): number {
   return active.size;
+}
+
+let currentRules: AlertRule[] = [...DEFAULT_RULES];
+
+export function getRules(): readonly AlertRule[] {
+  return currentRules;
+}
+
+export function restoreAlertRules(): void {
+  const saved = loadSetting<Partial<Record<string, { enabled?: boolean; limit?: number; forSamples?: number }>>>('alert_rules', {});
+  currentRules = DEFAULT_RULES.map((rule) => {
+    const ov = saved[rule.id];
+    if (!ov) return rule;
+    const enabled = typeof ov.enabled === 'boolean' ? ov.enabled : rule.enabled;
+    const forSamples = typeof ov.forSamples === 'number' && ov.forSamples >= 1 && ov.forSamples <= 60 ? Math.round(ov.forSamples) : rule.thresholds.forSamples;
+    const lim = typeof ov.limit === 'number' && Number.isFinite(ov.limit) ? ov.limit : null;
+    const t = rule.thresholds;
+    const thresholds: AlertThresholds = {
+      ...t,
+      forSamples,
+      ...(t.cpuPercent !== null && lim !== null ? { cpuPercent: Math.max(10, Math.min(99, Math.round(lim))) } : {}),
+      ...(t.ramPercent !== null && lim !== null ? { ramPercent: Math.max(10, Math.min(99, Math.round(lim))) } : {}),
+      ...(t.diskPercent !== null && lim !== null ? { diskPercent: Math.max(10, Math.min(99, Math.round(lim))) } : {}),
+      ...(t.inodePercent !== null && lim !== null ? { inodePercent: Math.max(10, Math.min(99, Math.round(lim))) } : {}),
+      ...(t.latencyMs.length > 0 && lim !== null ? { latencyMs: [Math.max(10, Math.min(10000, Math.round(lim)))] } : {}),
+    };
+    return { ...rule, enabled, thresholds };
+  });
+}
+
+export function updateAlertRule(id: string, patch: { enabled?: boolean; limit?: number; forSamples?: number }): readonly AlertRule[] | null {
+  if (!DEFAULT_RULES.some((r) => r.id === id)) return null;
+  const saved = loadSetting<Record<string, { enabled?: boolean; limit?: number; forSamples?: number }>>('alert_rules', {});
+  saved[id] = { ...saved[id], ...patch };
+  saveSetting('alert_rules', saved);
+  restoreAlertRules();
+  return currentRules;
 }

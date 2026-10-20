@@ -1,5 +1,6 @@
 import { type JSX, useEffect, useRef, useState } from 'react';
 import type { AlertsHandle } from '../hooks/useAlerts';
+import { sendJson } from '../lib/csrf';
 import { formatAgo, formatPercent } from '../lib/format';
 import { BellIcon } from './icons';
 import type { AlertEvent, AlertState } from '../shared/contract';
@@ -14,14 +15,43 @@ import { BoneRows, Loading } from './Skeleton';
 interface NotificationBellProps {
   readonly alerts: AlertsHandle;
   readonly onNotify: (message: string) => void;
+  readonly canEdit?: boolean;
 }
 
 type AlertRule = AlertState['rules'][number];
 
-export function NotificationBell({ alerts, onNotify }: NotificationBellProps): JSX.Element {
+function primaryLimit(rule: AlertRule): { value: number; unit: '%' | 'ms' } | null {
+  const t = rule.thresholds;
+  if (t.cpuPercent !== null) return { value: t.cpuPercent, unit: '%' };
+  if (t.ramPercent !== null) return { value: t.ramPercent, unit: '%' };
+  if (t.diskPercent !== null) return { value: t.diskPercent, unit: '%' };
+  if (t.inodePercent !== null) return { value: t.inodePercent, unit: '%' };
+  if (t.latencyMs.length > 0 && t.latencyMs[0] !== undefined) return { value: t.latencyMs[0], unit: 'ms' };
+  return null;
+}
+
+export function NotificationBell({ alerts, onNotify, canEdit = false }: NotificationBellProps): JSX.Element {
   const { data, error, refresh } = alerts.state;
   const [open, setOpen] = useState(false);
+  const [savingRule, setSavingRule] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  async function patchRule(id: string, patch: { enabled?: boolean; limit?: number; forSamples?: number }) {
+    setSavingRule(id);
+    try {
+      const res = await sendJson('PUT', '/api/alerts/rules', { id, ...patch });
+      if (res.ok) {
+        onNotify('Alert rule updated');
+        refresh();
+      } else {
+        onNotify('Failed to update alert rule');
+      }
+    } catch {
+      onNotify('Failed to update alert rule');
+    } finally {
+      setSavingRule(null);
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -134,16 +164,59 @@ export function NotificationBell({ alerts, onNotify }: NotificationBellProps): J
                     Rules ({data.rules.filter((r) => r.enabled).length}/{data.rules.length} enabled)
                   </summary>
                   <ul className="rules" style={{ marginTop: 8 }}>
-                    {data.rules.map((rule) => (
-                      <li key={rule.id} className={rule.enabled ? '' : 'is-off'}>
-                        <span className={`state-dot ${rule.severity === 'critical' ? 'is-bad' : 'is-up'}`} aria-hidden="true" />
-                        <span>
-                          {rule.label}
-                          <br />
-                          <span className="rules-thresh">{describeThresholds(rule)}</span>
-                        </span>
-                      </li>
-                    ))}
+                    {data.rules.map((rule) => {
+                      const lim = primaryLimit(rule);
+                      const busy = savingRule === rule.id;
+                      return (
+                        <li key={rule.id} className={rule.enabled ? '' : 'is-off'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                            <span className={`state-dot ${rule.severity === 'critical' ? 'is-bad' : 'is-up'}`} aria-hidden="true" />
+                            <span>
+                              {rule.label}
+                              <br />
+                              <span className="rules-thresh">{describeThresholds(rule)}</span>
+                            </span>
+                          </span>
+                          {canEdit && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                              {lim && (
+                                <input
+                                  type="number"
+                                  aria-label={`Threshold for ${rule.label}`}
+                                  disabled={busy}
+                                  defaultValue={lim.value}
+                                  min={lim.unit === 'ms' ? 20 : 20}
+                                  max={lim.unit === 'ms' ? 5000 : 99}
+                                  step={lim.unit === 'ms' ? 10 : 5}
+                                  onBlur={(e) => {
+                                    const next = Number(e.target.value);
+                                    if (Number.isFinite(next) && next !== lim.value) {
+                                      void patchRule(rule.id, { limit: next });
+                                    }
+                                  }}
+                                  style={{
+                                    width: 58,
+                                    background: 'var(--surface)',
+                                    color: 'var(--fg)',
+                                    border: '1px solid var(--line-strong)',
+                                    borderRadius: 4,
+                                    padding: '2px 4px',
+                                    fontSize: 11,
+                                  }}
+                                />
+                              )}
+                              <input
+                                type="checkbox"
+                                aria-label={`Enable ${rule.label}`}
+                                disabled={busy}
+                                checked={rule.enabled}
+                                onChange={(e) => void patchRule(rule.id, { enabled: e.target.checked })}
+                              />
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </details>
               </div>

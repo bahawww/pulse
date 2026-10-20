@@ -1,7 +1,7 @@
 import { type CSSProperties, type JSX, type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import { CheckIcon } from './icons';
 
-interface SelectOption {
+export interface SelectOption {
   readonly value: string;
   readonly label: string;
 }

@@ -33,6 +33,7 @@ import { VIEWS } from './lib/views';
 import { SpendPanel } from './components/SpendPanel';
 import { TelemetryGrid } from './components/TelemetryGrid';
 import { ActionsPanel } from './components/ActionsPanel';
+import { PerformancePanel } from './components/PerformancePanel';
 
 type TerminalModule = typeof import('./components/TerminalWorkspace');
 const loadTerminal = (): Promise<TerminalModule> => import('./components/TerminalWorkspace');
@@ -429,7 +430,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               <Section title="Workload" hint="what is running and how much it uses">
                 <div className="grid">
                   <div className="span-7">
-                    <Charts.ProcessHistory processes={system.processes} samples={samples} />
+                    <Charts.ProcessHistory processes={system.processes} samples={samples} canAct={canAct} onNotify={notify} onRefresh={refresh} />
                   </div>
                   <div className="span-5">
                     <Charts.ContainerHistory containers={system.docker.filter((c) => !isHiddenContainer(c.name))} samples={samples} />
@@ -489,6 +490,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                   </div>
                   )}
                 </div>
+                {canAct && <PerformancePanel onNotify={notify} />}
               </Section>
             )}
 

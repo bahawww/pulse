@@ -20,6 +20,7 @@ interface ProcEntry {
   readonly ppid: number;
   readonly uid: number;
   readonly name: string;
+  readonly nice: number;
 }
 
 /**
@@ -48,6 +49,7 @@ function readEntry(pid: number): ProcEntry | null {
 
     const rssPages = Number(f[21]);
     const ppid = Number(f[1]);
+    const nice = Number(f[16]);
     const owner = fs.statSync(`/proc/${pid}`).uid;
 
     return {
@@ -57,6 +59,7 @@ function readEntry(pid: number): ProcEntry | null {
       ppid: Number.isFinite(ppid) ? ppid : 0,
       uid: Number.isFinite(owner) ? owner : 0,
       name: comm.slice(0, 24) || `pid ${pid}`,
+      nice: Number.isFinite(nice) ? nice : 0,
     };
   } catch {
     // Process exited between readdir and open.
@@ -88,7 +91,7 @@ let previous: { readonly byPid: ReadonlyMap<number, ProcEntry> } | null = null;
  * Busiest processes, ranked by CPU with RSS as the tiebreaker. An idle box
  * still returns rows (largest RSS wins), so the panel is never blank.
  */
-export function collectProcesses(elapsedSeconds: number, limit = 8): ProcessInfo[] {
+export function collectProcesses(elapsedSeconds: number, limit = 12): ProcessInfo[] {
   const entries = new Map<number, ProcEntry>();
   for (const pid of listPids()) {
     const entry = readEntry(pid);
@@ -112,6 +115,7 @@ export function collectProcesses(elapsedSeconds: number, limit = 8): ProcessInfo
       rssBytes: e.rssBytes,
       cpuFraction: Math.round(cpuFraction * 100) / 100,
       user: labelFor(e.uid, myUid),
+      nice: e.nice,
       score: cpuFraction * 1000 + e.rssBytes / (1024 * 1024),
     };
   });

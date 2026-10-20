@@ -181,6 +181,15 @@ export async function openStore(): Promise<boolean> {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
 
+    // Key-value settings store for alert rule overrides and maintenance schedules.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
     sweep(Date.now());
     lastError = null;
     return true;
@@ -488,3 +497,31 @@ export function recentActions(limit: number): ActionLogEntry[] {
 
 export const RETENTION_HOURS = Math.round(RETENTION_MS / 3_600_000);
 export const STORE_ROW_CAP = MAX_ROWS;
+
+/** Reads a JSON setting from the SQLite key-value table, or returns fallback. */
+export function loadSetting<T>(key: string, fallback: T): T {
+  if (!db) return fallback;
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as unknown as { value: string } | undefined;
+    if (!row?.value) return fallback;
+    return JSON.parse(row.value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Saves a JSON setting into the SQLite key-value table. */
+export function saveSetting<T>(key: string, value: T): boolean {
+  if (!db) return false;
+  try {
+    db.prepare('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)').run(
+      key,
+      JSON.stringify(value),
+      Date.now(),
+    );
+    return true;
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
+    return false;
+  }
+}
