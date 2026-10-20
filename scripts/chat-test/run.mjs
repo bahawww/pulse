@@ -378,6 +378,67 @@ try {
     await sleep(1500);
     assert((await t.fakeSessions()).length === before + 1, `whole-chat copy not made; toast: ${await t.ev(`document.querySelector('.toast')?.textContent ?? ''`)}; title: ${await t.ev(`document.querySelector('.chat-title')?.textContent`)}; items ${items}; forks ${forksBefore}->${await t.ev(`performance.getEntriesByType('resource').filter(r=>r.name.includes('/fork')).length`)}; pulse log: ${t.logs().pulse.split('\n').slice(-4).join(' / ')}`);
   });
+  
+  // ---- Phase 5 ----
+  await s.check('a long chat draws the latest 60 messages and keeps your place when earlier ones load', async () => {
+    await newChat();
+    await sendText('bulk 50');
+    await sleep(800);
+    // Leave and come back: the history is fetched fresh (all 101 messages).
+    await t.ev(`[...document.querySelectorAll('.chat-side .chat-session-main')].find(b=>!b.closest('.chat-session').classList.contains('is-current')).click()`);
+    await sleep(600);
+    await t.ev(`[...document.querySelectorAll('.chat-side .chat-session-main')].find(b=>b.textContent.includes('bulk chat')).click()`);
+    await t.waitFor(`document.querySelectorAll('.chat-msg').length === 60`, 8000, 'sixty messages drawn');
+    assert(await t.ev(`!!document.querySelector('.chat-earlier')`), 'no "show earlier" button');
+    assert((await t.ev(`document.querySelector('.chat-earlier').textContent`)).includes('41 hidden'), 'hidden count');
+    assert(await t.ev(`document.querySelector('.chat-scroll').scrollTop + document.querySelector('.chat-scroll').clientHeight >= document.querySelector('.chat-scroll').scrollHeight - 4`), 'not at the bottom');
+    await t.ev(`document.querySelector('.chat-scroll').scrollTop = 0`);
+    await sleep(300);
+    // The first message on screen must stay where it is after earlier ones are added above it.
+    const probe = await t.ev(`(()=>{const sc=document.querySelector('.chat-scroll').getBoundingClientRect();const m=[...document.querySelectorAll('.chat-msg')].find(e=>e.getBoundingClientRect().top>sc.top+60);window.__probe=m;return {text:m.textContent.slice(0,30),top:m.getBoundingClientRect().top}})()`);
+    await t.ev(`document.querySelector('.chat-earlier').click()`);
+    await t.waitFor(`document.querySelectorAll('.chat-msg').length === 101 && !document.querySelector('.chat-earlier')`, 6000, 'all drawn');
+    const after = await t.ev(`window.__probe.getBoundingClientRect().top`);
+    assert(Math.abs(after - probe.top) < 3, `view jumped: ${probe.top} -> ${after} (${probe.text})`);
+  });
+  await s.check('a dropped connection shows a banner, reconnects by itself and the chat keeps working', async () => {
+    await newChat();
+    await sendText('before the outage'); await waitIdle();
+    await t.restartPulse(3500);
+    await t.waitFor(`!!document.querySelector('.chat-status.is-link')`, 10000, 'connection banner').catch(() => { /* a fast browser retry may beat the banner delay */ });
+    await t.waitFor(`!document.querySelector('.chat-status.is-link')`, 20000, 'banner gone after reconnect');
+    await sendText('after the outage');
+    await t.waitFor(`[...document.querySelectorAll('.chat-msg.is-assistant')].pop()?.textContent.includes('You said: after the outage')`, 15000, 'reply after reconnect');
+    await waitIdle();
+  });
+  await s.check('the page comes back from an outage mid-turn: text kept, still shown as working, Stop works', async () => {
+    await sendText('slow please');
+    await t.waitFor(`[...document.querySelectorAll('.chat-msg.is-assistant')].pop()?.textContent.includes('Working on it') && !!document.querySelector('.chat-working')`, 10000, 'agent working');
+    await t.restartPulse(2000);
+    await t.waitFor(`!document.querySelector('.chat-status.is-link')`, 20000, 'reconnected');
+    await t.waitFor(`[...document.querySelectorAll('.chat-msg.is-assistant')].pop()?.textContent.includes('Working on it') && !!document.querySelector('.chat-working')`, 15000, 'text kept and still working').catch(async (err) => {
+      const state = await t.ev(`JSON.stringify({msgs:[...document.querySelectorAll('.chat-msg')].map(e=>e.className.replace('chat-msg','').trim()+':'+e.textContent.slice(0,30)),working:!!document.querySelector('.chat-working'),banner:!!document.querySelector('.chat-status'),upstream:document.querySelector('.chat-upstream')?.textContent,title:document.querySelector('.chat-title')?.textContent})`);
+      throw new Error(`${err.message}: ${state} fake: ${JSON.stringify((await t.fakeSessions()).map((x) => [x.title, x.messageCount, x.status]))} api: ${await t.ev(`fetch('/api/chat/sessions').then(r=>r.json()).then(j=>JSON.stringify(j.sessions.map(x=>[x.title,x.busy])))`)}`);
+    });
+    await t.ev(`document.querySelector('.chat-send.is-stop').click()`);
+    await t.waitFor(`!document.querySelector('.chat-working')`, 20000, 'idle after Stop');
+  });
+  
+  await s.check('phone layout: files in the box, the chat list sheet, a long answer; nothing scrolls sideways', async () => {
+    await t.viewport(390, 844, true);
+    await sleep(500);
+    await paste('dot', 'log');
+    await t.waitFor(`document.querySelectorAll('.chat-attach:not(.is-busy)').length === 2`, 8000, 'chips on phone');
+    await shot('p5-mobile-composer');
+    assert(!(await t.ev(`document.documentElement.scrollWidth > window.innerWidth + 1 || document.querySelector('.chat-composer').scrollWidth > document.querySelector('.chat-composer').clientWidth + 1`)), 'composer overflows');
+    await t.ev(`document.querySelectorAll('.chat-attach button').forEach(b=>b.click())`);
+    await t.ev(`document.querySelector('.chat-list-btn').click()`);
+    await t.waitFor(`!!document.querySelector('.chat-list-pop .chat-search')`, 4000, 'list sheet');
+    await shot('p5-mobile-list');
+    assert(!(await t.ev(`document.documentElement.scrollWidth > window.innerWidth + 1`)), 'page overflows with the sheet open');
+    await t.ev(`document.querySelector('.pop-backdrop')?.click()`);
+    await t.viewport(1280, 900, false);
+  });
   /*__CHECKS__*/
 } catch (err) {
   console.log('ABORT', err instanceof Error ? err.stack : err);

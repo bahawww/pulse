@@ -169,7 +169,16 @@ function reduce(state: Thread | null, a: Action): Thread | null {
 // The hook
 // ---------------------------------------------------------------------------
 
+/** The browser's link to Pulse (the event stream), apart from Pulse's link to OpenCode (`upstream`). */
+export type ChatLink = 'live' | 'reconnecting';
+
+/** Pulse pings every 25 s; this long without anything and the stream is treated as dead. */
+const STALE_MS = 70_000;
+
 export interface Chat {
+  readonly link: ChatLink;
+  /** Opens the stream again now, instead of waiting for the browser's retry. */
+  readonly reconnect: () => void;
   readonly upstream: ChatUpstream | 'loading';
   readonly directory: string;
   readonly sessions: readonly ChatSession[] | null;
@@ -230,6 +239,10 @@ export function useChat(notify: (text: string) => void): Chat {
   autoNextRef.current = autoNext;
   const [model, setModelState] = useState<ChatModelRef | null>(storedModel);
   const [epoch, setEpoch] = useState(0);
+  const [link, setLink] = useState<ChatLink>('live');
+  /** Bumped to open the event stream again (stale, back online, back on screen). */
+  const [streamTry, setStreamTry] = useState(0);
+  const reconnect = useCallback(() => setStreamTry((n) => n + 1), []);
 
   const currentRef = useRef(currentId);
   currentRef.current = currentId;
@@ -339,6 +352,9 @@ export function useChat(notify: (text: string) => void): Chat {
     });
     streamReady.current = { id: currentId, wait, done };
     const es = new EventSource(`/api/chat/events${currentId ? `?session=${encodeURIComponent(currentId)}` : ''}`);
+    let lastSeen = Date.now();
+    /** The server said goodbye (permission taken away, login ended): opening again would only get the same answer. */
+    let ended = false;
     let deltas: Delta[] = [];
     let frame = 0;
     const flush = () => {
@@ -348,11 +364,27 @@ export function useChat(notify: (text: string) => void): Chat {
       if (list.length) dispatch({ type: 'deltas', list });
     };
     es.onopen = () => {
+      lastSeen = Date.now();
+      setLink('live');
       streamReady.current?.done();
       // A reconnect may have missed events: load fresh. On the first open the status call does it.
       if (upstreamRef.current === 'up') loadAll();
     };
+    // The browser retries a dropped stream by itself; until it does, say so.
+    es.onerror = () => setLink('reconnecting');
+    es.addEventListener('ping', () => {
+      lastSeen = Date.now();
+    });
+    // A phone that slept, or a connection that went quiet without closing: open it again.
+    const stale = () => !ended && (Date.now() - lastSeen > STALE_MS || es.readyState === EventSource.CLOSED);
+    const check = () => {
+      if (document.visibilityState === 'visible' && stale()) setStreamTry((n) => n + 1);
+    };
+    const watchdog = window.setInterval(check, 15_000);
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('online', check);
     es.addEventListener('chat', (msg) => {
+      lastSeen = Date.now();
       let e: ChatEvent;
       try {
         e = JSON.parse((msg as MessageEvent<string>).data) as ChatEvent;
@@ -398,12 +430,18 @@ export function useChat(notify: (text: string) => void): Chat {
           dispatch({ type: 'event', event: e });
       }
     });
-    es.addEventListener('bye', () => es.close());
+    es.addEventListener('bye', () => {
+      ended = true;
+      es.close();
+    });
     return () => {
       cancelAnimationFrame(frame);
+      window.clearInterval(watchdog);
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('online', check);
       es.close();
     };
-  }, [currentId, epoch, loadAll, loadProviders, applyUpstream, open]);
+  }, [currentId, epoch, streamTry, loadAll, loadProviders, applyUpstream, open]);
 
   /** The open session, made first when there is none (a new chat). */
   const ensureSession = useCallback(async (): Promise<string> => {
@@ -617,6 +655,8 @@ export function useChat(notify: (text: string) => void): Chat {
 
   const current = sessions?.find((s) => s.id === currentId) ?? null;
   return {
+    link,
+    reconnect,
     upstream,
     directory,
     sessions,

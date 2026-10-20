@@ -50,21 +50,24 @@ export async function start(opts = {}) {
   };
 
   const fake = run(process.execPath, [path.join(HERE, 'fake-opencode.mjs'), String(ocPort)], { FAKE_OC_DIR: work }, root);
-  const pulse = run(process.execPath, ['dist/server/index.js'], {
-    PORT: String(pulsePort),
-    HOST: '127.0.0.1',
-    DASHBOARD_DATA_DIR: data,
-    DASHBOARD_DB: path.join(data, 'telemetry.db'),
-    HOME: home,
-    ADMIN_USER: 'tester',
-    ADMIN_PASSWORD: password,
-    OPENCODE_URL: `http://127.0.0.1:${ocPort}`,
-    OPENCODE_SERVER_PASSWORD: 'testpw',
-    CHAT_DIRECTORY: work,
-    DB_PASSWORD: '',
-  }, root);
+  const spawnPulse = () =>
+    run(process.execPath, ['dist/server/index.js'], {
+      PORT: String(pulsePort),
+      HOST: '127.0.0.1',
+      DASHBOARD_DATA_DIR: data,
+      DASHBOARD_DB: path.join(data, 'telemetry.db'),
+      HOME: home,
+      ADMIN_USER: 'tester',
+      ADMIN_PASSWORD: password,
+      OPENCODE_URL: `http://127.0.0.1:${ocPort}`,
+      OPENCODE_SERVER_PASSWORD: 'testpw',
+      CHAT_DIRECTORY: work,
+      DB_PASSWORD: '',
+    }, root);
+  let pulse = spawnPulse();
   const base = `http://127.0.0.1:${pulsePort}`;
-  await until(async () => (await fetch(`${base}/api/health`)).ok, 20_000, `pulse up\n${pulse.logs}`);
+  const pulseUp = () => until(async () => (await fetch(`${base}/api/health`)).ok, 20_000, `pulse up\n${pulse.logs}`);
+  await pulseUp();
 
   const chrome = run('google-chrome', ['--headless=new', `--remote-debugging-port=${chromePort}`, '--no-first-run', '--disable-gpu', `--user-data-dir=${path.join(tmp, 'chrome')}`, 'about:blank'], {});
   const page = await until(async () => (await (await fetch(`http://127.0.0.1:${chromePort}/json`)).json()).find((x) => x.type === 'page'), 15_000, 'chrome up');
@@ -128,6 +131,13 @@ export async function start(opts = {}) {
     dropAgentStream: () => fetch(`http://127.0.0.1:${ocPort}/__drop`, { method: 'POST', headers: { Authorization: `Basic ${Buffer.from('opencode:testpw').toString('base64')}` } }),
     /** Every session the fake holds, with its rules and message count. */
     fakeSessions: async () => (await fetch(`http://127.0.0.1:${ocPort}/__sessions`, { headers: { Authorization: `Basic ${Buffer.from('opencode:testpw').toString('base64')}` } })).json(),
+    /** Kills Pulse, stays down for `downMs`, starts it again with the same data (the browser's event stream must notice and come back). */
+    async restartPulse(downMs = 3500) {
+      pulse.kill('SIGKILL');
+      await sleep(downMs);
+      pulse = spawnPulse();
+      await pulseUp();
+    },
     logs: () => ({ pulse: pulse.logs, fake: fake.logs }),
     async close() {
       try {

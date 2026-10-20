@@ -474,8 +474,14 @@ function visibleMessages(chat: Chat): readonly ChatMessage[] {
   return t ? (revert ? t.messages.filter((m) => m.id < revert) : t.messages) : [];
 }
 
+/** Messages drawn at once; a long chat shows the latest of them and a button for earlier ones. */
+const WINDOW = 60;
+
 function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFill: (text: string) => void; readonly onNotify: (text: string) => void }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [limit, setLimit] = useState(WINDOW);
+  /** Distance from the bottom before earlier messages were added: keeps the reader's place when they appear above. */
+  const keepFromBottom = useRef<number | null>(null);
   const stick = useRef(true);
   const [away, setAway] = useState(false);
   const t = chat.thread;
@@ -509,6 +515,8 @@ function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFi
     }),
     [undo, send, fork, onFill, onNotify],
   );
+  const hidden = Math.max(0, messages.length - limit);
+  const shown = hidden > 0 ? messages.slice(hidden) : messages;
   const idle = !t?.busy && !chat.pending;
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');
   const lastReply = [...messages].reverse().find((m) => m.role === 'assistant');
@@ -523,6 +531,23 @@ function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFi
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     stick.current = near;
     setAway(!near);
+  };
+
+  useEffect(() => setLimit(WINDOW), [chat.currentId]);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && keepFromBottom.current !== null) {
+      el.scrollTop = el.scrollHeight - keepFromBottom.current;
+      keepFromBottom.current = null;
+    }
+  });
+  const showEarlier = () => {
+    const el = scrollRef.current;
+    if (el) {
+      keepFromBottom.current = el.scrollHeight - el.scrollTop;
+      stick.current = false;
+    }
+    setLimit((l) => l + WINDOW);
   };
 
   // Follow the reply while the reader is at the bottom; leave them be once they scroll up.
@@ -579,7 +604,13 @@ function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFi
           </div>
         )}
         {empty && chat.loadingThread && <p className="chat-muted chat-loading">Loading conversation…</p>}
-        {messages.map((m) => (
+        {hidden > 0 && (
+          <button type="button" className="chat-earlier" onClick={showEarlier}>
+            Show {Math.min(WINDOW, hidden)} earlier messages
+            <span>{hidden} hidden</span>
+          </button>
+        )}
+        {shown.map((m) => (
           <Message key={m.id} message={m} permissions={t!.permissions} onAnswer={chat.answer} idle={idle} canRetry={m === lastReply && !!lastUser && !hasAttachments(lastUser)} actions={actions} />
         ))}
         {undone > 0 && (
@@ -1468,6 +1499,33 @@ interface ChatViewProps {
   readonly canControl?: boolean;
 }
 
+/** "Connection lost" while the browser's link to Pulse is down for more than a moment (a blip is not worth a banner). */
+function LinkBanner({ chat }: { readonly chat: Chat }): JSX.Element | null {
+  const [late, setLate] = useState(false);
+  const down = chat.link === 'reconnecting';
+  useEffect(() => {
+    if (!down) {
+      setLate(false);
+      return undefined;
+    }
+    const t = window.setTimeout(() => setLate(true), 1500);
+    return () => window.clearTimeout(t);
+  }, [down]);
+  if (!down || !late) return null;
+  return (
+    <div className="chat-status is-link" role="status">
+      <div>
+        <strong>Connection lost</strong>
+        <span>Reconnecting. What the agent did meanwhile loads when it is back.</span>
+      </div>
+      <button type="button" className="btn btn-sm" onClick={chat.reconnect}>
+        <RefreshIcon size={14} />
+        Retry now
+      </button>
+    </div>
+  );
+}
+
 /**
  * The chat, full screen like ChatGPT: the session list beside the thread on
  * wide screens, a sheet below 900px. Opened from the floating button
@@ -1657,6 +1715,8 @@ export function ChatView({ open, onMinimize, onNotify, onSignal, ask = null, can
               <MinimizeIcon size={18} />
             </button>
           </header>
+
+          <LinkBanner chat={chat} />
 
           {status && (
             <div className="chat-status" role="status">

@@ -88,7 +88,7 @@ async function reply(sid, userText, files) {
     await say(`Try this:\n\n\`\`\`bash\n${runLine[1]}\n\`\`\`\n`);
   } else if (t.includes('slow')) {
     await say('Working on it, this takes a while. ');
-    for (let i = 0; i < 100 && !abortedNow(); i += 1) await sleep(100);
+    for (let i = 0; i < 600 && !abortedNow(); i += 1) await sleep(100);
   } else if (t.includes('todo')) {
     const list2 = [
       { content: 'Read the config', status: 'completed', priority: 'high' },
@@ -178,7 +178,7 @@ const server = http.createServer(async (req, res) => {
     streams.clear();
     return json(res, 200, { ok: true });
   }
-  if (route === '/__sessions') return json(res, 200, [...sessions.values()].map((x) => ({ ...x, messageCount: messages.get(x.id)?.length ?? 0 })));
+  if (route === '/__sessions') return json(res, 200, [...sessions.values()].map((x) => ({ ...x, messageCount: messages.get(x.id)?.length ?? 0, status: status.get(x.id) ?? 'idle' })));
   if (route === '/session/status') return json(res, 200, Object.fromEntries([...status].filter(([, v]) => v !== 'idle').map(([k, v]) => [k, { type: v }])));
   if (route === '/experimental/session') return json(res, 200, [...sessions.values()].sort((a, b) => b.time.updated - a.time.updated));
   if (route === '/session' && method === 'POST') {
@@ -235,6 +235,20 @@ const server = http.createServer(async (req, res) => {
       }
       addUser(id, body.parts);
       json(res, 204);
+      // "bulk N": N finished turns appended at once, for long-chat tests (no events, no model).
+      const bulk = /^bulk (\d+)$/.exec(text(body.parts).trim());
+      if (bulk) {
+        const list = messages.get(id);
+        for (let i = 1; i <= Number(bulk[1]); i += 1) {
+          for (const role of ['user', 'assistant']) {
+            const info = { id: rid('msg'), sessionID: id, role, time: { created: Date.now(), ...(role === 'assistant' ? { completed: Date.now() } : {}) }, ...(role === 'assistant' ? { providerID: 'fake', modelID: 'fake-1' } : {}) };
+            list.push({ info, parts: [{ id: rid('prt'), messageID: info.id, sessionID: id, type: 'text', text: `${role} turn ${i}` }] });
+          }
+        }
+        if (sessions.get(id).title === 'New session') sessions.get(id).title = 'bulk chat';
+        touch(sessions.get(id));
+        return;
+      }
       void reply(id, text(body.parts), files);
       return;
     }
