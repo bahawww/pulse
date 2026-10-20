@@ -490,15 +490,31 @@ html:is([data-vt='view'], [data-vt='filter']) .tabbar {
   view-transition-name: tabbar;
 }
 
+html:is([data-vt='view'], [data-vt='filter']) .chat-fab {
+  view-transition-name: chat-fab;
+}
+
 html:is([data-vt='view'], [data-vt='filter'])::view-transition-group(topbar),
 html:is([data-vt='view'], [data-vt='filter'])::view-transition-group(tabbar),
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-group(chat-fab),
 html:is([data-vt='view'], [data-vt='filter'])::view-transition-new(topbar),
-html:is([data-vt='view'], [data-vt='filter'])::view-transition-new(tabbar) {
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-new(tabbar),
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-new(chat-fab) {
   animation: none;
 }
 
+/* Groups stack in the order they were first captured, so a card that only
+   exists in the new state (a category switch) would land above the bars and
+   hide them until the transition ends. Lift the bars above every card. */
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-group(topbar),
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-group(tabbar),
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-group(chat-fab) {
+  z-index: 1;
+}
+
 html:is([data-vt='view'], [data-vt='filter'])::view-transition-old(topbar),
-html:is([data-vt='view'], [data-vt='filter'])::view-transition-old(tabbar) {
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-old(tabbar),
+html:is([data-vt='view'], [data-vt='filter'])::view-transition-old(chat-fab) {
   animation: none;
   opacity: 0;
 }
