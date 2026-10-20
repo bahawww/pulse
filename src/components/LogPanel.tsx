@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LogEntry } from '../shared/contract';
 import { formatClock } from '../lib/format';
 import { SelectMenu } from './SelectMenu';
+import { AskAgentButton } from './AskAgentButton';
 import { BoneLines, Loading } from './Skeleton';
 import { TZ_LABEL } from '../shared/time';
 
@@ -128,9 +129,18 @@ export function LogPanel() {
           options={SINCE.map((s) => ({ value: s.value, label: s.label }))}
           onChange={setSince}
         />
-        <button type="button" className="btn btn-sm" onClick={() => void load()} style={{ marginLeft: 'auto' }}>
-          Refresh
-        </button>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}>
+          {unit && (
+            <AskAgentButton
+              prompt={`Read the recent logs of ${unit}. Point out errors or anything odd, explain the likely cause, and say what to do.`}
+              context={[{ kind: 'logs', name: unit, lines }]}
+              label="Ask agent"
+            />
+          )}
+          <button type="button" className="btn btn-sm" onClick={() => void load()}>
+            Refresh
+          </button>
+        </span>
       </div>
 
       {error && <p className="note is-error">{error}</p>}

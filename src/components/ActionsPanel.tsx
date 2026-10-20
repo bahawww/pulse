@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { usePolled } from '../hooks/usePolled';
 import { postJson } from '../lib/csrf';
+import { AskAgentButton } from './AskAgentButton';
 import type { ActionLogEntry, ActionResult, ActionTarget } from '../shared/contract';
 import { formatClock } from '../lib/format';
 import { TZ_LABEL } from '../shared/time';
@@ -151,6 +152,12 @@ export function ActionsPanel({
                 {t.label}
               </span>
               <span className="action-buttons">
+                <AskAgentButton
+                  compact
+                  label={`Ask the agent about ${t.label}`}
+                  prompt={`Diagnose "${t.label}". Read its status and recent logs below, find the most likely cause of trouble, and suggest the smallest safe fix. Ask me before you change anything.`}
+                  context={[{ kind: 'diagnose', name: t.name }]}
+                />
                 {/* Every verb stays available. The running state comes from a health probe, which can
                     be wrong for a moment, and a wrong probe must never lock out a restart. Start is only
                     highlighted when the service looks down. */}

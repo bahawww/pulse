@@ -2,6 +2,8 @@ import type { Express, Request, RequestHandler, Response } from 'express';
 
 import { chatEventSession, type ChatEvent, type ChatMention, type ChatModelRef } from '../shared/contract.js';
 import { ChatError, type ChatAdapter } from './chatAdapter.js';
+import { targetsDetailed } from './actions.js';
+import { buildContext, type ContextSources } from './chatContext.js';
 import { opencode } from './chatOpencode.js';
 import { onSessionEnd, requirePerm, userOf } from './session.js';
 
@@ -192,7 +194,7 @@ function mentions(v: unknown): ChatMention[] {
 /** Prompt (and command) bodies may be longer than the app-wide 16 KB JSON cap (see index.ts). */
 export const CHAT_PROMPT_PATH = /^\/api\/chat\/sessions\/[^/]+\/(prompt|command)$/;
 
-export function registerChatRoutes(app: Express, readLimiter: RequestHandler, writeLimiter: RequestHandler): void {
+export function registerChatRoutes(app: Express, readLimiter: RequestHandler, writeLimiter: RequestHandler, sources: ContextSources): void {
   // Every /api/chat route, known or not, answers 403 without the permission.
   app.use('/api/chat', requirePerm('chat'));
 
@@ -222,6 +224,28 @@ export function registerChatRoutes(app: Express, readLimiter: RequestHandler, wr
       return { files: await adapter.findFiles(session, q) };
     }),
   );
+
+  // Host facts for the message box (metrics, logs, alerts...): the person reads and edits them before sending.
+  app.get(
+    '/api/chat/context',
+    readLimiter,
+    wrap(async (req) => {
+      const str = (v: unknown, max: number): string | undefined => (typeof v === 'string' && v.length <= max && !/[\0\n]/.test(v) ? v : undefined);
+      const lines = Number.parseInt(String(req.query.lines ?? ''), 10);
+      return buildContext(
+        {
+          kind: str(req.query.kind, 20) ?? '',
+          name: str(req.query.name, 128),
+          lines: Number.isFinite(lines) ? lines : undefined,
+          priority: str(req.query.priority, 12) ?? null,
+        },
+        sources,
+      );
+    }),
+  );
+
+  // What Service control can act on: lets the chat offer a Run button for `systemctl restart x` in an answer.
+  app.get('/api/chat/targets', readLimiter, wrap(async () => targetsDetailed()));
 
   app.get('/api/chat/sessions', readLimiter, wrap(async () => ({ sessions: await adapter.listSessions() })));
 

@@ -25,9 +25,10 @@ export function parseTodos(raw: string | undefined): Todo[] | null {
   }
 }
 
-/** The agent's current plan: the last todowrite call in the thread. */
+/** The agent's plan for the current turn: the last todowrite call since the last prompt (an older turn's plan is not this one's). */
 export function latestTodos(messages: readonly ChatMessage[]): Todo[] | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]!.role === 'user') return null;
     const parts = messages[i]!.parts;
     for (let j = parts.length - 1; j >= 0; j -= 1) {
       const p = parts[j]!;

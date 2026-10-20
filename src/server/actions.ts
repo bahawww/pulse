@@ -80,6 +80,23 @@ export function refreshAllowlist(units: readonly string[], containers: readonly 
   }
 }
 
+/** The unit behind a dashboard service id, for read-only lookups (status, logs). Null for an id Pulse has not seen. */
+export function controlOf(id: string): Control | null {
+  if (!knownUnits.has(id)) return null;
+  return CONTROL[id] ?? { scope: 'system', unit: id };
+}
+
+/** What Service control can act on, for matching a command the agent suggested: dashboard ids with their units, and containers. */
+export function targetsDetailed(): { systemd: { id: string; unit: string; scope: 'system' | 'user' }[]; docker: string[] } {
+  return {
+    systemd: [...knownUnits].map((id) => {
+      const c = CONTROL[id] ?? { scope: 'system' as const, unit: id };
+      return { id, unit: c.unit, scope: c.scope };
+    }),
+    docker: [...knownContainers],
+  };
+}
+
 /** Short-lived token proving the operator saw the confirmation dialog. */
 interface Pending {
   readonly request: ActionRequest;

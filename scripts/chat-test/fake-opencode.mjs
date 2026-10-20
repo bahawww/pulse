@@ -6,7 +6,8 @@
 //
 // Basic auth: user "opencode", password from FAKE_OC_PASSWORD (default "testpw").
 // Prompt keywords pick the reply: "todo", "perm" (asks for permission), "restart"
-// (a runnable systemctl block), "slow" (long, for Stop), "image" (echoes attachments).
+// (a systemctl block), "slow" (long, for Stop), "image" (echoes attachments), and a line
+// "run: <cmd>" answers with that command in a bash block.
 import http from 'node:http';
 
 const PORT = Number(process.argv[2] ?? process.env.FAKE_OC_PORT ?? 4097);
@@ -82,7 +83,10 @@ async function reply(sid, userText, files) {
     emit('message.part.updated', { part: p });
   };
   const t = userText.toLowerCase();
-  if (t.includes('slow')) {
+  const runLine = /^run: (.+)$/m.exec(userText);
+  if (runLine) {
+    await say(`Try this:\n\n\`\`\`bash\n${runLine[1]}\n\`\`\`\n`);
+  } else if (t.includes('slow')) {
     await say('Working on it, this takes a while. ');
     for (let i = 0; i < 100 && !abortedNow(); i += 1) await sleep(100);
   } else if (t.includes('todo')) {

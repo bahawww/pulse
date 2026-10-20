@@ -1736,3 +1736,80 @@ html[data-chat-open] body {
   margin-top: 4px;
   overflow-y: auto;
 }
+
+/* ---------- Host data in messages, Run button on suggested commands ---------- */
+
+.chat-ctx-btn {
+  display: inline-grid;
+  place-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.chat-ctx-btn:hover:not(:disabled),
+.chat-ctx-btn[aria-expanded='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.chat-ctx-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-ctx-pop {
+  left: 0;
+  right: auto;
+  bottom: calc(100% + 8px);
+  top: auto;
+  width: min(320px, calc(100vw - 24px));
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.chat-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.chat-run-btn {
+  gap: 6px;
+}
+
+.chat-run-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  font-size: 12.5px;
+}
+
+.chat-run-buttons {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.chat-run-result {
+  width: 100%;
+  font-size: 12px;
+}
+
+.chat-run-result.is-ok {
+  color: var(--ok-text);
+}
+
+.chat-run-result.is-error {
+  color: var(--crit-text);
+}

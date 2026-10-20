@@ -588,7 +588,7 @@ const chatWriteLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many chat requests' },
 });
-registerChatRoutes(app, apiLimiter, chatWriteLimiter);
+registerChatRoutes(app, apiLimiter, chatWriteLimiter, { stats: getStats, alerts: () => snapshot(getRules(), channelStatus()) });
 
 registerUserRoutes(app, apiLimiter, destroyUserSessions, (req) => {
   const hash = sessionHash(req);

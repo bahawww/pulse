@@ -1,6 +1,7 @@
 import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { can, isHiddenContainer, UNIT_SERVICES, type HistorySample, type Service } from './shared/contract';
+import { type AskRequest, onAsk, setAskEnabled } from './lib/chatBus';
 import { useNow } from './hooks/useNow';
 import { useStats } from './hooks/useStats';
 import { useHistory } from './hooks/useHistory';
@@ -93,6 +94,8 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   // it works or waits for an answer.
   const [chatState, setChatState] = useState<'never' | 'open' | 'hidden'>('never');
   const [chatSignal, setChatSignal] = useState<ChatSignal>({ busy: false, asking: false });
+  // "Ask agent" buttons elsewhere: open the chat in a new conversation with the question ready.
+  const [chatAsk, setChatAsk] = useState<{ req: AskRequest; n: number } | null>(null);
   const chatOpenRef = useRef(false);
   chatOpenRef.current = chatState === 'open';
 
@@ -155,6 +158,18 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     setChatState('open');
     if (!(window.history.state as { pulseChat?: boolean } | null)?.pulseChat) window.history.pushState({ pulseChat: true }, '');
   }, []);
+  useEffect(() => {
+    setAskEnabled(canChat);
+    if (!canChat) return undefined;
+    const off = onAsk((req) => {
+      setChatAsk((a) => ({ req, n: (a?.n ?? 0) + 1 }));
+      openChat();
+    });
+    return () => {
+      off();
+      setAskEnabled(false);
+    };
+  }, [canChat, openChat]);
   const minimizeChat = useCallback(() => {
     if ((window.history.state as { pulseChat?: boolean } | null)?.pulseChat) window.history.back();
     else setChatState((st) => (st === 'open' ? 'hidden' : st));
@@ -542,7 +557,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
 
       {canChat && chatState !== 'never' && Chat && (
         <ErrorBoundary label="the chat">
-          <Chat open={chatState === 'open'} onMinimize={minimizeChat} onNotify={notify} onSignal={onChatSignal} />
+          <Chat open={chatState === 'open'} onMinimize={minimizeChat} onNotify={notify} onSignal={onChatSignal} ask={chatAsk} canControl={canAct} />
         </ErrorBoundary>
       )}
 

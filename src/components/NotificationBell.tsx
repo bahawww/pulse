@@ -5,6 +5,7 @@ import { formatAgo, formatPercent } from '../lib/format';
 import { BellIcon } from './icons';
 import type { AlertEvent, AlertState } from '../shared/contract';
 import { BoneRows, Loading } from './Skeleton';
+import { AskAgentButton } from './AskAgentButton';
 
 /**
  * Alerts bell. The badge counts only what is firing now; resolved events stay
@@ -141,7 +142,7 @@ export function NotificationBell({ alerts, onNotify, canEdit = false }: Notifica
                 ) : (
                   <ul className="alert-list">
                     {firing.map((event) => (
-                      <AlertRow key={event.id} event={event} firing />
+                      <AlertRow key={event.id} event={event} firing onAsk={() => setOpen(false)} />
                     ))}
                   </ul>
                 )}
@@ -280,7 +281,7 @@ function describeThresholds(rule: AlertRule): string {
   return `${parts.length > 0 ? parts.join(' · ') : 'state only'} for ${t.forSamples} samples`;
 }
 
-function AlertRow({ event, firing }: { readonly event: AlertEvent; readonly firing: boolean }): JSX.Element {
+function AlertRow({ event, firing, onAsk }: { readonly event: AlertEvent; readonly firing: boolean; readonly onAsk?: () => void }): JSX.Element {
   return (
     <li className={`alert-row is-${event.severity}${firing ? '' : ' is-resolved'}`}>
       <span className="alert-dot" aria-hidden="true" />
@@ -291,6 +292,14 @@ function AlertRow({ event, firing }: { readonly event: AlertEvent; readonly firi
             ? `firing for ${formatAgo(Date.now() - event.since)}`
             : `held ${formatAgo(Date.now() - event.since)} · resolved ${formatAgo(Date.now() - (event.resolvedAt ?? event.since))}`}
         </p>
+        {firing && (
+          <AskAgentButton
+            prompt={`This alert is firing: "${event.message}". Explain what it means here, the most likely cause, and what to check first.`}
+            context={[{ kind: 'alerts' }, { kind: 'metrics' }]}
+            label="Explain"
+            onAsk={onAsk}
+          />
+        )}
       </div>
     </li>
   );

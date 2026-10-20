@@ -2,6 +2,7 @@ import { type JSX, useMemo, useState } from 'react';
 import type { HistorySample, ProcessInfo, ProcessSignal } from '../shared/contract';
 import { postJson } from '../lib/csrf';
 import { formatBytes, formatPercent } from '../lib/format';
+import { AskAgentButton } from './AskAgentButton';
 import { TimeChart, type Series } from './TimeChart';
 
 /**
@@ -111,7 +112,14 @@ export function ProcessHistory({ processes, samples, canAct = false, onNotify, o
           </h3>
           <p className="card-sub">ranked by CPU, then memory{canAct ? ' · signal or renice active workloads' : ''}</p>
         </div>
-        <span className="tag">{processes.length} shown</span>
+        <span className="tw:flex tw:items-center tw:gap-2">
+          <AskAgentButton
+            prompt="Look at the top processes and the rest of this snapshot. Is anything misbehaving or using more than it should? Say what you would check or change first."
+            context={[{ kind: 'metrics' }]}
+            label="Ask agent"
+          />
+          <span className="tag">{processes.length} shown</span>
+        </span>
       </div>
 
       {pending && (

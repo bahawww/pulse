@@ -25,7 +25,14 @@ export const BUILTIN_COMMANDS = [
   { name: 'redo', description: 'Bring back what /undo took', session: true },
   { name: 'share', description: 'Make a public link to this chat', session: true },
   { name: 'unshare', description: 'Remove the public link', session: true },
+  { name: 'diagnose', description: 'Check a service: its status and logs go in the message (/diagnose name)', session: false },
+  { name: 'why-slow', description: 'Put a host snapshot in the message: why is the server slow?', session: false },
+  { name: 'disk-hog', description: 'Put disk usage in the message: what is filling the disk?', session: false },
+  { name: 'explain-alert', description: 'Put the alerts firing now in the message', session: false },
 ] as const;
+
+/** Built-ins that need text after their name: picking one waits for it instead of running. */
+export const BUILTIN_NEEDS_TEXT: ReadonlySet<string> = new Set(['diagnose']);
 
 export type BuiltinName = (typeof BUILTIN_COMMANDS)[number]['name'];
 

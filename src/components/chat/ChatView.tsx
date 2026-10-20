@@ -1,4 +1,4 @@
-import { type FormEvent, type JSX, type KeyboardEvent, type ReactNode, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type JSX, type KeyboardEvent, type ReactNode, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import '../../chat.css';
 import type { ChatFileHit, ChatMention, ChatMessage, ChatModelRef, ChatPermission, ChatProviderList, ChatSession, ChatTokens, ChatUpstream } from '../../shared/contract';
@@ -7,11 +7,15 @@ import { prefersReducedMotion } from '../../lib/motion';
 import type { ChatSignal } from '../ChatFab';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { ArrowDownIcon, BellIcon, CheckIcon, ChatIcon, ChevronDownIcon, CopyIcon, ListIcon, MinimizeIcon, MoreIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from '../icons';
+import type { AskRequest } from '../../lib/chatBus';
 import { copyText } from './clip';
+import { ContextMenu } from './ContextMenu';
+import { TEMPLATES, resolveAsk } from './context';
 import { Markdown } from './Markdown';
 import { notifyEnabled, notifySupported, setNotifyEnabled, showAlert, vibrate } from './notify';
-import { BUILTIN_ALIASES, BUILTIN_COMMANDS, type BuiltinName, type Suggestion, SuggestList, agentSuggestions, findTrigger, slashSuggestions } from './Suggest';
+import { BUILTIN_ALIASES, BUILTIN_COMMANDS, BUILTIN_NEEDS_TEXT, type BuiltinName, type Suggestion, SuggestList, agentSuggestions, findTrigger, slashSuggestions } from './Suggest';
 import { PermissionCard, Progress, ToolCard } from './Parts';
+import { RunContext, type RunTargets } from './Runnable';
 import { type Chat, useChat } from './useChat';
 
 /**
@@ -275,6 +279,8 @@ const Message = memo(function Message({
   readonly canRetry: boolean;
   readonly actions: MessageActions;
 }): JSX.Element | null {
+  // A command in a reply still streaming may be cut short ("docker restart coolify" of "coolify-db"): no Run button until it is complete.
+  const targets = useContext(RunContext);
   if (message.role === 'user') {
     const text = messageText(message);
     // Files named in the text as @path are marked there; only the others get a chip.
@@ -292,6 +298,7 @@ const Message = memo(function Message({
   const finished = message.completedAt !== null || message.error !== '';
   return (
     <div className="chat-msg is-assistant">
+      <RunContext.Provider value={finished ? targets : null}>
       {message.parts.map((p) => {
         switch (p.type) {
           case 'text':
@@ -322,6 +329,7 @@ const Message = memo(function Message({
             return null;
         }
       })}
+      </RunContext.Provider>
       {message.error && <div className={`chat-msg-error${message.error === 'Stopped' ? ' is-stopped' : ''}`}>{message.error}</div>}
       {finished && idle && <MessageBar message={message} canEdit={false} canRetry={canRetry} actions={actions} />}
     </div>
@@ -400,10 +408,30 @@ function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFi
   };
 
   // Follow the reply while the reader is at the bottom; leave them be once they scroll up.
+  // Sending a message always brings the reader back to the bottom, like any chat.
+  const sent = useRef('');
   useLayoutEffect(() => {
     const el = scrollRef.current;
+    if (chat.pending && chat.pending !== sent.current) stick.current = true;
+    sent.current = chat.pending;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
+  useEffect(() => {
+    if (chat.pending) setAway(false);
+  }, [chat.pending]);
+
+  // The thread grows (a Run bar, a plan) or the box around it shrinks (the progress panel, the phone's keyboard)
+  // without any new message: stay at the bottom then too, unless the reader scrolled up.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     stick.current = true;
@@ -507,6 +535,8 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
   const [files, setFiles] = useState<{ readonly query: string; readonly hits: readonly ChatFileHit[] } | null>(null);
   const mentions = useRef<ChatMention[]>([]);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
   const busy = !!chat.thread?.busy;
 
   // Grows with the text up to a cap, then scrolls.
@@ -575,8 +605,34 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fillN]);
 
+  /** Adds a block of host data after what is typed (or alone), for the person to read before sending. */
+  const insertBlock = (block: string) => {
+    const now = textRef.current.replace(/\s+$/, '');
+    put(now ? `${now}\n\n${block}\n` : `${block}\n`);
+  };
+
+  /** /diagnose, /why-slow ...: the question with the host data it needs, in the box, not sent. */
+  const fromTemplate = async (name: string, args: string) => {
+    if (name === 'diagnose' && !args) {
+      put('/diagnose ');
+      onNotify('Name the service: /diagnose hermes');
+      return;
+    }
+    try {
+      put(await resolveAsk(TEMPLATES[name]!(args)));
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'could not collect that');
+    }
+  };
+
   const runBuiltin = async (name: BuiltinName, args: string) => {
     switch (name) {
+      case 'diagnose':
+      case 'why-slow':
+      case 'disk-hog':
+      case 'explain-alert':
+        await fromTemplate(name, args);
+        return;
       case 'new':
         chat.open(null);
         return;
@@ -627,6 +683,10 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
     const insert = (value: string) => put(before + value + after, (before + value).length);
     switch (s.kind) {
       case 'builtin':
+        if (BUILTIN_NEEDS_TEXT.has(s.name)) {
+          insert(`/${s.name} `);
+          return;
+        }
         put('');
         void runBuiltin(s.name, '');
         return;
@@ -746,6 +806,7 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
       />
       <div className="chat-composer-bar">
         <div className="chat-composer-tools">
+          <ContextMenu disabled={disabled} onInsert={insertBlock} onError={onNotify} />
           <ModelPicker chat={chat} open={pickerOpen} setOpen={setPickerOpen} />
           {chat.current && !chat.current.asks && !chat.auto ? (
             <span className="chat-auto is-default" title="Made outside Pulse with OpenCode's defaults: it runs commands without asking anyway.">
@@ -1040,6 +1101,10 @@ interface ChatViewProps {
   readonly onNotify: (text: string) => void;
   /** Busy and waiting-for-answer, for the floating button while minimized. */
   readonly onSignal: (signal: ChatSignal) => void;
+  /** An "Ask agent" from the dashboard: opens a new chat with this in the box; `n` changes per request. */
+  readonly ask?: { readonly req: AskRequest; readonly n: number } | null;
+  /** The login may use Service control: answers can offer a Run button. */
+  readonly canControl?: boolean;
 }
 
 /**
@@ -1049,7 +1114,7 @@ interface ChatViewProps {
  * stops when it is minimized: it stays mounted, its stream keeps following
  * the agent, and OpenCode runs the session on its own anyway.
  */
-export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps): JSX.Element {
+export function ChatView({ open, onMinimize, onNotify, onSignal, ask = null, canControl = false }: ChatViewProps): JSX.Element {
   const chat = useChat(onNotify);
   const rootRef = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<'open' | 'closing' | 'hidden'>(open ? 'open' : 'hidden');
@@ -1060,6 +1125,32 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
   const [askAuto, setAskAuto] = useState(false);
   const [fill, setFill] = useState<{ text: string; n: number } | null>(null);
   const onFill = useCallback((text: string) => setFill((f) => ({ text, n: (f?.n ?? 0) + 1 })), []);
+  // What Service control can act on, for the Run button on suggested commands.
+  const [runTargets, setRunTargets] = useState<RunTargets | null>(null);
+  useEffect(() => {
+    if (!open || !canControl || runTargets) return;
+    void fetch('/api/chat/targets', { cache: 'no-store', headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? (r.json() as Promise<RunTargets>) : null))
+      .then((t) => t && setRunTargets(t))
+      .catch(() => undefined);
+  }, [open, canControl, runTargets]);
+
+  // An "Ask agent" button elsewhere: a fresh chat, the question and its host data in the box.
+  const askN = ask?.n;
+  const { open: openSession } = chat;
+  useEffect(() => {
+    if (!ask) return undefined;
+    let alive = true;
+    openSession(null);
+    void resolveAsk(ask.req)
+      .then((text) => alive && onFill(text))
+      .catch((err: unknown) => alive && onNotify(err instanceof Error ? err.message : 'could not collect that'));
+    return () => {
+      alive = false;
+    };
+    // Only a new request (its number) starts one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askN]);
   const [alertsOn, setAlertsOn] = useState(notifyEnabled);
   useChatAlerts(chat, open, alertsOn);
   const toggleAlerts = () => {
@@ -1133,6 +1224,7 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
   };
 
   return (
+    <RunContext.Provider value={canControl ? runTargets : null}>
     <div ref={rootRef} className="chat-overlay" data-phase={phase} role="dialog" aria-modal="true" aria-label="Chat" aria-hidden={phase === 'hidden'}>
       <div className="chat">
         <aside className="chat-side" aria-label="Chats">
@@ -1255,5 +1347,6 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
         }}
       />
     </div>
+    </RunContext.Provider>
   );
 }

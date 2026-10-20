@@ -96,6 +96,83 @@ try {
     assert(!(await t.ev(`document.documentElement.scrollWidth > window.innerWidth + 1`)), 'horizontal overflow');
     await t.viewport(1280, 900, false);
   });
+  
+  // ---- Phase 2 ----
+  const api = (path) => t.ev(`fetch(${JSON.stringify(path)}).then(async r=>({status:r.status,body:await r.json().catch(()=>null)}))`);
+  await s.check('context endpoint: metrics, bad kind, bad unit', async () => {
+    const m = await api('/api/chat/context?kind=metrics');
+    assert(m.status === 200 && /CPU \d+%/.test(m.body.text) && /RAM \d+%/.test(m.body.text), `metrics: ${JSON.stringify(m).slice(0, 120)}`);
+    assert((await api('/api/chat/context?kind=nope')).status === 400, 'bad kind accepted');
+    assert((await api('/api/chat/context?kind=logs&name=' + encodeURIComponent('x;rm -rf /'))).status === 400, 'bad unit accepted');
+    assert((await api('/api/chat/context?kind=diagnose&name=no-such-thing-here')).status === 404, 'unknown service accepted');
+    const d = await api('/api/chat/context?kind=disk');
+    assert(d.status === 200 && /used/.test(d.body.text), 'disk');
+  });
+  await s.check('"+" menu puts a host snapshot in the box (readable, editable)', async () => {
+    await t.ev(`document.querySelector('.chat-ctx-btn').click()`);
+    await t.waitFor(`!!document.querySelector('.chat-ctx-pop')`, 4000, 'menu');
+    await t.ev(`[...document.querySelectorAll('.chat-ctx-pop .menu-item')].find(b=>b.textContent.includes('Host snapshot')).click()`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value.includes('Host snapshot:')`, 8000, 'snapshot in box');
+    const v = await t.ev(`document.querySelector('.chat-composer textarea').value`);
+    assert(v.includes('```text') && /CPU \d+%/.test(v), 'block shape');
+    await shot('p2-snapshot');
+    await type('');
+  });
+  await s.check('/why-slow fills the box with the question and a snapshot, and sends nothing', async () => {
+    const before = await t.ev(`document.querySelectorAll('.chat-msg.is-user').length`);
+    await type('/why-slow');
+    await t.ev(`document.querySelector('.chat-composer textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value.includes('The server feels slow')`, 8000, 'template in box');
+    assert((await t.ev(`document.querySelector('.chat-composer textarea').value`)).includes('Host snapshot:'), 'snapshot missing');
+    assert((await t.ev(`document.querySelectorAll('.chat-msg.is-user').length`)) === before, 'something was sent');
+    await type('');
+  });
+  await s.check('/diagnose waits for a name; an unknown one says so', async () => {
+    await type('/diagnose');
+    await t.ev(`document.querySelector('.chat-composer textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value === '/diagnose '`, 4000, 'waits for a name');
+    await type('/diagnose no-such-thing-here');
+    await t.ev(`document.querySelector('.chat-composer textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`);
+    await t.waitFor(`document.querySelector('.toast')?.textContent.includes('no service called')`, 6000, 'toast');
+    await type('');
+  });
+  await s.check('a suggested restart command gets a Run button that only asks to confirm', async () => {
+    const targets = (await api('/api/chat/targets')).body;
+    const sys = targets.systemd[0];
+    const cmd = targets.docker[0] ? `docker restart ${targets.docker[0]}` : sys ? `${sys.scope === 'user' ? 'systemctl --user' : 'sudo systemctl'} restart ${sys.unit}` : null;
+    if (!cmd) throw new Error('this host has no target to try');
+    await sendText(`run: ${cmd}`);
+    await t.waitFor(`!!document.querySelector('.chat-run-btn')`, 12000, 'run button');
+    await sleep(400);
+    assert(!(await t.ev(`!!document.querySelector('.chat-progress')`)), 'an earlier turn\'s plan is still shown');
+    const geo = await t.ev(`(()=>{const b=document.querySelector('.chat-run-btn').getBoundingClientRect();const c=document.querySelector('.chat-composer').getBoundingClientRect();const sc=document.querySelector('.chat-scroll');const p=document.querySelector('.chat-progress')?.getBoundingClientRect();return {btnBottom:b.bottom,composerTop:c.top,progressTop:p?.top??null,scrollTop:sc.scrollTop,scrollH:sc.scrollHeight,clientH:sc.clientHeight,jump:!!document.querySelector('.chat-jump'),scBottom:sc.getBoundingClientRect().bottom}})()`);
+    assert(geo.btnBottom <= geo.scBottom + 1, `Run button below the thread's visible area: ${JSON.stringify(geo)}`);
+    await shot('p2-run');
+    await t.ev(`document.querySelector('.chat-run-btn').click()`);
+    await t.waitFor(`!!document.querySelector('.chat-run-confirm')`, 6000, 'confirm step');
+    assert(!(await t.ev(`!!document.querySelector('.chat-run-result.is-ok')`)), 'ran without confirming');
+    await t.ev(`[...document.querySelectorAll('.chat-run-confirm button')].find(b=>b.textContent==='Cancel').click()`);
+    await t.waitFor(`!document.querySelector('.chat-run-confirm')`, 3000, 'cancelled');
+    await t.waitFor(`!document.querySelector('.chat-working')`, 8000, 'idle');
+  });
+  await s.check('no Run button for unknown units or compound lines', async () => {
+    const before = await t.ev(`document.querySelectorAll('.chat-run-btn').length`);
+    await sendText('run: sudo systemctl restart definitely-not-a-unit');
+    await t.waitFor(`document.querySelectorAll('.md-code').length >= 3 && !document.querySelector('.chat-working')`, 12000, 'reply');
+    await sendText('run: docker restart a && docker restart b');
+    await t.waitFor(`!document.querySelector('.chat-working') && [...document.querySelectorAll('.md-code code')].some(c=>c.textContent.includes('&&'))`, 12000, 'reply 2');
+    assert((await t.ev(`document.querySelectorAll('.chat-run-btn').length`)) === before, 'extra Run buttons');
+  });
+  await s.check('"Ask agent" on the logs panel opens a new chat with the logs in the box', async () => {
+    await t.ev(`document.querySelector('.chat-overlay [aria-label^="Minimize"]').click()`);
+    await sleep(500);
+    await t.goto('#logs-and-control');
+    await t.waitFor(`[...document.querySelectorAll('.toolbar-compact button')].some(b=>b.textContent.includes('Ask agent'))`, 10000, 'ask button');
+    await t.ev(`[...document.querySelectorAll('.toolbar-compact button')].find(b=>b.textContent.includes('Ask agent')).click()`);
+    await t.waitFor(`document.querySelector('.chat-overlay[data-phase="open"] .chat-composer textarea')?.value.includes('Read the recent logs')`, 12000, 'logs in box');
+    assert((await t.ev(`document.querySelector('.chat-composer textarea').value`)).includes('Logs of'), 'no logs block');
+    assert(await t.ev(`!!document.querySelector('.chat-empty')`), 'not a new chat');
+  });
   /*__CHECKS__*/
 } catch (err) {
   console.log('ABORT', err instanceof Error ? err.stack : err);

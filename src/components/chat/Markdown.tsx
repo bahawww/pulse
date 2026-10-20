@@ -1,7 +1,11 @@
-import { type JSX, type ReactNode, memo, useMemo, useState } from 'react';
+import { type JSX, type ReactNode, memo, useContext, useMemo, useState } from 'react';
 import { CheckIcon, CopyIcon } from '../icons';
 import { copyText } from './clip';
 import { highlight } from './highlight';
+import { RunContext, RunnableBar, findRunnables } from './Runnable';
+
+/** Fence languages a person would run in a shell. */
+const SHELL = new Set(['', 'text', 'sh', 'bash', 'shell', 'zsh', 'console', 'shellscript']);
 
 /**
  * A small Markdown renderer for agent replies. It builds React elements and
@@ -187,6 +191,8 @@ export function CodeBlock({ code, lang }: { readonly code: string; readonly lang
   // Phones start wrapped: sideways scrolling inside a scrolling chat is hard to use.
   const [wrap, setWrap] = useState(() => window.matchMedia('(max-width: 640px)').matches);
   const nodes = useMemo(() => highlight(code, lang), [code, lang]);
+  const targets = useContext(RunContext);
+  const runnables = useMemo(() => (targets && SHELL.has(lang.toLowerCase()) ? findRunnables(code, targets) : []), [code, lang, targets]);
   const copy = () => {
     void copyText(code).then((ok) => {
       if (!ok) return;
@@ -211,6 +217,7 @@ export function CodeBlock({ code, lang }: { readonly code: string; readonly lang
       <pre>
         <code>{nodes}</code>
       </pre>
+      {runnables.length > 0 && <RunnableBar items={runnables} />}
     </div>
   );
 }
