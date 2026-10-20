@@ -4712,3 +4712,214 @@ html[data-go] .side-kbd {
     max-width: calc(100vw - 24px);
   }
 }
+
+/* ---------- Users: access checklist (UsersPanel PermissionPicker) --------- */
+
+/* A checkbox drawn from tokens: same look in both themes, 18px box. */
+.check {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: inherit;
+  transition:
+    background-color 120ms var(--ease),
+    border-color 120ms var(--ease);
+}
+
+.check::after {
+  content: '';
+  width: 5px;
+  height: 9px;
+  margin-top: -2px;
+  border: solid var(--accent-ink);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(0);
+  transition: transform var(--spring-bouncy-dur) var(--spring-bouncy);
+}
+
+.check:checked,
+.check:indeterminate {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.check:checked::after {
+  transform: rotate(45deg) scale(1);
+}
+
+.check:indeterminate::after {
+  width: 8px;
+  height: 0;
+  margin-top: 0;
+  border-width: 0 0 2px;
+  transform: none;
+}
+
+.check:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.check:disabled {
+  opacity: 0.45;
+}
+
+.perm {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.perm-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.perm-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.perm-count {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.perm-groups {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+
+@media (min-width: 768px) {
+  .perm-groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.perm-group {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.perm-head,
+.perm-row {
+  display: flex;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.perm-head {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.perm-head .perm-count {
+  margin-left: auto;
+}
+
+.perm-row {
+  align-items: flex-start;
+  transition: background-color 120ms var(--ease);
+}
+
+.perm-row + .perm-row {
+  border-top: 1px solid var(--line);
+}
+
+.perm-row .check {
+  margin-top: 1px;
+}
+
+.perm-row:active:not(.is-locked) {
+  background: var(--accent-soft);
+}
+
+@media (hover: hover) {
+  .perm-row:hover:not(.is-locked) {
+    background: var(--surface-2);
+  }
+}
+
+.perm-head.is-locked,
+.perm-row.is-locked {
+  cursor: default;
+}
+
+.perm-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.perm-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.perm-row.is-on .perm-label {
+  color: var(--text);
+}
+
+.perm-row.is-locked .perm-label {
+  color: var(--text-3);
+}
+
+.perm-note {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+
+.perm-risk {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.perm-changed {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}

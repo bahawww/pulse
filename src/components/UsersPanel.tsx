@@ -41,6 +41,9 @@ const ROLE_HINT: Readonly<Record<Role, string>> = {
 
 const GROUPS = [...new Set(PERMISSIONS.map((p) => p.group))];
 
+/** Permissions that hand out a root shell or can destroy data: flagged in the picker. */
+const RISKY: ReadonlySet<Permission> = new Set<Permission>(['files:write', 'terminal', 'chat']);
+
 const field =
   'tw:w-full tw:rounded-md tw:border tw:border-line-strong tw:bg-surface-2 tw:px-3 tw:py-1.5 tw:text-[13px] tw:text-fg tw:outline-none tw:disabled:opacity-60';
 
@@ -299,22 +302,14 @@ interface EditorProps {
 
 function Editor({ draft, original, isSuper, mine, passwordMin, canManage, assignable, busy, onChange, onSave, onCancel, onDelete }: EditorProps): JSX.Element {
   const creating = draft.id === null;
-  const ceiling = useMemo(() => new Set<Permission>(roleCeiling(draft.role)), [draft.role]);
   const held = (p: Permission) => !mine || mine.has(p);
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
-  const toggle = (p: Permission) => {
-    const next = new Set(draft.permissions);
-    if (next.has(p)) next.delete(p);
-    else next.add(p);
-    set({ permissions: next });
-  };
   /** `pick` for what I hold; the rest keeps its current state (the server does the same). */
   const choose = (role: Role, pick: (p: Permission) => boolean) =>
     new Set(roleCeiling(role).filter((p) => (held(p) ? pick(p) : draft.permissions.has(p))));
   // A new role starts from its defaults, like the server does.
   const changeRole = (role: Role) => set({ role, permissions: choose(role, () => true) });
   const lockedPerms = !canManage || draft.role === 'superadmin';
-  const granted = [...draft.permissions].filter((p) => ceiling.has(p)).length;
 
   return (
     <form onSubmit={onSave} className="tw:mt-4 tw:rounded-lg tw:border tw:border-line tw:p-4" aria-label={creating ? 'New user' : `Edit ${original?.username ?? ''}`}>
@@ -364,53 +359,22 @@ function Editor({ draft, original, isSuper, mine, passwordMin, canManage, assign
         </div>
         <div className="tw:flex tw:flex-col tw:gap-1 tw:text-[12px] tw:text-fg-3">
           <span aria-hidden="true">Status</span>
-          <label className="tw:flex tw:items-center tw:gap-2 tw:text-[13px] tw:text-fg">
-            <input type="checkbox" checked={!draft.disabled} disabled={!canManage || draft.role === 'superadmin'} onChange={(e) => set({ disabled: !e.currentTarget.checked })} />
+          <label className="tw:flex tw:min-h-8 tw:items-center tw:gap-2 tw:text-[13px] tw:text-fg">
+            <input type="checkbox" className="check" checked={!draft.disabled} disabled={!canManage || draft.role === 'superadmin'} onChange={(e) => set({ disabled: !e.currentTarget.checked })} />
             Can log in
           </label>
         </div>
       </div>
 
-      <fieldset className="tw:m-0 tw:mt-4 tw:min-w-0 tw:border-0 tw:border-t tw:border-line tw:p-0 tw:pt-3" disabled={lockedPerms}>
-        <legend className="tw:float-left tw:mb-3 tw:flex tw:w-full tw:items-center tw:justify-between tw:gap-2 tw:p-0 tw:text-[12px] tw:text-fg-3">
-          <span>
-            Access{' '}
-            {draft.role === 'superadmin' ? '(the superadmin always has everything)' : `· ${granted} of ${ceiling.size} allowed by the ${draft.role} role`}
-          </span>
-          {!lockedPerms && (
-            <span className="tw:flex tw:gap-2">
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: choose(draft.role, () => true) })}>
-                All
-              </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => set({ permissions: choose(draft.role, () => false) })}>
-                None
-              </button>
-            </span>
-          )}
-        </legend>
-        <div className="tw:clear-both tw:grid tw:gap-4 tw:md:grid-cols-2">
-        {GROUPS.map((g) => (
-          <div key={g} className="tw:flex tw:flex-col tw:gap-1.5">
-            <span className="tw:text-[12px] tw:font-semibold tw:text-fg-2">{g}</span>
-            {PERMISSIONS.filter((p) => p.group === g).map((p) => {
-              const allowed = ceiling.has(p.key);
-              const mayChange = allowed && held(p.key);
-              return (
-                <label
-                  key={p.key}
-                  className={`tw:flex tw:items-center tw:gap-2 tw:text-[13px] ${mayChange ? 'tw:text-fg' : 'tw:text-fg-3'}`}
-                  title={!allowed ? `Needs the ${p.min} role` : mayChange ? p.key : 'You do not have this permission, so you cannot give or take it'}
-                >
-                  <input type="checkbox" checked={allowed && draft.permissions.has(p.key)} disabled={!mayChange} onChange={() => toggle(p.key)} />
-                  {p.label}
-                  {!allowed && <span className="tw:text-[11px]">· {p.min}+</span>}
-                </label>
-              );
-            })}
-          </div>
-        ))}
-        </div>
-      </fieldset>
+      <PermissionPicker
+        role={draft.role}
+        value={draft.permissions}
+        original={original && original.role === draft.role ? new Set(original.permissions) : null}
+        held={held}
+        locked={lockedPerms}
+        onChange={(permissions) => set({ permissions })}
+        onAll={(on) => set({ permissions: choose(draft.role, () => on) })}
+      />
 
       <div className="tw:mt-4 tw:flex tw:flex-wrap tw:items-center tw:gap-2">
         <button type="submit" className="btn btn-primary btn-sm" disabled={busy}>
@@ -427,5 +391,119 @@ function Editor({ draft, original, isSuper, mine, passwordMin, canManage, assign
         )}
       </div>
     </form>
+  );
+}
+
+interface PermissionPickerProps {
+  readonly role: Role;
+  readonly value: ReadonlySet<Permission>;
+  /** The saved list, to mark what this edit changes; null for a new user or a new role. */
+  readonly original: ReadonlySet<Permission> | null;
+  /** Whether I may give or take this one (see Editor's `mine`). */
+  readonly held: (p: Permission) => boolean;
+  /** Nothing can change: the superadmin, or an account I may not manage. */
+  readonly locked: boolean;
+  readonly onChange: (next: ReadonlySet<Permission>) => void;
+  /** All or none of what I may change; the rest keeps its state. */
+  readonly onAll: (on: boolean) => void;
+}
+
+/**
+ * The access checklist: one card per group with a group checkbox (all, none,
+ * or some), and one full-width row per permission, so a finger hits it on a
+ * phone. Why a row cannot change is written under it, not in a hover title.
+ */
+function PermissionPicker({ role, value, original, held, locked, onChange, onAll }: PermissionPickerProps): JSX.Element {
+  const ceiling = useMemo(() => new Set<Permission>(roleCeiling(role)), [role]);
+  const on = (p: Permission) => ceiling.has(p) && value.has(p);
+  const changeable = (p: Permission) => !locked && ceiling.has(p) && held(p);
+  const granted = [...value].filter((p) => ceiling.has(p)).length;
+
+  const setMany = (keys: readonly Permission[], next: boolean) => {
+    const out = new Set(value);
+    for (const k of keys) {
+      if (next) out.add(k);
+      else out.delete(k);
+    }
+    onChange(out);
+  };
+
+  return (
+    <section className="perm" aria-label="Access">
+      <div className="perm-bar">
+        <span className="perm-summary">
+          Access
+          <span className="perm-count">
+            {role === 'superadmin' ? 'everything, always' : `${granted} of ${ceiling.size} allowed by the ${role} role`}
+          </span>
+        </span>
+        {!locked && (
+          <span className="tw:flex tw:gap-2">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onAll(true)}>
+              All
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onAll(false)}>
+              None
+            </button>
+          </span>
+        )}
+      </div>
+
+      <div className="perm-groups">
+        {GROUPS.map((g) => {
+          const items = PERMISSIONS.filter((p) => p.group === g);
+          const mine = items.filter((p) => changeable(p.key)).map((p) => p.key);
+          const count = items.filter((p) => on(p.key)).length;
+          const allMine = mine.length > 0 && mine.every((k) => value.has(k));
+          const someMine = mine.some((k) => value.has(k));
+          const headId = `perm-${g.toLowerCase()}`;
+          return (
+            <div key={g} className="perm-group" role="group" aria-labelledby={headId}>
+              <label className={`perm-head${mine.length === 0 ? ' is-locked' : ''}`}>
+                <input
+                  type="checkbox"
+                  className="check"
+                  checked={allMine}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someMine && !allMine;
+                  }}
+                  disabled={mine.length === 0}
+                  onChange={() => setMany(mine, !allMine)}
+                  aria-label={`All ${g}`}
+                />
+                <span id={headId}>{g}</span>
+                <span className="perm-count">
+                  {count}/{items.length}
+                </span>
+              </label>
+              {items.map((p) => {
+                const allowed = ceiling.has(p.key);
+                const may = changeable(p.key);
+                const checked = on(p.key);
+                const changed = original !== null && allowed && original.has(p.key) !== checked;
+                const note = !allowed
+                  ? `Needs the ${p.min} role`
+                  : !locked && !held(p.key)
+                    ? 'You do not hold this, so you cannot give or take it'
+                    : null;
+                return (
+                  <label key={p.key} className={`perm-row${checked ? ' is-on' : ''}${may ? '' : ' is-locked'}`}>
+                    <input type="checkbox" className="check" checked={checked} disabled={!may} onChange={() => setMany([p.key], !checked)} />
+                    <span className="perm-text">
+                      <span className="perm-label">
+                        {p.label}
+                        {RISKY.has(p.key) && allowed && <span className="perm-risk">high risk</span>}
+                        {changed && <span className="perm-changed" title="Changed, not saved yet" aria-label="changed" />}
+                      </span>
+                      {note && <span className="perm-note">{note}</span>}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }

@@ -90,7 +90,7 @@ export function registerUserRoutes(app: Express, limiter: RequestHandler, endSes
     ...gate,
     manager,
     wrap('list', async (_req, res) => {
-      res.json({ users: await listUsers() });
+      res.json({ users: await listUsers(actor(res)) });
       return '';
     }),
   );

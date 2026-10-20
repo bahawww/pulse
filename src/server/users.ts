@@ -27,6 +27,8 @@ import { getPool } from './db.js';
  *  - an admin with `users:manage`: only viewers and operators (role up to
  *    operator, permissions, disabled, delete). Not usernames or passwords.
  *  - everyone: their own password, with the current one.
+ * Only the superadmin sees the superadmin: it is left out of everyone else's
+ * list, and touching it by id answers "no such user".
  * Passwords: at least PASSWORD_MIN characters, except one the superadmin sets
  * for someone else (a reset, or a new account), which may be anything non-empty.
  * Nobody changes their own role, permissions or status, and the last enabled
@@ -158,9 +160,10 @@ export async function getUser(id: number): Promise<UserRow | null> {
   return rows[0] ? toUser(rows[0]) : null;
 }
 
-export async function listUsers(): Promise<UserRow[]> {
+/** Every account `a` may see. The superadmin is hidden from everyone but itself. */
+export async function listUsers(a: Actor): Promise<UserRow[]> {
   const [rows] = await db().query<Row[]>("SELECT * FROM users ORDER BY FIELD(role, 'superadmin', 'admin', 'operator', 'viewer'), username");
-  return rows.map(toUser);
+  return rows.map(toUser).filter((u) => isSuper(a) || u.role !== 'superadmin');
 }
 
 async function enabledAdmins(): Promise<number> {
@@ -188,6 +191,8 @@ function mayManageUsers(a: Actor): void {
 /** May `a` manage `target` at all (status, role, permissions, delete)? */
 function mayManage(a: Actor, target: UserRow): void {
   mayManageUsers(a);
+  // Hidden from everyone else (listUsers): answer as if it did not exist.
+  if (target.role === 'superadmin' && !isSuper(a)) throw new UserError('no such user', 404);
   if (a.id !== null && a.id === target.id) throw new UserError('you cannot change your own role, permissions or status', 403);
   if (target.role === 'superadmin') throw new UserError('the superadmin cannot be changed this way', 403);
   if (!isSuper(a) && ROLE_RANK[target.role] >= ROLE_RANK.admin) throw new UserError('only the superadmin manages admins', 403);
