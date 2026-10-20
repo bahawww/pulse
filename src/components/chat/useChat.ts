@@ -190,8 +190,8 @@ export interface Chat {
   readonly findFiles: (query: string) => Promise<readonly ChatFileHit[]>;
   readonly runCommand: (name: string, args: string) => Promise<void>;
   readonly compact: () => Promise<void>;
-  /** Reverts the last prompt; answers its text (for the composer), or null. */
-  readonly undo: () => Promise<string | null>;
+  /** Reverts the last prompt, or the given message and all after it; answers its text (for the composer), or null. */
+  readonly undo: (messageID?: string) => Promise<string | null>;
   readonly redo: () => Promise<void>;
   /** Answers the public link, or null. */
   readonly share: () => Promise<string | null>;
@@ -465,11 +465,11 @@ export function useChat(notify: (text: string) => void): Chat {
     }
   }, [model, fail]);
 
-  const undo = useCallback(async () => {
+  const undo = useCallback(async (messageID?: string) => {
     const id = currentRef.current;
     if (!id) return null;
     try {
-      return (await api<{ text: string }>('POST', `/api/chat/sessions/${id}/undo`)).text;
+      return (await api<{ text: string }>('POST', `/api/chat/sessions/${id}/undo`, messageID ? { messageID } : undefined)).text;
     } catch (err) {
       fail(err, 'could not undo');
       return null;

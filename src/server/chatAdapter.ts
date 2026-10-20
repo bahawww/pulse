@@ -44,8 +44,8 @@ export interface ChatAdapter {
   command(id: string, name: string, args: string, model: ChatModelRef | null): Promise<void>;
   /** /compact: summarize the session so far. Returns at once. */
   compact(id: string, model: ChatModelRef | null): Promise<void>;
-  /** /undo: revert the last prompt and its changes; answers that prompt's text, for the composer. */
-  undo(id: string): Promise<{ text: string }>;
+  /** /undo: revert the last prompt (or the given user message, and what followed it) and its changes; answers that prompt's text, for the composer. */
+  undo(id: string, messageID?: string | null): Promise<{ text: string }>;
   /** /redo: bring back what /undo took. */
   redo(id: string): Promise<void>;
   share(id: string): Promise<{ url: string }>;

@@ -1,4 +1,4 @@
-import { type FormEvent, type JSX, type KeyboardEvent, type ReactNode, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type JSX, type KeyboardEvent, type ReactNode, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import '../../chat.css';
 import type { ChatFileHit, ChatMention, ChatMessage, ChatModelRef, ChatPermission, ChatProviderList, ChatSession, ChatTokens, ChatUpstream } from '../../shared/contract';
@@ -6,10 +6,12 @@ import { formatAgo, formatTokens, formatUsd } from '../../lib/format';
 import { prefersReducedMotion } from '../../lib/motion';
 import type { ChatSignal } from '../ChatFab';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { ArrowDownIcon, CheckIcon, ChatIcon, ChevronDownIcon, ListIcon, MinimizeIcon, MoreIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from '../icons';
+import { ArrowDownIcon, BellIcon, CheckIcon, ChatIcon, ChevronDownIcon, CopyIcon, ListIcon, MinimizeIcon, MoreIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from '../icons';
+import { copyText } from './clip';
 import { Markdown } from './Markdown';
+import { notifyEnabled, notifySupported, setNotifyEnabled, showAlert, vibrate } from './notify';
 import { BUILTIN_ALIASES, BUILTIN_COMMANDS, type BuiltinName, type Suggestion, SuggestList, agentSuggestions, findTrigger, slashSuggestions } from './Suggest';
-import { PermissionCard, ToolCard } from './Parts';
+import { PermissionCard, Progress, ToolCard } from './Parts';
 import { type Chat, useChat } from './useChat';
 
 /**
@@ -188,17 +190,93 @@ function ModelPicker({ chat, open, setOpen }: { readonly chat: Chat; readonly op
 // Thread
 // ---------------------------------------------------------------------------
 
+interface MessageActions {
+  readonly copy: (m: ChatMessage) => void;
+  readonly edit: (m: ChatMessage) => void;
+  readonly retry: () => void;
+}
+
+/** The text of a message: what was typed, or what the agent wrote (not its thinking). */
+function messageText(m: ChatMessage): string {
+  return m.parts
+    .map((p) => (p.type === 'text' ? p.text : ''))
+    .join('\n')
+    .trim();
+}
+
+/** A file part not named as @path in the text is an attachment (it cannot be sent again). */
+function hasAttachments(m: ChatMessage): boolean {
+  const text = messageText(m);
+  return m.parts.some((p) => p.type === 'file' && !text.includes(`@${p.filename}`));
+}
+
+/** The @file mentions of a sent message, to send them again. */
+function mentionsOf(m: ChatMessage): ChatMention[] {
+  const text = messageText(m);
+  return m.parts.flatMap((p) => (p.type === 'file' && text.includes(`@${p.filename}`) ? [{ type: 'file' as const, value: p.filename }] : []));
+}
+
+/** Copy, edit and try again, under a message; visible on hover, always on touch. */
+function MessageBar({ message, canEdit, canRetry, actions }: { readonly message: ChatMessage; readonly canEdit: boolean; readonly canRetry: boolean; readonly actions: MessageActions }): JSX.Element | null {
+  const [copied, setCopied] = useState(false);
+  const hasText = messageText(message).length > 0;
+  if (!hasText && !canRetry) return null;
+  return (
+    <div className="chat-actions">
+      {hasText && (
+        <button
+          type="button"
+          className="chat-act"
+          aria-label="Copy message"
+          title="Copy"
+          onClick={() => {
+            actions.copy(message);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1400);
+          }}
+        >
+          {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+        </button>
+      )}
+      {canEdit && hasText && (
+        <button
+          type="button"
+          className="chat-act"
+          aria-label="Edit and send again"
+          title={hasAttachments(message) ? 'Edit and send again (attachments are not carried over)' : 'Edit and send again'}
+          onClick={() => actions.edit(message)}
+        >
+          <PencilIcon size={13} />
+        </button>
+      )}
+      {canRetry && (
+        <button type="button" className="chat-act" aria-label="Try again" title="Try again" onClick={actions.retry}>
+          <RefreshIcon size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 const Message = memo(function Message({
   message,
   permissions,
   onAnswer,
+  idle,
+  canRetry,
+  actions,
 }: {
   readonly message: ChatMessage;
   readonly permissions: readonly ChatPermission[];
   readonly onAnswer: (p: ChatPermission, reply: 'once' | 'always' | 'reject') => Promise<void>;
+  /** Nothing is running: edit and retry make sense. */
+  readonly idle: boolean;
+  /** The last reply of the chat, and the prompt it answers can be sent again. */
+  readonly canRetry: boolean;
+  readonly actions: MessageActions;
 }): JSX.Element | null {
   if (message.role === 'user') {
-    const text = message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('\n').trim();
+    const text = messageText(message);
     // Files named in the text as @path are marked there; only the others get a chip.
     const files = message.parts.filter((p) => p.type === 'file' && !text.includes(`@${p.filename}`));
     if (!text && files.length === 0) return null;
@@ -207,9 +285,11 @@ const Message = memo(function Message({
         <UserBubble text={text}>
           {files.map((f) => f.type === 'file' && <span key={f.id} className="chat-file">{f.filename}</span>)}
         </UserBubble>
+        {idle && <MessageBar message={message} canEdit canRetry={false} actions={actions} />}
       </div>
     );
   }
+  const finished = message.completedAt !== null || message.error !== '';
   return (
     <div className="chat-msg is-assistant">
       {message.parts.map((p) => {
@@ -243,6 +323,7 @@ const Message = memo(function Message({
         }
       })}
       {message.error && <div className={`chat-msg-error${message.error === 'Stopped' ? ' is-stopped' : ''}`}>{message.error}</div>}
+      {finished && idle && <MessageBar message={message} canEdit={false} canRetry={canRetry} actions={actions} />}
     </div>
   );
 });
@@ -269,15 +350,42 @@ function UserBubble({ text, children }: { readonly text: string; readonly childr
   );
 }
 
-function Thread({ chat }: { readonly chat: Chat }): JSX.Element {
+/** What the open chat shows: after /undo the reverted messages stay in OpenCode until /redo or the next prompt. */
+function visibleMessages(chat: Chat): readonly ChatMessage[] {
+  const t = chat.thread;
+  const revert = chat.current?.revertMessageID ?? null;
+  return t ? (revert ? t.messages.filter((m) => m.id < revert) : t.messages) : [];
+}
+
+function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFill: (text: string) => void; readonly onNotify: (text: string) => void }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const [away, setAway] = useState(false);
   const t = chat.thread;
-  // After /undo the reverted messages stay in OpenCode until /redo or the next prompt: not shown.
-  const revert = chat.current?.revertMessageID ?? null;
-  const messages = t ? (revert ? t.messages.filter((m) => m.id < revert) : t.messages) : [];
+  const messages = visibleMessages(chat);
   const undone = t ? t.messages.length - messages.length : 0;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const { undo, send } = chat;
+  const actions = useMemo<MessageActions>(
+    () => ({
+      copy: (m) => void copyText(messageText(m)).then((ok) => ok || onNotify('Could not copy')),
+      edit: (m) =>
+        void undo(m.id).then((text) => {
+          if (text !== null) onFill(text);
+        }),
+      retry: () => {
+        const user = [...messagesRef.current].reverse().find((m) => m.role === 'user');
+        if (!user) return;
+        const mentions = mentionsOf(user);
+        void undo(user.id).then((text) => (text ? send(text, mentions).catch(() => undefined) : undefined));
+      },
+    }),
+    [undo, send, onFill, onNotify],
+  );
+  const idle = !t?.busy && !chat.pending;
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  const lastReply = [...messages].reverse().find((m) => m.role === 'assistant');
 
   // Permissions whose tool card is not on screen (another message, or no call id).
   const shownCalls = useMemo(() => new Set(t?.messages.flatMap((m) => m.parts.map((p) => (p.type === 'tool' ? p.callID : '')))), [t?.messages]);
@@ -326,7 +434,7 @@ function Thread({ chat }: { readonly chat: Chat }): JSX.Element {
         )}
         {empty && chat.loadingThread && <p className="chat-muted chat-loading">Loading conversation…</p>}
         {messages.map((m) => (
-          <Message key={m.id} message={m} permissions={t!.permissions} onAnswer={chat.answer} />
+          <Message key={m.id} message={m} permissions={t!.permissions} onAnswer={chat.answer} idle={idle} canRetry={m === lastReply && !!lastUser && !hasAttachments(lastUser)} actions={actions} />
         ))}
         {undone > 0 && (
           <div className="chat-undone">
@@ -379,6 +487,8 @@ interface ComposerProps {
   readonly onUsage: () => void;
   /** /auto and the Auto button: ChatView asks before turning it on. */
   readonly onAuto: () => void;
+  /** Text to put in the box (Edit on a message); `n` changes each time. */
+  readonly fill: { readonly text: string; readonly n: number } | null;
 }
 
 /** "@value" as a whole word in `text` (not the start of a longer path). */
@@ -387,7 +497,7 @@ function hasToken(text: string, value: string): boolean {
   return new RegExp(`(^|\\s)@${esc}(?=\\s|$)`).test(text);
 }
 
-function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUsage, onAuto }: ComposerProps): JSX.Element {
+function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUsage, onAuto, fill }: ComposerProps): JSX.Element {
   const [text, setText] = useState('');
   const [caret, setCaret] = useState(0);
   const [sending, setSending] = useState(false);
@@ -457,6 +567,13 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
       ref.current?.setSelectionRange(pos, pos);
     });
   };
+
+  // Edit on a message: its text comes back into the box, the caret at the end.
+  const fillN = fill?.n;
+  useEffect(() => {
+    if (fill) put(fill.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fillN]);
 
   const runBuiltin = async (name: BuiltinName, args: string) => {
     switch (name) {
@@ -794,8 +911,17 @@ function UsageButton({ usage, providers, open, setOpen }: { readonly usage: Usag
   );
 }
 
-/** One button for what can be done to the open chat. */
-function ChatMenu({ onRename, onDelete }: { readonly onRename: () => void; readonly onDelete: () => void }): JSX.Element {
+interface ChatMenuProps {
+  /** A chat is open: rename and delete apply. */
+  readonly hasChat: boolean;
+  readonly onRename: () => void;
+  readonly onDelete: () => void;
+  /** Alerts (notification, tab mark, vibration) while the chat is out of sight; absent where the browser has none. */
+  readonly alerts?: { readonly on: boolean; readonly toggle: () => void };
+}
+
+/** One button for what can be done to the open chat, and the chat settings. */
+function ChatMenu({ hasChat, onRename, onDelete, alerts }: ChatMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!open) return;
@@ -821,19 +947,83 @@ function ChatMenu({ onRename, onDelete }: { readonly onRename: () => void; reado
         <>
           <div className="pop-backdrop" aria-hidden="true" onClick={() => setOpen(false)} />
           <div className="pop chat-menu-pop" role="menu">
-            <button type="button" role="menuitem" className="menu-item" onClick={pick(onRename)}>
-              <PencilIcon size={15} />
-              <span className="menu-item-label">Rename</span>
-            </button>
-            <button type="button" role="menuitem" className="menu-item chat-menu-danger" onClick={pick(onDelete)}>
-              <TrashIcon size={15} />
-              <span className="menu-item-label">Delete</span>
-            </button>
+            {hasChat && (
+              <button type="button" role="menuitem" className="menu-item" onClick={pick(onRename)}>
+                <PencilIcon size={15} />
+                <span className="menu-item-label">Rename</span>
+              </button>
+            )}
+            {alerts && (
+              <button type="button" role="menuitemcheckbox" aria-checked={alerts.on} className="menu-item" onClick={pick(alerts.toggle)}>
+                <BellIcon size={15} />
+                <span className="menu-item-label">Alerts when away</span>
+                <span className={`chat-menu-state${alerts.on ? ' is-on' : ''}`}>{alerts.on ? 'On' : 'Off'}</span>
+              </button>
+            )}
+            {hasChat && (
+              <button type="button" role="menuitem" className="menu-item chat-menu-danger" onClick={pick(onDelete)}>
+                <TrashIcon size={15} />
+                <span className="menu-item-label">Delete</span>
+              </button>
+            )}
           </div>
         </>
       )}
     </div>
   );
+}
+
+/**
+ * Alerts for a chat the person is not looking at (minimized, or another tab):
+ * a notification, a vibration and a "(!)" in the tab title when the agent needs
+ * an answer, and a notification when a chat finishes. Off until switched on.
+ */
+function useChatAlerts(chat: Chat, open: boolean, enabled: boolean): void {
+  const [seen, setSeen] = useState(() => !document.hidden);
+  useEffect(() => {
+    const onVis = () => setSeen(!document.hidden);
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+  const watching = open && seen;
+
+  const asking = (chat.thread?.permissions.length ?? 0) > 0;
+  const wasAsking = useRef(false);
+  const title = chat.current?.title || 'Chat';
+  const currentId = chat.currentId;
+  useEffect(() => {
+    if (asking && !wasAsking.current && enabled && !watching) {
+      void showAlert('OpenCode needs your answer', title, `ask-${currentId ?? ''}`);
+      vibrate([180, 80, 180]);
+    }
+    wasAsking.current = asking;
+  }, [asking, enabled, watching, title, currentId]);
+
+  // The tab says so even with no notification permission.
+  useEffect(() => {
+    if (!asking || watching) return undefined;
+    const base = document.title;
+    document.title = `(!) ${base}`;
+    return () => {
+      document.title = base;
+    };
+  }, [asking, watching]);
+
+  const before = useRef<ReadonlyMap<string, string> | null>(null);
+  const { sessions } = chat;
+  useEffect(() => {
+    if (!sessions) return;
+    const now = new Map(sessions.filter((x) => x.busy).map((x) => [x.id, x.title] as const));
+    const was = before.current;
+    before.current = now;
+    if (!was || !enabled || watching) return;
+    for (const [id, name] of was) {
+      if (!now.has(id) && sessions.some((x) => x.id === id)) {
+        void showAlert('OpenCode finished', name || 'Chat', `done-${id}`);
+        vibrate(120);
+      }
+    }
+  }, [sessions, enabled, watching]);
 }
 
 // ---------------------------------------------------------------------------
@@ -868,6 +1058,16 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [askAuto, setAskAuto] = useState(false);
+  const [fill, setFill] = useState<{ text: string; n: number } | null>(null);
+  const onFill = useCallback((text: string) => setFill((f) => ({ text, n: (f?.n ?? 0) + 1 })), []);
+  const [alertsOn, setAlertsOn] = useState(notifyEnabled);
+  useChatAlerts(chat, open, alertsOn);
+  const toggleAlerts = () => {
+    void setNotifyEnabled(!alertsOn).then((on) => {
+      setAlertsOn(on);
+      onNotify(on ? 'Chat alerts are on' : alertsOn ? 'Chat alerts are off' : 'The browser blocked notifications for this site');
+    });
+  };
   // Turning auto mode on asks first; off is at once.
   const toggleAuto = () => {
     if (chat.auto) void chat.setAuto(false);
@@ -983,10 +1183,12 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
               </span>
             )}
             {chat.current && !renaming && usage && <UsageButton usage={usage} providers={chat.providers} open={usageOpen} setOpen={setUsageOpen} />}
-            {chat.current && !renaming && (
+            {!renaming && (
               <ChatMenu
-                onRename={() => setRenaming({ id: chat.current!.id, title: chat.current!.title })}
+                hasChat={!!chat.current}
+                onRename={() => chat.current && setRenaming({ id: chat.current.id, title: chat.current.title })}
                 onDelete={() => setDeleting(chat.current)}
+                alerts={notifySupported() ? { on: alertsOn, toggle: toggleAlerts } : undefined}
               />
             )}
             <button type="button" className="chat-icon-btn chat-minimize" onClick={onMinimize} aria-label="Minimize, back to the dashboard" title="Minimize">
@@ -1007,7 +1209,8 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
             </div>
           )}
 
-          <Thread chat={chat} />
+          <Thread chat={chat} onFill={onFill} onNotify={onNotify} />
+          <Progress messages={visibleMessages(chat)} busy={!!chat.thread?.busy} />
           <Composer
             chat={chat}
             disabled={!up}
@@ -1020,6 +1223,7 @@ export function ChatView({ open, onMinimize, onNotify, onSignal }: ChatViewProps
             onRename={() => chat.current && setRenaming({ id: chat.current.id, title: chat.current.title })}
             onUsage={() => (usage ? setUsageOpen(true) : onNotify('No reply yet in this chat, so no usage to show'))}
             onAuto={toggleAuto}
+            fill={fill}
           />
         </section>
       </div>

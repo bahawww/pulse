@@ -1,5 +1,7 @@
-import { type JSX, type ReactNode, memo, useState } from 'react';
+import { type JSX, type ReactNode, memo, useMemo, useState } from 'react';
 import { CheckIcon, CopyIcon } from '../icons';
+import { copyText } from './clip';
+import { highlight } from './highlight';
 
 /**
  * A small Markdown renderer for agent replies. It builds React elements and
@@ -182,26 +184,32 @@ function lines(ls: readonly string[], key: string): ReactNode[] {
 
 export function CodeBlock({ code, lang }: { readonly code: string; readonly lang: string }): JSX.Element {
   const [copied, setCopied] = useState(false);
+  // Phones start wrapped: sideways scrolling inside a scrolling chat is hard to use.
+  const [wrap, setWrap] = useState(() => window.matchMedia('(max-width: 640px)').matches);
+  const nodes = useMemo(() => highlight(code, lang), [code, lang]);
   const copy = () => {
-    void navigator.clipboard
-      ?.writeText(code)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1400);
-      })
-      .catch(() => undefined);
+    void copyText(code).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    });
   };
   return (
-    <div className="md-code">
+    <div className={`md-code${wrap ? ' is-wrap' : ''}`}>
       <div className="md-code-head">
         <span>{lang || 'text'}</span>
-        <button type="button" className="md-copy" onClick={copy} aria-label="Copy code">
-          {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
-          <span>{copied ? 'Copied' : 'Copy'}</span>
-        </button>
+        <span className="md-code-tools">
+          <button type="button" className="md-copy" onClick={() => setWrap(!wrap)} aria-pressed={wrap} aria-label="Wrap long lines">
+            <span>Wrap</span>
+          </button>
+          <button type="button" className="md-copy" onClick={copy} aria-label="Copy code">
+            {copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </span>
       </div>
       <pre>
-        <code>{code}</code>
+        <code>{nodes}</code>
       </pre>
     </div>
   );

@@ -1,7 +1,8 @@
 import { type JSX, memo, useState } from 'react';
 
-import type { ChatPermission, ChatToolPart } from '../../shared/contract';
+import type { ChatMessage, ChatPermission, ChatToolPart } from '../../shared/contract';
 import { CheckIcon, ChevronDownIcon, FileIcon, PencilIcon, SearchIcon, TerminalIcon } from '../icons';
+import { type Todo, latestTodos, parseTodos, runningTool } from './todo';
 
 /** A unified diff, one line per row, added and removed lines tinted. */
 export function DiffView({ diff }: { readonly diff: string }): JSX.Element {
@@ -18,6 +19,55 @@ export function DiffView({ diff }: { readonly diff: string }): JSX.Element {
         );
       })}
     </pre>
+  );
+}
+
+/** The agent's plan as a checklist. */
+export function TodoList({ todos }: { readonly todos: readonly Todo[] }): JSX.Element {
+  return (
+    <ul className="chat-todos">
+      {todos.map((t, i) => (
+        <li key={i} className={`is-${t.status}`}>
+          <span className="chat-todo-mark" aria-hidden="true">
+            {t.status === 'completed' ? <CheckIcon size={11} /> : t.status === 'in_progress' ? <span className="chat-spinner" /> : null}
+          </span>
+          <span className="chat-todo-text">{t.content}</span>
+          <span className="chat-sr">{t.status.replace('_', ' ')}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Above the composer while the agent works: its plan (todowrite) with a count,
+ * and the call running now. Gone once the plan is done and the agent idle.
+ */
+export function Progress({ messages, busy }: { readonly messages: readonly ChatMessage[]; readonly busy: boolean }): JSX.Element | null {
+  const [open, setOpen] = useState(true);
+  const todos = latestTodos(messages);
+  const running = busy ? runningTool(messages) : null;
+  const done = todos ? todos.filter((t) => t.status === 'completed' || t.status === 'cancelled').length : 0;
+  const current = todos?.find((t) => t.status === 'in_progress');
+  const finished = !!todos && done === todos.length;
+  if ((!todos || (finished && !busy)) && !running) return null;
+  return (
+    <div className="chat-progress" role="status">
+      <button type="button" className="chat-progress-head" aria-expanded={open} onClick={() => setOpen(!open)} disabled={!todos}>
+        <span className="chat-progress-title">
+          {todos ? `Progress ${done}/${todos.length}` : 'Working'}
+          {current && <span className="chat-progress-now"> · {current.content}</span>}
+        </span>
+        {running && (
+          <span className="chat-progress-run">
+            <span className="chat-spinner" aria-hidden="true" />
+            {running.tool}
+          </span>
+        )}
+        {todos && <ChevronDownIcon className="chat-tool-chev" size={14} />}
+      </button>
+      {open && todos && <TodoList todos={todos} />}
+    </div>
   );
 }
 
@@ -44,10 +94,11 @@ export const ToolCard = memo(function ToolCard({ part, asking }: { readonly part
   const [open, setOpen] = useState<boolean | null>(null);
   const shown = open ?? (asking || (part.status === 'error' && part.error !== 'Stopped'));
   const command = part.tool === 'bash' ? part.input.command : undefined;
-  const extra = Object.entries(part.input).filter(([k, v]) => v && !SHOWN_AS_TITLE.has(k) && !(part.tool === 'write' && k === 'content'));
+  const todos = part.tool === 'todowrite' ? parseTodos(part.input.todos) : null;
+  const extra = Object.entries(part.input).filter(([k, v]) => v && !SHOWN_AS_TITLE.has(k) && !(part.tool === 'write' && k === 'content') && !(todos && k === 'todos'));
   // A stopped call is not a failure: no red.
   const tone = part.error === 'Stopped' ? 'stopped' : part.status;
-  const hasBody = !!(command || extra.length || part.output || part.error || part.diff || (part.tool === 'write' && part.input.content));
+  const hasBody = !!(command || todos || extra.length || part.output || part.error || part.diff || (part.tool === 'write' && part.input.content));
   return (
     <div className={`chat-tool is-${tone}${asking ? ' is-asking' : ''}${shown ? ' is-open' : ''}`}>
       <button type="button" className="chat-tool-head" aria-expanded={shown} onClick={() => setOpen(!shown)} disabled={!hasBody}>
@@ -65,6 +116,7 @@ export const ToolCard = memo(function ToolCard({ part, asking }: { readonly part
       {shown && hasBody && (
         <div className="chat-tool-body">
           {command && <pre className="chat-tool-cmd">$ {command}</pre>}
+          {todos && <TodoList todos={todos} />}
           {extra.map(([k, v]) => (
             <div key={k} className="chat-tool-field">
               <span>{k}</span>

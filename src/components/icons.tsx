@@ -524,3 +524,64 @@ export function ListIcon({ size = 16 }: IconProps): JSX.Element {
     </svg>
   );
 }
+
+export function ForkIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="6" cy="5" r="2.2" />
+      <circle cx="18" cy="5" r="2.2" />
+      <circle cx="12" cy="19" r="2.2" />
+      <path d="M6 7.2v1.3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7.2M12 11.5v5.3" />
+    </svg>
+  );
+}
+
+export function MicIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="9" y="2.5" width="6" height="12" rx="3" />
+      <path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3" />
+    </svg>
+  );
+}
+
+export function PaperclipIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="m21 11.2-8.6 8.6a5.2 5.2 0 0 1-7.4-7.4l8.8-8.8a3.5 3.5 0 0 1 5 5l-8.8 8.8a1.8 1.8 0 0 1-2.5-2.5l8-8" />
+    </svg>
+  );
+}
+
+export function PinIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6zM12 14v7" />
+    </svg>
+  );
+}
+
+export function ArchiveIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="3" y="4" width="18" height="4.5" rx="1" />
+      <path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5M10 12.5h4" />
+    </svg>
+  );
+}
+
+export function PlayIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M7 4.5v15l12-7.5-12-7.5z" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function XIcon({ className, size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}

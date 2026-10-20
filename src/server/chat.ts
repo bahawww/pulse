@@ -20,6 +20,7 @@ const adapter: ChatAdapter = opencode;
 
 const SESSION_ID = /^ses_[A-Za-z0-9]{8,64}$/;
 const REQUEST_ID = /^per_[A-Za-z0-9]{8,64}$/;
+const MESSAGE_ID = /^msg_[A-Za-z0-9]{8,64}$/;
 const PROMPT_MAX = 100_000;
 const TITLE_MAX = 200;
 
@@ -280,7 +281,16 @@ export function registerChatRoutes(app: Express, readLimiter: RequestHandler, wr
     }),
   );
 
-  app.post('/api/chat/sessions/:id/undo', writeLimiter, wrap((req) => adapter.undo(sessionParam(req))));
+  app.post(
+    '/api/chat/sessions/:id/undo',
+    writeLimiter,
+    wrap((req) => {
+      const id = sessionParam(req);
+      const m = body(req).messageID;
+      if (m !== undefined && m !== null && (typeof m !== 'string' || !MESSAGE_ID.test(m))) throw new ChatError(400, 'bad message id');
+      return adapter.undo(id, typeof m === 'string' ? m : null);
+    }),
+  );
 
   app.post(
     '/api/chat/sessions/:id/redo',

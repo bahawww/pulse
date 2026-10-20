@@ -182,6 +182,7 @@ const HISTORY_LIMIT = 300;
 
 // Tool calls can carry whole files. Cut what goes to the browser.
 const INPUT_MAX = 4_000;
+const TODOS_MAX = 20_000;
 const OUTPUT_HEAD = 8_000;
 const OUTPUT_TAIL = 16_000;
 const DIFF_MAX = 64_000;
@@ -488,7 +489,8 @@ function toPart(p: OcPart): ChatPart | null {
       const input = st.input ?? {};
       const meta = st.metadata ?? {};
       const fields: Record<string, string> = {};
-      for (const [k, v] of Object.entries(input)) fields[k] = redact(cut(asText(v), INPUT_MAX));
+      // A todo list is read back as JSON by the client: it must not be cut mid-way.
+      for (const [k, v] of Object.entries(input)) fields[k] = redact(cut(asText(v), p.tool === 'todowrite' && k === 'todos' ? TODOS_MAX : INPUT_MAX));
       const first = [input.command, input.filePath, input.path, input.url, input.pattern, input.description].find((v) => typeof v === 'string' && v);
       // A running shell streams its output into metadata.output.
       const raw = st.status === 'completed' ? (st.output ?? '') : typeof meta.output === 'string' ? meta.output : '';
@@ -949,14 +951,16 @@ export const opencode: ChatAdapter = {
     detached(id, `/session/${id}/summarize`, await directoryOf(id), { providerID: m.providerID, modelID: m.modelID });
   },
 
-  async undo(id) {
+  async undo(id, messageID) {
     const directory = await directoryOf(id);
     const s = await call<OcSession>('GET', `/session/${id}`);
     const raw = await call<{ info: OcMessage; parts: OcPart[] }[]>('GET', `/session/${id}/message`, { limit: String(HISTORY_LIMIT) });
     // The last prompt not yet reverted (OpenCode ids sort by time).
     const limit = s.revert?.messageID;
-    const target = [...raw].reverse().find((m) => m.info.role === 'user' && (!limit || m.info.id < limit));
-    if (!target) throw new ChatError(400, 'nothing to undo');
+    const target = messageID
+      ? raw.find((m) => m.info.id === messageID && m.info.role === 'user' && (!limit || m.info.id < limit))
+      : [...raw].reverse().find((m) => m.info.role === 'user' && (!limit || m.info.id < limit));
+    if (!target) throw new ChatError(400, messageID ? 'that message is not in this chat' : 'nothing to undo');
     await call('POST', `/session/${id}/revert`, { directory }, { messageID: target.info.id });
     const text = target.parts
       .filter((p) => p.type === 'text' && !p.synthetic && !p.ignored)
