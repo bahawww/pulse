@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LogEntry } from '../shared/contract';
 import { formatClock } from '../lib/format';
 import { SelectMenu } from './SelectMenu';
+import { RefreshIcon } from './icons';
 import { AskAgentButton } from './AskAgentButton';
 import { BoneLines, Loading } from './Skeleton';
 import { TZ_LABEL } from '../shared/time';
@@ -137,8 +138,9 @@ export function LogPanel() {
               label="Ask agent"
             />
           )}
-          <button type="button" className="btn btn-sm" onClick={() => void load()}>
-            Refresh
+          <button type="button" className="btn btn-sm btn-collapse" onClick={() => void load()} aria-label="Refresh" title="Refresh">
+            <RefreshIcon size={14} />
+            <span className="btn-label">Refresh</span>
           </button>
         </span>
       </div>

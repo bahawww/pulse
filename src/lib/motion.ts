@@ -38,7 +38,8 @@ let current = 0;
  * Without support (or with reduced motion) the update simply runs.
  */
 export function transition(kind: TransitionKind, update: () => void, vars: Record<string, string> = {}): void {
-  if (!canTransition()) {
+  // A card shuffle is not worth it on a phone: the glass bars would be redrawn as flat rectangles for the length of it.
+  if (!canTransition() || (kind === 'filter' && isCompact())) {
     update();
     return;
   }

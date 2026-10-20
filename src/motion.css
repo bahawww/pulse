@@ -1513,3 +1513,14 @@ html[data-go] .side-kbd {
     transform: scale(1.08);
   }
 }
+
+/* A glass bar named for a transition is drawn from its snapshot, where its
+   backdrop blur fills the whole rectangle (square corners behind the pill).
+   For the length of the transition it is a plain fill instead. */
+@media (max-width: 1023px), (pointer: coarse) {
+  html:is([data-vt='view'], [data-vt='filter']) :is(.tabbar, .chat-fab) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: var(--surface-2) !important;
+  }
+}

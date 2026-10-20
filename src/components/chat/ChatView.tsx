@@ -1141,7 +1141,15 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
       />
       <div className="chat-composer-bar">
         <div className="chat-composer-tools">
-          <ContextMenu disabled={disabled} onInsert={insertBlock} onError={onNotify} />
+          <ContextMenu
+            disabled={disabled}
+            onInsert={insertBlock}
+            onError={onNotify}
+            onAttach={() => fileInput.current?.click()}
+            attachDisabled={attaching || attachments.length >= MAX_ATTACHMENTS}
+            onDictate={voiceSupported() ? toggleVoice : undefined}
+            listening={listening}
+          />
           <input
             ref={fileInput}
             type="file"
@@ -1155,7 +1163,7 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
           />
           <button
             type="button"
-            className="chat-ctx-btn"
+            className="chat-ctx-btn chat-ctx-desktop"
             aria-label="Attach an image or text file"
             title="Attach an image or a text file (an image needs a model that can see)"
             disabled={disabled || attaching || attachments.length >= MAX_ATTACHMENTS}
@@ -1166,7 +1174,7 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
           {voiceSupported() && (
             <button
               type="button"
-              className={`chat-ctx-btn${listening ? ' is-live' : ''}`}
+              className={`chat-ctx-btn chat-ctx-desktop${listening ? ' is-live' : ''}`}
               aria-label={listening ? 'Stop dictation' : 'Dictate'}
               aria-pressed={listening}
               title={listening ? 'Stop dictation' : 'Dictate with your voice (uses your browser\'s speech service)'}

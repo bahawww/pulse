@@ -15,6 +15,11 @@ interface ContextMenuProps {
   /** Receives the finished block to add to the message. */
   readonly onInsert: (block: string) => void;
   readonly onError: (message: string) => void;
+  /** On a phone the attach and dictate buttons live in this menu instead of beside it. */
+  readonly onAttach?: () => void;
+  readonly attachDisabled?: boolean;
+  readonly onDictate?: () => void;
+  readonly listening?: boolean;
 }
 
 const ITEMS: readonly { readonly label: string; readonly hint: string; readonly ref: ContextRef }[] = [
@@ -23,7 +28,7 @@ const ITEMS: readonly { readonly label: string; readonly hint: string; readonly 
   { label: 'Disk usage', hint: 'filesystems and Docker space', ref: { kind: 'disk' } },
 ];
 
-export function ContextMenu({ disabled, onInsert, onError }: ContextMenuProps): JSX.Element {
+export function ContextMenu({ disabled, onInsert, onError, onAttach, attachDisabled = false, onDictate, listening = false }: ContextMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<'root' | 'logs'>('root');
   const [units, setUnits] = useState<readonly string[] | null>(null);
@@ -72,7 +77,16 @@ export function ContextMenu({ disabled, onInsert, onError }: ContextMenuProps): 
   const needle = q.trim().toLowerCase();
   return (
     <div className="pop-anchor chat-ctx">
-      <button type="button" className="chat-ctx-btn" aria-haspopup="menu" aria-expanded={open} aria-label="Add host info to the message" title="Add host info to the message" disabled={disabled} onClick={() => (open ? close() : setOpen(true))}>
+      <button
+        type="button"
+        className={`chat-ctx-btn${listening ? ' is-live' : ''}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Add to the message"
+        title="Add a file, host info or your voice to the message"
+        disabled={disabled}
+        onClick={() => (open ? close() : setOpen(true))}
+      >
         <PlusIcon size={15} />
       </button>
       {open && (
@@ -81,6 +95,22 @@ export function ContextMenu({ disabled, onInsert, onError }: ContextMenuProps): 
           <div className="pop chat-ctx-pop" role="menu" aria-label="Add host info">
             {step === 'root' ? (
               <>
+                {onAttach && (
+                  <button type="button" role="menuitem" className="menu-item phone-only" disabled={attachDisabled} onClick={() => { close(); onAttach(); }}>
+                    <span className="menu-item-text">
+                      <span className="menu-item-label">Attach a file</span>
+                      <span className="menu-item-hint">an image or a text file</span>
+                    </span>
+                  </button>
+                )}
+                {onDictate && (
+                  <button type="button" role="menuitem" className="menu-item phone-only" onClick={() => { close(); onDictate(); }}>
+                    <span className="menu-item-text">
+                      <span className="menu-item-label">{listening ? 'Stop dictation' : 'Dictate'}</span>
+                      <span className="menu-item-hint">{listening ? 'listening now' : 'speak instead of typing'}</span>
+                    </span>
+                  </button>
+                )}
                 {ITEMS.map((i) => (
                   <button key={i.label} type="button" role="menuitem" className="menu-item" disabled={busy} onClick={() => void take(i.ref)}>
                     <span className="menu-item-text">

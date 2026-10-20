@@ -3,6 +3,7 @@ import type { HistorySample, ProcessInfo, ProcessSignal } from '../shared/contra
 import { postJson } from '../lib/csrf';
 import { formatBytes, formatPercent } from '../lib/format';
 import { AskAgentButton } from './AskAgentButton';
+import { MoreMenu } from './MoreMenu';
 import { TimeChart, type Series } from './TimeChart';
 
 /**
@@ -152,7 +153,9 @@ export function ProcessHistory({ processes, samples, canAct = false, onNotify, o
             <thead>
               <tr>
                 <th scope="col">Process</th>
-                <th scope="col">User</th>
+                <th scope="col" className="proc-user">
+                  User
+                </th>
                 <th scope="col" className="num">
                   CPU
                 </th>
@@ -181,7 +184,7 @@ export function ProcessHistory({ processes, samples, canAct = false, onNotify, o
                         </span>
                       )}
                     </td>
-                    <td className="muted">{p.user}</td>
+                    <td className="muted proc-user">{p.user}</td>
                     <td className="num">{formatPercent(p.cpuFraction * 100)}%</td>
                     <td className="num">{formatBytes(p.rssBytes)}</td>
                     {canAct && (
@@ -191,7 +194,8 @@ export function ProcessHistory({ processes, samples, canAct = false, onNotify, o
                             protected
                           </span>
                         ) : (
-                          <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <>
+                          <span className="proc-full" style={{ display: 'inline-flex', gap: 4 }}>
                             <button
                               type="button"
                               className="btn btn-sm"
@@ -223,6 +227,18 @@ export function ProcessHistory({ processes, samples, canAct = false, onNotify, o
                               Kill
                             </button>
                           </span>
+                          <span className="proc-compact">
+                            <MoreMenu
+                              label={`Control ${p.name} (${p.pid})`}
+                              disabled={busyPid === p.pid}
+                              items={[
+                                { label: isLowPrio ? 'Normal priority (nice 0)' : 'Lower priority (nice +10)', onSelect: () => void act(p.pid, p.name, isLowPrio ? 'NICE_NORMAL' : 'NICE_LOW') },
+                                { label: 'Stop it (SIGTERM)', onSelect: () => void act(p.pid, p.name, 'TERM') },
+                                { label: 'Force kill (SIGKILL)', tone: 'danger', onSelect: () => void act(p.pid, p.name, 'KILL') },
+                              ]}
+                            />
+                          </span>
+                          </>
                         )}
                       </td>
                     )}

@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { usePolled } from '../hooks/usePolled';
 import { postJson } from '../lib/csrf';
+import { askAgent, useAskEnabled } from '../lib/chatBus';
 import { AskAgentButton } from './AskAgentButton';
+import { MoreMenu, type MoreItem } from './MoreMenu';
 import type { ActionLogEntry, ActionResult, ActionTarget } from '../shared/contract';
 import { formatClock } from '../lib/format';
 import { TZ_LABEL } from '../shared/time';
@@ -41,6 +43,7 @@ export function ActionsPanel({
   readonly dockerTargets: readonly { readonly id: string; readonly name: string; readonly running: boolean }[];
 }) {
   const [pending, setPending] = useState<Pending | null>(null);
+  const canAsk = useAskEnabled();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ActionResult | null>(null);
   // The audit log comes from SQLite, so it survives restarts. Refetched after
@@ -145,46 +148,51 @@ export function ActionsPanel({
         <p className="empty">No controllable targets yet. They appear after the first poll.</p>
       ) : (
         <ul className="action-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-          {targets.map((t) => (
-            <li className="action-row" key={`${t.target}-${t.name}`}>
-              <span className="action-kind">{t.target}</span>
-              <span className="action-name" title={t.name}>
-                {t.label}
-              </span>
-              <span className="action-buttons">
-                <AskAgentButton
-                  compact
-                  label={`Ask the agent about ${t.label}`}
-                  prompt={`Diagnose "${t.label}". Read its status and recent logs below, find the most likely cause of trouble, and suggest the smallest safe fix. Ask me before you change anything.`}
-                  context={[{ kind: 'diagnose', name: t.name }]}
-                />
-                {/* Every verb stays available. The running state comes from a health probe, which can
-                    be wrong for a moment, and a wrong probe must never lock out a restart. Start is only
-                    highlighted when the service looks down. */}
-                <button
-                  type="button"
-                  className={`btn btn-sm${t.running ? '' : ' btn-primary'}`}
-                  disabled={busy}
-                  title={t.running ? `${t.label} looks up. Start does nothing if it already runs.` : `Start ${t.label}`}
-                  onClick={() => void post(t, 'start')}
-                >
-                  Start
-                </button>
-                <button type="button" className="btn btn-sm" disabled={busy} title={`Restart ${t.label}`} onClick={() => void post(t, 'restart')}>
-                  Restart
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-danger-ghost"
-                  disabled={busy}
-                  title={`Stop ${t.label}`}
-                  onClick={() => void post(t, 'stop')}
-                >
-                  Stop
-                </button>
-              </span>
-            </li>
-          ))}
+          {targets.map((t) => {
+            const diagnose = `Diagnose "${t.label}". Read its status and recent logs below, find the most likely cause of trouble, and suggest the smallest safe fix. Ask me before you change anything.`;
+            // Every verb stays available. The running state comes from a health probe, which can
+            // be wrong for a moment, and a wrong probe must never lock out a restart. Start is only
+            // highlighted when the service looks down.
+            const startTitle = t.running ? `${t.label} looks up. Start does nothing if it already runs.` : `Start ${t.label}`;
+            // A phone shows the one action that fits the state; the others sit behind "...".
+            const more: MoreItem[] = [
+              ...(t.running ? [{ label: 'Start', onSelect: () => void post(t, 'start') }] : [{ label: 'Restart', onSelect: () => void post(t, 'restart') }]),
+              { label: 'Stop', tone: 'danger' as const, onSelect: () => void post(t, 'stop') },
+              ...(canAsk ? [{ label: 'Ask the agent', onSelect: () => askAgent({ prompt: diagnose, context: [{ kind: 'diagnose', name: t.name }] }) }] : []),
+            ];
+            return (
+              <li className="action-row is-target" key={`${t.target}-${t.name}`}>
+                <span className="action-kind">{t.target}</span>
+                <span className="action-name" title={t.name}>
+                  {t.label}
+                </span>
+                <span className="action-buttons action-full">
+                  <AskAgentButton compact label={`Ask the agent about ${t.label}`} prompt={diagnose} context={[{ kind: 'diagnose', name: t.name }]} />
+                  <button type="button" className={`btn btn-sm${t.running ? '' : ' btn-primary'}`} disabled={busy} title={startTitle} onClick={() => void post(t, 'start')}>
+                    Start
+                  </button>
+                  <button type="button" className="btn btn-sm" disabled={busy} title={`Restart ${t.label}`} onClick={() => void post(t, 'restart')}>
+                    Restart
+                  </button>
+                  <button type="button" className="btn btn-sm btn-danger-ghost" disabled={busy} title={`Stop ${t.label}`} onClick={() => void post(t, 'stop')}>
+                    Stop
+                  </button>
+                </span>
+                <span className="action-buttons action-compact">
+                  {t.running ? (
+                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void post(t, 'restart')}>
+                      Restart
+                    </button>
+                  ) : (
+                    <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => void post(t, 'start')}>
+                      Start
+                    </button>
+                  )}
+                  <MoreMenu label={`More for ${t.label}`} items={more} disabled={busy} />
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
       {log.data && log.data.entries.length > 0 && (

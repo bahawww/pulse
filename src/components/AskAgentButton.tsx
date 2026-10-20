@@ -18,16 +18,16 @@ export function AskAgentButton({ prompt, context, label = 'Ask agent', title, co
   return (
     <button
       type="button"
-      className={`btn btn-sm ${compact ? 'btn-icon' : 'btn-ghost'}`}
+      className={`btn btn-sm ${compact ? 'btn-icon' : 'btn-ghost btn-collapse'}`}
       title={title ?? 'Open the chat with this question and the data it needs; you review it before sending'}
-      aria-label={compact ? label : undefined}
+      aria-label={label}
       onClick={() => {
         onAsk?.();
         askAgent({ prompt, context });
       }}
     >
       <ChatIcon size={14} />
-      {!compact && label}
+      {!compact && <span className="btn-label">{label}</span>}
     </button>
   );
 }

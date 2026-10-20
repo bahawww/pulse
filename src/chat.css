@@ -1762,14 +1762,17 @@ html[data-chat-open] body {
   cursor: not-allowed;
 }
 
-.chat-ctx-pop {
-  left: 0;
-  right: auto;
-  bottom: calc(100% + 8px);
-  top: auto;
-  width: min(320px, calc(100vw - 24px));
-  max-height: 340px;
-  overflow-y: auto;
+/* Above the button on a screen with room; a bottom sheet on a phone (the .pop rules in mobile.css). */
+@media (min-width: 641px) {
+  .pop.chat-ctx-pop {
+    left: 0;
+    right: auto;
+    bottom: calc(100% + 8px);
+    top: auto;
+    width: 320px;
+    max-height: 340px;
+    overflow-y: auto;
+  }
 }
 
 .chat-run {

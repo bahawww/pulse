@@ -439,6 +439,46 @@ try {
     await t.ev(`document.querySelector('.pop-backdrop')?.click()`);
     await t.viewport(1280, 900, false);
   });
+  
+  await s.check('phone dashboard: few buttons per row, sheets cover the chat button', async () => {
+    await t.ev(`document.querySelector('.chat-overlay [aria-label^="Minimize"]')?.click()`);
+    await sleep(500);
+    await t.viewport(450, 900, true);
+    await t.goto('#logs-and-control');
+    await t.waitFor(`document.querySelectorAll('.action-row.is-target').length > 0`, 12000, 'service rows');
+    const counts = await t.ev(`[...document.querySelectorAll('.action-row.is-target')].map(r=>[...r.querySelectorAll('button')].filter(b=>b.offsetParent!==null).length)`);
+    assert(counts.every((n) => n <= 2), `buttons per row: ${counts}`);
+    assert(!(await t.ev(`document.documentElement.scrollWidth > window.innerWidth + 1`)), 'page scrolls sideways');
+    const name = await t.ev(`(()=>{const e=document.querySelector('.action-row.is-target .action-name');return e.scrollWidth<=e.clientWidth+1})()`);
+    assert(name, 'service name is cut off');
+    await t.ev(`window.scrollTo(0, document.querySelector('#actions-h').getBoundingClientRect().top + scrollY - 130)`);
+    await sleep(400);
+    await t.ev(`document.querySelector('[aria-label^="More for"]').click()`);
+    await sleep(600);
+    assert(await t.ev(`(()=>{const f=document.querySelector('.chat-fab').getBoundingClientRect();const el=document.elementFromPoint(f.left+f.width/2,f.top+f.height/2);return !!el?.closest('.pop, .pop-backdrop')})()`), 'the chat button shows through the sheet');
+    await shot('p6-service-sheet');
+    await t.ev(`document.querySelector('.pop-backdrop').click()`);
+    await t.goto('#workload');
+    await t.waitFor(`document.querySelectorAll('.proc-table tbody tr').length > 0`, 10000, 'process rows');
+    assert(!(await t.ev(`document.documentElement.scrollWidth > window.innerWidth + 1 || document.querySelector('.proc-table').closest('div').scrollWidth > document.querySelector('.proc-table').closest('div').clientWidth + 1`)), 'process table scrolls sideways');
+    await t.viewport(1280, 900, false);
+  });
+  await s.check('phone chat box: one "+" holds attach, dictate and host info', async () => {
+    await t.viewport(450, 900, true);
+    await t.goto('');
+    await t.ev(`document.querySelector('.chat-fab').click()`);
+    await t.waitFor(`!!document.querySelector('.chat-overlay[data-phase="open"] textarea')`, 8000, 'chat open');
+    const visible = await t.ev(`[...document.querySelectorAll('.chat-composer-tools button')].filter(b=>b.offsetParent!==null).length`);
+    assert(visible <= 3, `visible tool buttons: ${visible}`);
+    await t.ev(`document.querySelector('.chat-ctx-btn').click()`);
+    await t.waitFor(`document.querySelectorAll('.chat-ctx-pop .phone-only').length >= 1`, 3000, 'phone items');
+    assert((await t.ev(`[...document.querySelectorAll('.chat-ctx-pop .phone-only')].filter(e=>e.offsetParent!==null).length`)) >= 1, 'attach item hidden');
+    await sleep(700);
+    assert(await t.ev(`(()=>{const r=document.querySelector('.chat-ctx-pop').getBoundingClientRect();return r.top >= 0 && r.bottom <= window.innerHeight + 1 && r.height > 60})()`), 'the + menu is not on screen');
+    await shot('p6-chat-plus');
+    await t.ev(`document.querySelector('.pop-backdrop').click()`);
+    await t.viewport(1280, 900, false);
+  });
   /*__CHECKS__*/
 } catch (err) {
   console.log('ABORT', err instanceof Error ? err.stack : err);

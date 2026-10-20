@@ -555,3 +555,123 @@ textarea {
     transform: translateY(10px);
   }
 }
+
+/* ---------- Fewer buttons on a phone ---------------------------------------
+   A row keeps its one main button; the rest sit behind "..." (MoreMenu) or
+   shrink to an icon. Desktop shows everything as before. */
+
+.action-compact,
+.svc-compact,
+.proc-compact,
+.phone-only {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .action-full,
+  .svc-full,
+  .proc-full,
+  .chat-ctx-desktop,
+  .proc-user {
+    display: none !important;
+  }
+
+  .action-compact,
+  .proc-compact {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .svc-compact {
+    display: inline-flex;
+  }
+
+  .phone-only {
+    display: flex;
+  }
+
+  /* A labelled button that is just its icon on a phone. */
+  .btn-collapse {
+    width: 36px;
+    padding: 0;
+  }
+
+  .btn-collapse .btn-label {
+    display: none;
+  }
+
+  /* Service control: kind and name stack, the buttons take the right. */
+  .action-row.is-target {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'kind btns'
+      'name btns';
+    gap: 0 12px;
+    padding: 10px 12px;
+  }
+
+  .action-row.is-target .action-kind {
+    grid-area: kind;
+  }
+
+  .action-row.is-target .action-name {
+    grid-area: name;
+    font-size: 13px;
+  }
+
+  .action-row.is-target .action-buttons {
+    grid-area: btns;
+  }
+
+  .action-row.is-target .action-buttons.action-compact .btn {
+    min-width: 72px;
+  }
+
+  .svc-actions .btn-primary {
+    flex: 1;
+  }
+
+  .more-pop .menu-item {
+    align-items: center;
+    min-height: 44px;
+    font-size: 15px;
+  }
+}
+
+.more-pop {
+  width: 220px;
+  padding: 6px;
+}
+
+.more-pop .menu-item {
+  align-items: center;
+  color: var(--text);
+}
+
+.more-pop .menu-item.is-danger {
+  color: var(--crit-text);
+}
+
+@media (max-width: 640px) {
+  /* An icon-only button still looks like a button. */
+  .btn-collapse {
+    border-color: var(--line-strong);
+    background: var(--surface-2);
+  }
+}
+
+@media (max-width: 640px) {
+  /* A sheet covers everything, the chat button and the tab bar included. */
+  .pop-backdrop {
+    z-index: 115;
+  }
+
+  .pop,
+  .topbar .pop,
+  .topbar .nav-pop,
+  .pop.select-pop,
+  .select-pop.is-up {
+    z-index: 120;
+  }
+}

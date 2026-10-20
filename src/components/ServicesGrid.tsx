@@ -5,6 +5,7 @@ import { subdomainFor } from '../lib/site';
 import { postJson } from '../lib/csrf';
 import { transition } from '../lib/motion';
 import { Bone, BoneLines, Loading } from './Skeleton';
+import { MoreMenu } from './MoreMenu';
 import { ArrowUpRightIcon, CopyIcon, EyeIcon, EyeOffIcon, LinkIcon, RefreshIcon, ServiceIconGlyph } from './icons';
 import { SERVICE_COLOR } from '../lib/serviceColor';
 
@@ -254,14 +255,21 @@ function ServiceCard({
           Open
           <ArrowUpRightIcon size={13} />
         </a>
-        <button type="button" className="btn btn-icon" onClick={() => void copy()} aria-label={`Copy ${service.name} URL`} title="Copy URL">
+        <button type="button" className="btn btn-icon svc-full" onClick={() => void copy()} aria-label={`Copy ${service.name} URL`} title="Copy URL">
           <CopyIcon size={14} />
         </button>
         {onHide && (
-          <button type="button" className="btn btn-icon" onClick={onHide} aria-label={`Hide ${service.name}`} title="Hide">
+          <button type="button" className="btn btn-icon svc-full" onClick={onHide} aria-label={`Hide ${service.name}`} title="Hide">
             <EyeOffIcon size={14} />
           </button>
         )}
+        {/* A phone keeps Open and tucks the rest away. */}
+        <span className="svc-compact">
+          <MoreMenu
+            label={`More for ${service.name}`}
+            items={[{ label: 'Copy URL', onSelect: () => void copy() }, ...(onHide ? [{ label: 'Hide this card', onSelect: onHide }] : [])]}
+          />
+        </span>
       </div>
     </article>
   );
