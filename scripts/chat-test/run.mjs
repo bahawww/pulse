@@ -173,6 +173,142 @@ try {
     assert((await t.ev(`document.querySelector('.chat-composer textarea').value`)).includes('Logs of'), 'no logs block');
     assert(await t.ev(`!!document.querySelector('.chat-empty')`), 'not a new chat');
   });
+  
+  // ---- Phase 3 ----
+  // Files are handed to the page like a user would: paste (clipboard) and drop (drag and drop).
+  const mkFiles = `(async()=>{
+    const blob=(c,t,q)=>new Promise(r=>c.toBlob(r,t,q));
+    const small=document.createElement('canvas'); small.width=120; small.height=80; small.getContext('2d').fillStyle='#39c'; small.getContext('2d').fillRect(0,0,120,80);
+    const big=document.createElement('canvas'); big.width=3000; big.height=2000; const g=big.getContext('2d');
+    for(let i=0;i<4000;i++){g.fillStyle='rgb('+(Math.random()*255|0)+','+(Math.random()*255|0)+','+(Math.random()*255|0)+')';g.fillRect(Math.random()*3000,Math.random()*2000,40,40)}
+    window.__files={
+      dot:new File([await blob(small,'image/png')],'dot.png',{type:'image/png'}),
+      big:new File([await blob(big,'image/png')],'photo.png',{type:'image/png'}),
+      log:new File(['line one\\nline two\\n'],'notes.log',{type:'text/plain'}),
+      env:new File(['TOKEN=abc'],'.env',{type:'text/plain'}),
+      bin:new File([new Uint8Array([0,1,2,3])],'data.bin',{type:'application/octet-stream'}),
+    };
+    return Object.fromEntries(Object.entries(window.__files).map(([k,f])=>[k,f.size]));
+  })()`;
+  const paste = (...names) => t.ev(`(()=>{const dt=new DataTransfer();for(const n of ${JSON.stringify(names)})dt.items.add(window.__files[n]);document.querySelector('.chat-composer textarea').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));return true})()`);
+  const waitIdle = () => t.waitFor(`!document.querySelector('.chat-working') && !document.querySelector('.chat-attach.is-busy')`, 15000, 'idle');
+  await s.check('pasted image and text file become attachments (big image is shrunk)', async () => {
+    const sizes = await t.ev(mkFiles);
+    assert(sizes.big > 340_000, `test image too small to prove shrinking: ${sizes.big}`);
+    await sendText('hello');
+    await waitIdle();
+    await paste('dot', 'big', 'log');
+    await t.waitFor(`document.querySelectorAll('.chat-attach:not(.is-busy)').length === 3 && !document.querySelector('.chat-attach.is-busy')`, 20000, 'three chips');
+    await shot('p3-attach');
+    const names = await t.ev(`[...document.querySelectorAll('.chat-attach-name')].map(e=>e.textContent).join('|')`);
+    assert(names === 'dot.png|photo.png|notes.log', names);
+  });
+  await s.check('send: server gets the files; the box and chips clear; chips show in the bubble', async () => {
+    await type('what is this');
+    await t.ev(`document.querySelector('.chat-composer .chat-send[type=submit]').click()`);
+    await t.waitFor(`document.querySelector('.chat-msg.is-assistant:last-of-type')?.textContent.includes('Got 3 attachment')`, 15000, 'reply about attachments');
+    const reply = await t.ev(`[...document.querySelectorAll('.chat-msg.is-assistant')].pop().textContent`);
+    assert(/dot\.png \(image\/png/.test(reply), `dot: ${reply}`);
+    assert(/photo\.png \(image\/jpeg/.test(reply), `big image not re-encoded: ${reply}`);
+    assert(/notes\.log \(text\/plain/.test(reply), `log: ${reply}`);
+    assert((await t.ev(`document.querySelectorAll('.chat-attach').length`)) === 0, 'chips not cleared');
+    await waitIdle();
+    const chips = await t.ev(`[...document.querySelectorAll('.chat-msg.is-user')].pop().querySelectorAll('.chat-file').length`);
+    assert(chips === 3, `bubble chips: ${chips}`);
+    assert(!(await t.ev(`!!document.querySelector('.chat-msg.is-assistant:last-of-type .chat-act[aria-label="Try again"]')`)), 'Try again offered for a message with attachments');
+  });
+  await s.check('a secret-looking file is refused, and the text and files come back', async () => {
+    await paste('env');
+    await t.waitFor(`document.querySelectorAll('.chat-attach:not(.is-busy)').length === 1`, 8000, 'env chip');
+    await type('see this');
+    await t.ev(`document.querySelector('.chat-composer .chat-send[type=submit]').click()`);
+    await t.waitFor(`document.querySelector('.toast')?.textContent.includes('looks like a secret file')`, 8000, 'refusal toast');
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value === 'see this' && document.querySelectorAll('.chat-attach').length === 1`, 6000, 'text and file restored');
+    await t.ev(`document.querySelector('.chat-attach button').click()`);
+    await type('');
+    assert((await t.ev(`document.querySelectorAll('.chat-attach').length`)) === 0, 'remove failed');
+  });
+  await s.check('a binary file is refused with a reason; drop works too', async () => {
+    await paste('bin');
+    await t.waitFor(`document.querySelector('.toast')?.textContent.includes('only images and text files')`, 8000, 'binary refused');
+    assert((await t.ev(`document.querySelectorAll('.chat-attach').length`)) === 0, 'binary attached');
+    await t.ev(`(()=>{const dt=new DataTransfer();dt.items.add(window.__files.log);document.dispatchEvent(new DragEvent('dragenter',{dataTransfer:dt,bubbles:true,cancelable:true}))})()`);
+    assert(await t.ev(`document.querySelector('.chat-composer').classList.contains('is-drop')`), 'no drop highlight');
+    await t.ev(`(()=>{const dt=new DataTransfer();dt.items.add(window.__files.log);document.dispatchEvent(new DragEvent('drop',{dataTransfer:dt,bubbles:true,cancelable:true}))})()`);
+    await t.waitFor(`document.querySelectorAll('.chat-attach:not(.is-busy)').length === 1 && !document.querySelector('.chat-composer').classList.contains('is-drop')`, 8000, 'dropped file attached');
+    await t.ev(`document.querySelector('.chat-attach button').click()`);
+  });
+  await s.check('a file with no words still sends (with a default sentence)', async () => {
+    await paste('dot');
+    await t.waitFor(`document.querySelectorAll('.chat-attach:not(.is-busy)').length === 1`, 8000, 'chip');
+    await t.ev(`document.querySelector('.chat-composer .chat-send[type=submit]').click()`);
+    await t.waitFor(`[...document.querySelectorAll('.chat-msg.is-user')].pop()?.textContent.includes('Please look at the attached image')`, 12000, 'default sentence');
+    await waitIdle();
+  });
+  await s.check('drafts are kept per chat', async () => {
+    await type('draft in chat A');
+    await sleep(600);
+    await t.ev(`document.querySelector('.chat-new').click()`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value === ''`, 4000, 'empty box in a new chat');
+    await type('draft in chat B');
+    await sleep(600);
+    await t.ev(`document.querySelector('.chat-session:not(.is-current) .chat-session-main, .chat-session .chat-session-main').click()`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value === 'draft in chat A'`, 6000, 'chat A draft back');
+    await t.ev(`document.querySelector('.chat-new').click()`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value === 'draft in chat B'`, 6000, 'chat B draft back');
+    await type('');
+    await sleep(500);
+  });
+  await s.check('up arrow in an empty box brings back the last message', async () => {
+    await t.ev(`document.querySelector('.chat-session .chat-session-main').click()`);
+    await t.waitFor(`document.querySelectorAll('.chat-msg.is-user').length > 0`, 6000, 'chat loaded');
+    await type('');
+    await t.ev(`document.querySelector('.chat-composer textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true,cancelable:true}))`);
+    await t.waitFor(`document.querySelector('.chat-composer textarea').value.length > 0`, 4000, 'last prompt in box');
+    await type('');
+  });
+  await s.check('size hint shows for a long message', async () => {
+    await type('x'.repeat(900));
+    await t.waitFor(`document.querySelector('.chat-est')?.textContent.includes('~225')`, 4000, 'estimate');
+    await type('');
+  });
+  await s.check('dictation button does not break the page', async () => {
+    const present = await t.ev(`!!document.querySelector('.chat-ctx-btn[aria-label="Dictate"]')`);
+    if (!present) return; // this browser has no speech recognition: no button is correct
+    await t.ev(`document.querySelector('.chat-ctx-btn[aria-label="Dictate"]').click()`);
+    await sleep(1500);
+    // Headless Chrome has no microphone or speech service: it must say so (a toast) or listen, not hang.
+    await t.ev(`document.querySelector('.chat-ctx-btn[aria-label="Stop dictation"]')?.click()`);
+    await sleep(300);
+    assert(await t.ev(`!!document.querySelector('.chat-composer textarea')`), 'page broke');
+  });
+  
+  await s.check('server refuses bad attachments (wrong type, wrong bytes, too many, bad base64, too big)', async () => {
+    const res = await t.ev(`(async()=>{
+      const me = await (await fetch('/api/auth/me')).json();
+      const list = await (await fetch('/api/chat/sessions')).json();
+      const id = list.sessions[0].id;
+      const post = async (attachments) => (await fetch('/api/chat/sessions/'+id+'/prompt',{method:'POST',headers:{'content-type':'application/json','x-csrf-token':me.csrf},body:JSON.stringify({text:'x',attachments})})).status;
+      const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      return {
+        ok: await post([{name:'a.png',mime:'image/png',data:png}]),
+        jpegBytesAsPng: await post([{name:'a.png',mime:'image/jpeg',data:png}]),
+        pdf: await post([{name:'a.pdf',mime:'application/pdf',data:png}]),
+        proto: await post([{name:'a.png',mime:'constructor',data:png}]),
+        five: await post(Array.from({length:5},()=>({name:'a.png',mime:'image/png',data:png}))),
+        badB64: await post([{name:'a.png',mime:'image/png',data:'not base64!!'}]),
+        big: await post([{name:'a.txt',mime:'text/plain',data:'QQ=='.repeat(1).padEnd(450000,'A')}]),
+        key: await post([{name:'id_rsa',mime:'text/plain',data:'aGk='}]),
+        pem: await post([{name:'x.pem',mime:'text/plain',data:'aGk='}]),
+        pathName: await post([{name:'../../etc/x.txt',mime:'text/plain',data:'aGk='}]),
+      };
+    })()`);
+    assert(res.ok === 200, `valid png: ${res.ok}`);
+    for (const k of ['jpegBytesAsPng','pdf','proto','five','badB64','key','pem']) assert(res[k] === 400, `${k}: ${res[k]}`);
+    assert(res.big === 400 || res.big === 413, `big: ${res.big}`);
+    assert(res.pathName === 200, `a path in the name is cut, not refused: ${res.pathName}`);
+    await sleep(1500);
+  });
   /*__CHECKS__*/
 } catch (err) {
   console.log('ABORT', err instanceof Error ? err.stack : err);

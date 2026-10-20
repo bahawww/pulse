@@ -873,6 +873,14 @@ export interface ChatMention {
   readonly value: string;
 }
 
+/** A file sent with a prompt: an image (JPEG, PNG, WebP, GIF) or a text file, as base64. */
+export interface ChatAttachment {
+  readonly name: string;
+  readonly mime: string;
+  /** Base64 of the bytes, no data: prefix. */
+  readonly data: string;
+}
+
 /** What GET /api/chat/sessions/:id/messages answers. */
 export interface ChatHistory {
   readonly session: ChatSession;

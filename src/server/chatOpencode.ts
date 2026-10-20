@@ -853,7 +853,7 @@ export const opencode: ChatAdapter = {
     directories.delete(id);
   },
 
-  async prompt(id, text, model, mentions) {
+  async prompt(id, text, model, mentions, attachments) {
     const directory = await directoryOf(id);
     const parts: unknown[] = [{ type: 'text', text }];
     const agents = mentions.some((m) => m.type === 'agent') ? new Set((await opencode.subagents()).map((a) => a.name)) : null;
@@ -883,6 +883,8 @@ export const opencode: ChatAdapter = {
         source: { type: 'file', path: rel, text: source },
       });
     }
+    // A data: URL: OpenCode keeps an image as it is and reads a text file into the message.
+    for (const a of attachments) parts.push({ type: 'file', mime: a.mime, filename: a.name, url: `data:${a.mime};base64,${a.data}` });
     await ensureGuard(id, directory);
     await call('POST', `/session/${id}/prompt_async`, { directory }, { parts, system: GUARD_PROMPT, ...(model ? { model } : {}) });
   },

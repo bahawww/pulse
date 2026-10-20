@@ -6,13 +6,16 @@ import { formatAgo, formatTokens, formatUsd } from '../../lib/format';
 import { prefersReducedMotion } from '../../lib/motion';
 import type { ChatSignal } from '../ChatFab';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { ArrowDownIcon, BellIcon, CheckIcon, ChatIcon, ChevronDownIcon, CopyIcon, ListIcon, MinimizeIcon, MoreIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from '../icons';
+import { ArrowDownIcon, BellIcon, CheckIcon, ChatIcon, ChevronDownIcon, CopyIcon, FileIcon, ListIcon, MicIcon, MinimizeIcon, MoreIcon, PaperclipIcon, PencilIcon, PlusIcon, RefreshIcon, SearchIcon, SendIcon, StopIcon, TrashIcon, XIcon } from '../icons';
 import type { AskRequest } from '../../lib/chatBus';
+import { ACCEPT, AttachError, BODY_CHARS, MAX_ATTACHMENTS, TOTAL_CHARS, type Attachment, prepareFile, sizeLabel } from './attach';
 import { copyText } from './clip';
 import { ContextMenu } from './ContextMenu';
 import { TEMPLATES, resolveAsk } from './context';
+import { loadDraft, saveDraft } from './drafts';
 import { Markdown } from './Markdown';
 import { notifyEnabled, notifySupported, setNotifyEnabled, showAlert, vibrate } from './notify';
+import { type Dictation, startDictation, voiceSupported } from './voice';
 import { BUILTIN_ALIASES, BUILTIN_COMMANDS, BUILTIN_NEEDS_TEXT, type BuiltinName, type Suggestion, SuggestList, agentSuggestions, findTrigger, slashSuggestions } from './Suggest';
 import { PermissionCard, Progress, ToolCard } from './Parts';
 import { RunContext, type RunTargets } from './Runnable';
@@ -526,8 +529,16 @@ function hasToken(text: string, value: string): boolean {
 }
 
 function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUsage, onAuto, fill }: ComposerProps): JSX.Element {
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => loadDraft(chat.currentId));
   const [caret, setCaret] = useState(0);
+  const [attachments, setAttachments] = useState<readonly Attachment[]>([]);
+  const [attaching, setAttaching] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [listening, setListening] = useState(false);
+  const dictation = useRef<Dictation | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const attachRef = useRef<readonly Attachment[]>([]);
+  attachRef.current = attachments;
   const [sending, setSending] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [hidden, setHidden] = useState<string | null>(null);
@@ -604,6 +615,134 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
     if (fill) put(fill.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fillN]);
+
+  /** Picked, pasted or dropped files: prepared one by one (shrunk, read), within the count and size budget. */
+  const addFiles = async (picked: readonly File[]) => {
+    if (picked.length === 0 || disabled) return;
+    setAttaching(true);
+    try {
+      for (const file of picked) {
+        if (attachRef.current.length >= MAX_ATTACHMENTS) {
+          onNotify(`At most ${MAX_ATTACHMENTS} files per message`);
+          break;
+        }
+        try {
+          const a = await prepareFile(file);
+          if (attachRef.current.reduce((n, x) => n + x.data.length, 0) + a.data.length > TOTAL_CHARS) {
+            onNotify('Those files are too large together (about 250 KB in all)');
+            break;
+          }
+          attachRef.current = [...attachRef.current, a];
+          setAttachments(attachRef.current);
+        } catch (err) {
+          onNotify(err instanceof AttachError ? err.message : 'Could not attach that file');
+        }
+      }
+    } finally {
+      setAttaching(false);
+    }
+  };
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
+  const removeFile = (id: string) => {
+    attachRef.current = attachRef.current.filter((a) => a.id !== id);
+    setAttachments(attachRef.current);
+  };
+
+  // Drop a file anywhere on the open chat.
+  useEffect(() => {
+    if (!active || disabled) return undefined;
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth += 1;
+      setDragging(true);
+    };
+    const over = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      void addFilesRef.current([...(e.dataTransfer?.files ?? [])]);
+    };
+    document.addEventListener('dragenter', enter);
+    document.addEventListener('dragover', over);
+    document.addEventListener('dragleave', leave);
+    document.addEventListener('drop', drop);
+    return () => {
+      document.removeEventListener('dragenter', enter);
+      document.removeEventListener('dragover', over);
+      document.removeEventListener('dragleave', leave);
+      document.removeEventListener('drop', drop);
+      setDragging(false);
+    };
+  }, [active, disabled]);
+
+  // Dictation: what is said lands in the box (no focus grab, so no keyboard pops up on a phone).
+  const toggleVoice = () => {
+    if (dictation.current) {
+      dictation.current.stop();
+      return;
+    }
+    const typed = textRef.current;
+    const base = typed && !/\s$/.test(typed) ? `${typed} ` : typed;
+    const d = startDictation({
+      onText: (final, interim) => {
+        const next = base + final + interim;
+        setText(next);
+        setCaret(next.length);
+      },
+      onEnd: () => {
+        dictation.current = null;
+        setListening(false);
+      },
+      onError: onNotify,
+    });
+    if (!d) {
+      onNotify('Dictation is not available in this browser');
+      return;
+    }
+    dictation.current = d;
+    setListening(true);
+  };
+  useEffect(
+    () => () => {
+      dictation.current?.stop();
+    },
+    [],
+  );
+
+  // Drafts, per chat: switching chats keeps what was typed in the old one and shows the new one's.
+  const draftFor = useRef(chat.currentId);
+  useEffect(() => {
+    if (draftFor.current === chat.currentId) return;
+    saveDraft(draftFor.current, textRef.current);
+    draftFor.current = chat.currentId;
+    const next = loadDraft(chat.currentId);
+    setText(next);
+    setCaret(next.length);
+    attachRef.current = [];
+    setAttachments([]);
+  }, [chat.currentId]);
+  useEffect(() => {
+    const t = window.setTimeout(() => saveDraft(draftFor.current, text), 400);
+    return () => window.clearTimeout(t);
+  }, [text]);
+  useEffect(() => {
+    const flush = () => saveDraft(draftFor.current, textRef.current);
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
 
   /** Adds a block of host data after what is typed (or alone), for the person to read before sending. */
   const insertBlock = (block: string) => {
@@ -712,9 +851,12 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
-    const value = text.trim();
-    if (!value || sending || disabled) return;
-    const slash = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(value);
+    const files = attachRef.current;
+    // A file with no words: say what it is for.
+    const value = text.trim() || (files.length ? `Please look at the attached ${files.every((f) => f.preview) ? (files.length === 1 ? 'image' : 'images') : 'file'}.` : '');
+    if (!value || sending || attaching || disabled) return;
+    dictation.current?.stop();
+    const slash = files.length === 0 ? /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(value) : null;
     if (slash) {
       const typed = slash[1]!;
       const args = (slash[2] ?? '').trim();
@@ -733,13 +875,24 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
         return;
       }
     }
+    if (value.length + files.reduce((n, f) => n + f.data.length, 0) > BODY_CHARS) {
+      onNotify('That is too large to send: shorten the text or drop a file');
+      return;
+    }
     const used = mentions.current.filter((m, i, all) => hasToken(value, m.value) && all.findIndex((o) => o.value === m.value) === i);
     mentions.current = [];
     setSending(true);
     put('');
+    attachRef.current = [];
+    setAttachments([]);
     chat
-      .send(value, used)
-      .catch(() => setText((t) => t || value))
+      .send(value, used, files)
+      .catch(() => {
+        // Nothing was sent: the words and the files come back.
+        setText((t) => t || value);
+        attachRef.current = files;
+        setAttachments(files);
+      })
       .finally(() => setSending(false));
   };
 
@@ -763,6 +916,16 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
       setHidden(triggerAt);
       return;
     }
+    // Up arrow in an empty box brings back the last message of this chat, to fix or send again.
+    if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing && textRef.current === '') {
+      const last = [...visibleMessages(chat)].reverse().find((m) => m.role === 'user');
+      const prev = last ? messageText(last) : '';
+      if (prev) {
+        e.preventDefault();
+        put(prev);
+        return;
+      }
+    }
     // Enter sends on a keyboard; on touch it is a new line (the button sends).
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia('(pointer: coarse)').matches) {
       e.preventDefault();
@@ -771,7 +934,7 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
   };
 
   return (
-    <form className={`chat-composer${chat.auto ? ' is-auto' : ''}`} onSubmit={submit}>
+    <form className={`chat-composer${chat.auto ? ' is-auto' : ''}${dragging ? ' is-drop' : ''}`} onSubmit={submit}>
       {listOpen && (
         <SuggestList
           items={items}
@@ -783,10 +946,36 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
           onHover={setActiveItem}
         />
       )}
+      {(attachments.length > 0 || attaching) && (
+        <div className="chat-attachments" aria-label="Attached files">
+          {attachments.map((a) => (
+            <span key={a.id} className="chat-attach" title={`${a.name} · ${sizeLabel(a)}`}>
+              {a.preview ? <img src={a.preview} alt="" /> : <FileIcon size={14} />}
+              <span className="chat-attach-name">{a.name}</span>
+              <button type="button" aria-label={`Remove ${a.name}`} onClick={() => removeFile(a.id)}>
+                <XIcon size={12} />
+              </button>
+            </span>
+          ))}
+          {attaching && (
+            <span className="chat-attach is-busy">
+              <span className="chat-spinner" aria-hidden="true" />
+              Preparing…
+            </span>
+          )}
+        </div>
+      )}
       <textarea
         ref={ref}
         rows={1}
         value={text}
+        onPaste={(e) => {
+          // A screenshot or file on the clipboard becomes an attachment; plain text pastes as usual.
+          const files = [...e.clipboardData.files];
+          if (files.length === 0) return;
+          e.preventDefault();
+          void addFiles(files);
+        }}
         onChange={(e) => {
           setText(e.target.value);
           setCaret(e.target.selectionStart);
@@ -807,6 +996,40 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
       <div className="chat-composer-bar">
         <div className="chat-composer-tools">
           <ContextMenu disabled={disabled} onInsert={insertBlock} onError={onNotify} />
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            accept={ACCEPT}
+            onChange={(e) => {
+              void addFiles([...(e.currentTarget.files ?? [])]);
+              e.currentTarget.value = '';
+            }}
+          />
+          <button
+            type="button"
+            className="chat-ctx-btn"
+            aria-label="Attach an image or text file"
+            title="Attach an image or a text file (an image needs a model that can see)"
+            disabled={disabled || attaching || attachments.length >= MAX_ATTACHMENTS}
+            onClick={() => fileInput.current?.click()}
+          >
+            <PaperclipIcon size={15} />
+          </button>
+          {voiceSupported() && (
+            <button
+              type="button"
+              className={`chat-ctx-btn${listening ? ' is-live' : ''}`}
+              aria-label={listening ? 'Stop dictation' : 'Dictate'}
+              aria-pressed={listening}
+              title={listening ? 'Stop dictation' : 'Dictate with your voice (uses your browser\'s speech service)'}
+              disabled={disabled}
+              onClick={toggleVoice}
+            >
+              <MicIcon size={15} />
+            </button>
+          )}
           <ModelPicker chat={chat} open={pickerOpen} setOpen={setPickerOpen} />
           {chat.current && !chat.current.asks && !chat.auto ? (
             <span className="chat-auto is-default" title="Made outside Pulse with OpenCode's defaults: it runs commands without asking anyway.">
@@ -826,12 +1049,17 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
             </button>
           )}
         </div>
-        {busy && !text.trim() ? (
+        {text.length > 400 && (
+          <span className="chat-est" title="Rough size: about 4 characters per token">
+            ~{Math.ceil(text.length / 4).toLocaleString()} tokens
+          </span>
+        )}
+        {busy && !text.trim() && attachments.length === 0 ? (
           <button type="button" className="chat-send is-stop" onClick={() => void chat.abort()} aria-label="Stop">
             <StopIcon size={14} />
           </button>
         ) : (
-          <button type="submit" className="chat-send" disabled={!text.trim() || sending || disabled} aria-label="Send">
+          <button type="submit" className="chat-send" disabled={(!text.trim() && attachments.length === 0) || sending || attaching || disabled} aria-label="Send">
             <SendIcon size={16} />
           </button>
         )}

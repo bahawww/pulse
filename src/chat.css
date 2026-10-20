@@ -1813,3 +1813,112 @@ html[data-chat-open] body {
 .chat-run-result.is-error {
   color: var(--crit-text);
 }
+
+/* ---------- Attachments, dictation, size hint ------------------------------ */
+
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 32px;
+  padding: 0 4px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.chat-attach > svg {
+  margin-left: 4px;
+  flex: none;
+}
+
+.chat-attach img {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.chat-attach.is-busy {
+  padding: 0 10px;
+}
+
+.chat-attach-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-attach button {
+  display: inline-grid;
+  flex: none;
+  place-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.chat-attach button:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.chat-ctx-btn.is-live {
+  border-color: var(--crit);
+  background: var(--crit-soft);
+  color: var(--crit-text);
+  animation: chat-live 1.4s ease-in-out infinite;
+}
+
+@keyframes chat-live {
+  50% {
+    box-shadow: 0 0 0 4px var(--crit-soft);
+  }
+}
+
+.chat-est {
+  margin-left: auto;
+  padding-right: 8px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-composer.is-drop {
+  border-color: var(--accent);
+}
+
+.chat-composer.is-drop::after {
+  content: 'Drop to attach';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-ctx-btn.is-live {
+    animation: none;
+  }
+}

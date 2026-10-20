@@ -1,6 +1,7 @@
 import type {
   ChatAgent,
   ChatCommand,
+  ChatAttachment,
   ChatEvent,
   ChatFileHit,
   ChatHistory,
@@ -33,8 +34,8 @@ export interface ChatAdapter {
   history(id: string): Promise<ChatHistory>;
   rename(id: string, title: string): Promise<ChatSession>;
   remove(id: string): Promise<void>;
-  /** Starts a reply and returns at once; the reply arrives as events. @mentions become file or agent parts. */
-  prompt(id: string, text: string, model: ChatModelRef | null, mentions: readonly ChatMention[]): Promise<void>;
+  /** Starts a reply and returns at once; the reply arrives as events. @mentions become file or agent parts, attachments file parts. */
+  prompt(id: string, text: string, model: ChatModelRef | null, mentions: readonly ChatMention[], attachments: readonly ChatAttachment[]): Promise<void>;
   /** Slash commands the agent offers (the client adds its own: /new, /models ...). */
   commands(): Promise<ChatCommand[]>;
   subagents(): Promise<ChatSubagent[]>;

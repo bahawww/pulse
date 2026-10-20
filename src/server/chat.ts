@@ -1,6 +1,6 @@
 import type { Express, Request, RequestHandler, Response } from 'express';
 
-import { chatEventSession, type ChatEvent, type ChatMention, type ChatModelRef } from '../shared/contract.js';
+import { chatEventSession, type ChatAttachment, type ChatEvent, type ChatMention, type ChatModelRef } from '../shared/contract.js';
 import { ChatError, type ChatAdapter } from './chatAdapter.js';
 import { targetsDetailed } from './actions.js';
 import { buildContext, type ContextSources } from './chatContext.js';
@@ -191,6 +191,44 @@ function mentions(v: unknown): ChatMention[] {
   });
 }
 
+const ATTACH_MAX = 4;
+/** Base64 characters: one file, and all of them. The body cap (512 KB, index.ts) also holds the text. */
+const ATTACH_ITEM_CHARS = 400_000;
+const ATTACH_TOTAL_CHARS = 420_000;
+const ATTACH_IMAGES: Readonly<Record<string, (b: Buffer) => boolean>> = {
+  'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/png': (b) => b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG',
+  'image/gif': (b) => b.toString('latin1', 0, 4) === 'GIF8',
+  'image/webp': (b) => b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP',
+};
+/** A person picks these from their own device, but keys and env files do not belong in a chat. */
+const SECRET_NAME = /^(?:\.env(?:\..*)?|web\.env|terminal\.secret|auth\.json|id_(?:rsa|ed25519|ecdsa|dsa)(?:\.pub)?|.*\.(?:pem|key|p12|pfx|kdbx))$/i;
+
+/** Files sent with a prompt, checked: allowed type, real content for that type, sizes, no secret-looking names. */
+function attachments(v: unknown): ChatAttachment[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.length > ATTACH_MAX) throw new ChatError(400, `at most ${ATTACH_MAX} attachments`);
+  let total = 0;
+  return v.map((a: { name?: unknown; mime?: unknown; data?: unknown }) => {
+    if (typeof a?.name !== 'string' || typeof a.mime !== 'string' || typeof a.data !== 'string') throw new ChatError(400, 'bad attachment');
+    const name = a.name.replace(/[\0-\x1f\x7f]/g, '').split(/[\\/]/).pop()!.trim().slice(0, 120) || 'file';
+    if (SECRET_NAME.test(name)) throw new ChatError(400, `${name} looks like a secret file: paste only the part the agent needs`);
+    if (a.data.length === 0 || a.data.length > ATTACH_ITEM_CHARS || !/^[A-Za-z0-9+/]+={0,2}$/.test(a.data)) throw new ChatError(400, `${name}: bad or too large data`);
+    total += a.data.length;
+    if (total > ATTACH_TOTAL_CHARS) throw new ChatError(413, 'attachments are too large together');
+    const bytes = Buffer.from(a.data, 'base64');
+    const sniff = Object.hasOwn(ATTACH_IMAGES, a.mime) ? ATTACH_IMAGES[a.mime] : undefined;
+    if (sniff) {
+      if (!sniff(bytes)) throw new ChatError(400, `${name} is not a ${a.mime} image`);
+    } else if (a.mime === 'text/plain') {
+      if (bytes.includes(0)) throw new ChatError(400, `${name} is not a text file`);
+    } else {
+      throw new ChatError(400, `${name}: only images and text files`);
+    }
+    return { name, mime: a.mime, data: a.data };
+  });
+}
+
 /** Prompt (and command) bodies may be longer than the app-wide 16 KB JSON cap (see index.ts). */
 export const CHAT_PROMPT_PATH = /^\/api\/chat\/sessions\/[^/]+\/(prompt|command)$/;
 
@@ -279,7 +317,7 @@ export function registerChatRoutes(app: Express, readLimiter: RequestHandler, wr
       const text = typeof b.text === 'string' ? b.text.trim() : '';
       if (!text) throw new ChatError(400, 'message required');
       if (text.length > PROMPT_MAX) throw new ChatError(413, `message longer than ${PROMPT_MAX} characters`);
-      await adapter.prompt(id, text, model(b.model), mentions(b.mentions));
+      await adapter.prompt(id, text, model(b.model), mentions(b.mentions), attachments(b.attachments));
     }),
   );
 

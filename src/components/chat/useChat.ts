@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import type {
   ChatCommand,
+  ChatAttachment,
   ChatEvent,
   ChatFileHit,
   ChatMention,
@@ -181,7 +182,7 @@ export interface Chat {
   readonly model: ChatModelRef | null;
   readonly setModel: (m: ChatModelRef | null) => void;
   readonly open: (id: string | null) => void;
-  readonly send: (text: string, mentions?: readonly ChatMention[]) => Promise<void>;
+  readonly send: (text: string, mentions?: readonly ChatMention[], attachments?: readonly ChatAttachment[]) => Promise<void>;
   /** The agent's own slash commands (OpenCode commands, MCP prompts, skills). */
   readonly commands: readonly ChatCommand[];
   /** Subagents for @name. */
@@ -421,11 +422,16 @@ export function useChat(notify: (text: string) => void): Chat {
   }, []);
 
   const send = useCallback(
-    async (text: string, mentions: readonly ChatMention[] = []) => {
+    async (text: string, mentions: readonly ChatMention[] = [], attachments: readonly ChatAttachment[] = []) => {
       setPending(text);
       try {
         const id = await ensureSession();
-        await api('POST', `/api/chat/sessions/${id}/prompt`, { text, ...(model ? { model } : {}), ...(mentions.length ? { mentions } : {}) });
+        await api('POST', `/api/chat/sessions/${id}/prompt`, {
+          text,
+          ...(model ? { model } : {}),
+          ...(mentions.length ? { mentions } : {}),
+          ...(attachments.length ? { attachments: attachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data })) } : {}),
+        });
       } catch (err) {
         setPending('');
         const message = err instanceof Error ? err.message : 'could not send';
