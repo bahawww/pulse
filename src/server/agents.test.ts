@@ -73,6 +73,9 @@ test('claude start answers the trust screen once and stores the link', async () 
   const keys = f.cmds.filter((c) => c.includes('send-keys'));
   assert.equal(keys.length, 1);
   assert.match(keys[0]!, /Down Enter/);
+  assert.match(keys[0]!, /-t '=cc-1905:'/);
+  assert.ok(f.cmds.filter((c) => c.includes('capture-pane')).every((c) => c.includes("-t '=cc-1905:'")));
+  assert.ok(f.cmds.some((c) => c.includes('set-option') && c.includes("-t '=cc-1905:'")));
   assert.equal(f.cmds.filter((c) => c.includes('set-option') && c.includes('@agent_link')).length, 1);
 });
 test('agy start never sends keys without a trust prompt, and gives up with link null', async () => {

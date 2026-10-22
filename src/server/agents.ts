@@ -68,6 +68,8 @@ const DIR = '~/.cache/pulse-agents';
 const logOf = (name: string): string => `${DIR}/${shq(`${name}.log`)}`;
 const LOG_TAIL = (name: string): string => `tail -c 65536 ${logOf(name)} 2>/dev/null`;
 const LIST_FORMAT = '#{session_name}\t#{session_created}\t#{session_activity}\t#{@agent_link}';
+/** Exact session, then its current window: pane and option commands reject a bare `=name`. */
+export const paneTarget = (name: string): string => shq(`=${name}:`);
 const text = (r: RunResult): string => r.stdout.toString('utf8');
 
 /** Agent sessions in tmux; also drops logs of sessions that are gone. String = error text. */
@@ -96,7 +98,7 @@ export async function listAgents(deps: AgentDeps = realDeps): Promise<AgentSessi
     const kind = agentKindOf(name) as AgentKind;
     let link = (kind === 'agy' ? findLink(kind, tails.get(name) ?? '') : null) ?? (saved || null);
     // Claude prints its link on screen only; read the pane when it was never stored.
-    if (!link && kind === 'claude') link = findLink(kind, text(await deps.run(`tmux capture-pane -p -J -t ${shq(`=${name}`)}`)));
+    if (!link && kind === 'claude') link = findLink(kind, text(await deps.run(`tmux capture-pane -p -J -t ${paneTarget(name)}`)));
     out.push({ kind, name, link, created: Number(created) * 1000 || 0, activity: Number(activity) * 1000 || 0 });
   }
   return out;
@@ -111,7 +113,7 @@ export async function startAgent(kind: AgentKind, deps: AgentDeps = realDeps): P
   if (typeof listed === 'string') return { status: 503, body: { error: listed } };
   if (listed.filter((s) => s.kind === kind).length >= AGENT_LIMIT) return { status: 409, body: { error: `${AGENT_LIMIT} running: stop one first` } };
   const name = nextName(kind, listed.map((s) => s.name), deps.now());
-  const q = shq(`=${name}`);
+  const q = paneTarget(name);
   const command = kind === 'agy' ? `~/.local/bin/agy --remote-control --log-file ${logOf(name)}` : `~/.local/bin/claude --remote-control ${shq(name)}`;
   const made = await deps.run(`mkdir -p ${DIR} && tmux new-session -d -s ${shq(name)} -c ~ ${command}`);
   let link: string | null = null;
