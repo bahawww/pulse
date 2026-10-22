@@ -117,3 +117,10 @@ test('rename guard covers both ends', () => {
   assert.equal(renameRefused('main', 'cc-1'), true);
   assert.equal(renameRefused('main', 'x'), false);
 });
+test('list cleans stale logs even with no agy session live', async () => {
+  const f = fakeDeps([listing('main', 'cc-1905')]);
+  await listAgents(f.deps);
+  const cleanup = f.cmds.find((c) => c.includes('rm -f'))!;
+  assert.ok(!cleanup.startsWith(';'));
+  assert.match(cleanup, /^for f in /);
+});

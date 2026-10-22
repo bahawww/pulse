@@ -65,7 +65,7 @@ const realDeps: AgentDeps = {
 };
 
 const DIR = '~/.cache/pulse-agents';
-const logOf = (name: string): string => `${DIR}/${name}.log`;
+const logOf = (name: string): string => `${DIR}/${shq(`${name}.log`)}`;
 const LOG_TAIL = (name: string): string => `tail -c 65536 ${logOf(name)} 2>/dev/null`;
 const LIST_FORMAT = '#{session_name}\t#{session_created}\t#{session_activity}\t#{@agent_link}';
 const text = (r: RunResult): string => r.stdout.toString('utf8');
@@ -80,8 +80,11 @@ export async function listAgents(deps: AgentDeps = realDeps): Promise<AgentSessi
   // One call: agy logs (where its link lives), then delete logs of dead sessions.
   const agy = names.filter((n) => agentKindOf(n) === 'agy');
   const logs = await deps.run(
-    `${agy.map((n) => `echo ${shq(`@@${n}`)}; ${LOG_TAIL(n)}`).join('; ')}; ` +
-      `for f in ${DIR}/*.log; do case "$(basename "$f" .log)" in ${names.map(shq).join('|') || "''"}) ;; *) rm -f "$f";; esac; done; true`,
+    [
+      ...agy.map((n) => `echo ${shq(`@@${n}`)}; ${LOG_TAIL(n)}`),
+      `for f in ${DIR}/*.log; do case "$(basename "$f" .log)" in ${names.map(shq).join('|') || "''"}) ;; *) rm -f "$f";; esac; done`,
+      'true',
+    ].join('; '),
   );
   const tails = new Map<string, string>();
   for (const part of text(logs).split('@@').slice(1)) {
