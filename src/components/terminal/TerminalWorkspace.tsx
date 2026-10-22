@@ -104,7 +104,8 @@ const FOOTER_KEYS = SHORTCUTS.flatMap((g) => g.items.filter((s) => s.footer)).so
  */
 export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspaceProps): JSX.Element {
   const root = useRef<HTMLDivElement>(null);
-  const [wins, setWins] = useState<readonly Win[]>(readWins);
+  // Opened to attach with nothing saved: only the tmux window, not a plain shell beside it.
+  const [wins, setWins] = useState<readonly Win[]>(() => (attach && !hasStoredWins() ? [{ id: 1, tmux: attach.tmux, name: attach.tmux }] : readWins()));
   const [active, setActive] = useState(() => wins[0]?.id ?? 1);
   const [titles, setTitles] = useState<Readonly<Record<number, string>>>({});
   const [statuses, setStatuses] = useState<Readonly<Record<number, WinStatus>>>({});
