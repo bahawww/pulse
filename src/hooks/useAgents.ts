@@ -21,7 +21,7 @@ async function answer<T>(res: Response): Promise<T | string> {
  * Slow poll: sessions start and stop through this hook, which refreshes after each.
  */
 export function useAgents(enabled: boolean) {
-  const { data, refresh } = usePolled<AgentsBody>('/api/agents/sessions', 30_000, enabled);
+  const { data, error, refresh } = usePolled<AgentsBody>('/api/agents/sessions', 30_000, enabled);
 
   /** The new session, or the error text. Can take ~18 s: the server waits for the link. */
   const start = useCallback(
@@ -54,5 +54,7 @@ export function useAgents(enabled: boolean) {
   );
 
   const sessions = data?.sessions ?? NONE;
-  return useMemo(() => ({ sessions, refresh, start, stop }), [sessions, refresh, start, stop]);
+  /** Why the last list failed (e.g. HTTP 503 without tmux), else null. */
+  const listError = error?.message ?? null;
+  return useMemo(() => ({ sessions, listError, refresh, start, stop }), [sessions, listError, refresh, start, stop]);
 }

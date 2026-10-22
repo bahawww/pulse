@@ -28,7 +28,9 @@ const KINDS: readonly AgentKind[] = ['agy', 'claude'];
 export function AgentMenu({ open, onClose, canChat, canShell, agents, onOpenChat, onOpenTerminal, onNotify }: AgentMenuProps): JSX.Element | null {
   const [starting, setStarting] = useState<ReadonlySet<AgentKind>>(new Set());
   const [stopping, setStopping] = useState<string | null>(null);
-  const { sessions, refresh, start, stop } = agents;
+  // Stops in flight: their cards are disabled so a second confirm sends nothing.
+  const [ending, setEnding] = useState<ReadonlySet<string>>(new Set());
+  const { sessions, listError, refresh, start, stop } = agents;
 
   useEffect(() => {
     if (!open) {
@@ -61,64 +63,75 @@ export function AgentMenu({ open, onClose, canChat, canShell, agents, onOpenChat
 
   const end = async (name: string) => {
     setStopping(null);
+    if (ending.has(name)) return;
+    setEnding((s) => new Set(s).add(name));
     const err = await stop(name);
+    setEnding((s) => {
+      const next = new Set(s);
+      next.delete(name);
+      return next;
+    });
     onNotify(err ?? `Stopped ${name}`);
   };
 
   const copy = async (link: string) => onNotify((await copyToClipboard(link)) ? 'Link copied' : 'Could not copy the link');
 
-  const card = (s: AgentSession): JSX.Element => (
-    <li key={s.name} className="agent-card">
-      <div className="agent-card-head">
-        <BotIcon size={18} />
-        <strong className="agent-card-name">{s.name}</strong>
-        <span className="agent-card-age">{formatUptime((Date.now() - s.created) / 1000)}</span>
-      </div>
-      {s.link ? (
-        <a className="btn btn-primary agent-card-open" href={s.link} target="_blank" rel="noopener noreferrer">
-          {OPEN_LABEL[s.kind]}
-        </a>
-      ) : (
-        <p className="agent-card-wait">started, no link yet</p>
-      )}
-      {stopping === s.name ? (
-        <div className="agent-card-actions" role="group" aria-label={`Stop ${s.name}?`}>
-          <span className="agent-card-ask">
-            Stop <strong>{s.name}</strong>? The agent quits.
-          </span>
-          <button type="button" className="btn btn-sm btn-danger" onClick={() => void end(s.name)}>
-            Stop
-          </button>
-          <button type="button" className="btn btn-sm" onClick={() => setStopping(null)}>
-            Cancel
-          </button>
+  const card = (s: AgentSession): JSX.Element => {
+    const busy = ending.has(s.name);
+    return (
+      <li key={s.name} className="agent-card" aria-busy={busy || undefined}>
+        <div className="agent-card-head">
+          <BotIcon size={18} />
+          <strong className="agent-card-name">{s.name}</strong>
+          <span className="agent-card-age">{formatUptime((Date.now() - s.created) / 1000)}</span>
         </div>
-      ) : (
-        <div className="agent-card-actions">
-          {s.link && (
-            <button type="button" className="btn btn-sm" onClick={() => void copy(s.link ?? '')}>
-              <CopyIcon size={14} />
-              Copy link
+        {s.link ? (
+          <a className="btn btn-primary agent-card-open" href={s.link} target="_blank" rel="noopener noreferrer">
+            {OPEN_LABEL[s.kind]}
+          </a>
+        ) : (
+          <p className="agent-card-wait">started, no link yet</p>
+        )}
+        {stopping === s.name ? (
+          <div className="agent-card-actions" role="group" aria-label={`Stop ${s.name}?`}>
+            <span className="agent-card-ask">
+              Stop <strong>{s.name}</strong>? The agent quits.
+            </span>
+            <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => void end(s.name)}>
+              Stop
             </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => {
-              onClose();
-              onOpenTerminal(s.name);
-            }}
-          >
-            <TerminalIcon size={14} />
-            Open terminal
-          </button>
-          <button type="button" className="btn btn-sm btn-danger-ghost" onClick={() => setStopping(s.name)}>
-            Stop
-          </button>
-        </div>
-      )}
-    </li>
-  );
+            <button type="button" className="btn btn-sm" onClick={() => setStopping(null)}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="agent-card-actions">
+            {s.link && (
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void copy(s.link ?? '')}>
+                <CopyIcon size={14} />
+                Copy link
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() => {
+                onClose();
+                onOpenTerminal(s.name);
+              }}
+            >
+              <TerminalIcon size={14} />
+              Open terminal
+            </button>
+            <button type="button" className="btn btn-sm btn-danger-ghost" disabled={busy} onClick={() => setStopping(s.name)}>
+              {busy ? 'Stopping…' : 'Stop'}
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  };
 
   return (
     <>
@@ -151,6 +164,11 @@ export function AgentMenu({ open, onClose, canChat, canShell, agents, onOpenChat
               </button>
             );
           })}
+        {canShell && listError && (
+          <p className="note is-error" role="alert">
+            Cannot list sessions: {listError}
+          </p>
+        )}
         {canShell && sessions.length > 0 && <ul className="agent-cards">{sessions.map(card)}</ul>}
       </div>
     </>
