@@ -125,5 +125,24 @@ test('list cleans stale logs even with no agy session live', async () => {
   await listAgents(f.deps);
   const cleanup = f.cmds.find((c) => c.includes('rm -f'))!;
   assert.ok(!cleanup.startsWith(';'));
-  assert.match(cleanup, /^for f in /);
+  assert.match(cleanup, /^find /);
+  assert.match(cleanup, /-mmin \+1/);
+});
+test('list reads the newest agy link past a diff hunk in the log', async () => {
+  const log = '[remote-control-old1-v2] Starting\n@@ -1,2 +1,2 @@\n-a\n+b\n[remote-control-new2-v2] Starting\n';
+  const f = fakeDeps([listing('agy-1905'), (c) => (c.includes('tail -c') ? res(`\0agy-1905\n${log}`) : undefined)]);
+  const r = (await listAgents(f.deps)) as { link: string | null }[];
+  assert.equal(r[0]?.link, 'https://antigravity.google.com/r/new2-v2');
+});
+test('list drops a stored link that is not a takeover URL', async () => {
+  const f = fakeDeps([(c) => (c.includes('list-sessions') ? res('cc-1905\t1000\t2000\tjavascript:alert(1)\n') : undefined)]);
+  const r = (await listAgents(f.deps)) as { link: string | null }[];
+  assert.equal(r[0]?.link, null);
+  const g = fakeDeps([(c) => (c.includes('list-sessions') ? res('cc-1905\t1000\t2000\thttps://claude.ai/code/session_X1\n') : undefined)]);
+  assert.equal(((await listAgents(g.deps)) as { link: string | null }[])[0]?.link, 'https://claude.ai/code/session_X1');
+});
+test('agy start reads the trust prompt from the pane, never the log', async () => {
+  const f = fakeDeps([(c) => (c.includes('capture-pane') ? res('? for shortcuts\0Do you trust the contents of this project?') : undefined)]);
+  await startAgent('agy', f.deps);
+  assert.ok(!f.cmds.some((c) => c.includes('send-keys')));
 });

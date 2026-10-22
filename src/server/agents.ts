@@ -80,23 +80,26 @@ export async function listAgents(deps: AgentDeps = realDeps): Promise<AgentSessi
   const live = rows.filter(([n = '']) => AGENT_NAME.test(n));
   const names = live.map(([n = '']) => n);
   // One call: agy logs (where its link lives), then delete logs of dead sessions.
+  // NUL marks each tail: it never appears in a text log, unlike any printable marker.
+  // Only logs older than a minute go, so a list from another tab cannot unlink one agy just created.
   const agy = names.filter((n) => agentKindOf(n) === 'agy');
   const logs = await deps.run(
     [
-      ...agy.map((n) => `echo ${shq(`@@${n}`)}; ${LOG_TAIL(n)}`),
-      `for f in ${DIR}/*.log; do case "$(basename "$f" .log)" in ${names.map(shq).join('|') || "''"}) ;; *) rm -f "$f";; esac; done`,
+      ...agy.map((n) => `printf '\\0%s\\n' ${shq(n)}; ${LOG_TAIL(n)}`),
+      `find ${DIR} -maxdepth 1 -name '*.log' -mmin +1 2>/dev/null | while IFS= read -r f; do case "$(basename "$f" .log)" in ${names.map(shq).join('|') || "''"}) ;; *) rm -f "$f";; esac; done`,
       'true',
     ].join('; '),
   );
   const tails = new Map<string, string>();
-  for (const part of text(logs).split('@@').slice(1)) {
+  for (const part of text(logs).split('\0').slice(1)) {
     const nl = part.indexOf('\n');
     tails.set(part.slice(0, nl), part.slice(nl + 1));
   }
   const out: AgentSession[] = [];
   for (const [name = '', created, activity, saved] of live) {
     const kind = agentKindOf(name) as AgentKind;
-    let link = (kind === 'agy' ? findLink(kind, tails.get(name) ?? '') : null) ?? (saved || null);
+    // A stored link must still look like one: it becomes an href.
+    let link = (kind === 'agy' ? findLink(kind, tails.get(name) ?? '') : null) ?? (saved ? findLink(kind, saved) : null);
     // Claude prints its link on screen only; read the pane when it was never stored.
     if (!link && kind === 'claude') link = findLink(kind, text(await deps.run(`tmux capture-pane -p -J -t ${paneTarget(name)}`)));
     out.push({ kind, name, link, created: Number(created) * 1000 || 0, activity: Number(activity) * 1000 || 0 });
@@ -122,9 +125,10 @@ export async function startAgent(kind: AgentKind, deps: AgentDeps = realDeps): P
     let answered = false;
     const t0 = deps.now().getTime();
     while (!link && deps.now().getTime() - t0 < deps.timeoutMs) {
-      const pane = text(await deps.run(`tmux capture-pane -p -J -t ${q}${kind === 'agy' ? `; ${LOG_TAIL(name)}` : ''}`));
-      link = findLink(kind, pane);
-      const keys = answered || link ? null : trustKeys(kind, pane);
+      // agy's log follows a NUL; the trust prompt is only read from the pane, never the log.
+      const seen = text(await deps.run(`tmux capture-pane -p -J -t ${q}${kind === 'agy' ? `; printf '\\0'; ${LOG_TAIL(name)}` : ''}`));
+      link = findLink(kind, seen);
+      const keys = answered || link ? null : trustKeys(kind, seen.split('\0')[0] ?? '');
       if (keys) {
         answered = true;
         await deps.run(`tmux send-keys -t ${q} ${keys.join(' ')}`);
