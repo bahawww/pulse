@@ -15,7 +15,8 @@ interface AgentsCardProps {
 
 /** Overview card: what each agent is doing now. Reads App's state only, no polling of its own. */
 export function AgentsCard({ canChat, canShell, chat, agents, hermesOnline, onOpenChat, onOpenMenu }: AgentsCardProps): JSX.Element | null {
-  if (!canChat && !canShell && hermesOnline === null) return null;
+  // Hermes is shown only beside agents the login can use; a viewer gets no card (its status is on the services lamps).
+  if (!canChat && !canShell) return null;
 
   const sessionRow = (kind: AgentKind, label: string): JSX.Element => {
     const mine = agents.filter((s) => s.kind === kind);
