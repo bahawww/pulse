@@ -5260,3 +5260,77 @@ html[data-go] .side-kbd {
     height: 36px;
   }
 }
+
+/* Overview agents card: one hairline row per agent, same panel look as .lamps. */
+.agents-card {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.agents-row {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--line);
+}
+
+.agents-row:first-child {
+  border-top: 0;
+}
+
+.agents-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+button.agents-main:hover {
+  background-color: var(--surface-2);
+}
+
+.agents-name {
+  font-weight: 550;
+}
+
+.agents-state {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.agents-state.is-on {
+  color: var(--ok);
+}
+
+.agents-state.is-ask {
+  color: var(--warn);
+}
+
+.agents-state.is-off {
+  color: var(--crit);
+}
+
+.agents-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 18px 0 6px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--accent);
+  white-space: nowrap;
+}

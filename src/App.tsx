@@ -30,6 +30,7 @@ import { GoHint } from './components/GoHint';
 import { Loading, SkeletonCard } from './components/Skeleton';
 import { Rail, Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
+import { AgentsCard } from './components/AgentsCard';
 import { ChatFab, type ChatSignal } from './components/ChatFab';
 import { AgentMenu } from './components/AgentMenu';
 import { VIEWS } from './lib/views';
@@ -411,6 +412,18 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
 
                 <ErrorBoundary label="telemetry">
                   <TelemetryGrid system={system} samples={samples} />
+                </ErrorBoundary>
+
+                <ErrorBoundary label="agents">
+                  <AgentsCard
+                    canChat={canChat}
+                    canShell={canShell}
+                    chat={chatSignal}
+                    agents={agents.sessions}
+                    hermesOnline={data?.services.find((s) => s.id === 'hermes')?.status.online ?? null}
+                    onOpenChat={openChat}
+                    onOpenMenu={openAgentMenu}
+                  />
                 </ErrorBoundary>
 
                 <Section title="Services" hint="click to open">
