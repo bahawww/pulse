@@ -471,12 +471,29 @@ export interface ActionResult {
 }
 
 /** One row of the write-action audit log. Only executed actions are recorded. */
+/** Which CLI an agent session runs: Antigravity (`agy`) or Claude Code. */
+export type AgentKind = 'agy' | 'claude';
+
+/** A launched agent tmux session; `link` is its remote-control takeover URL once known. */
+export interface AgentSession {
+  readonly kind: AgentKind;
+  readonly name: string;
+  readonly link: string | null;
+  /** Epoch ms. */
+  readonly created: number;
+  /** Epoch ms of the last pane activity. */
+  readonly activity: number;
+}
+
+/** Most agent sessions that may run at once. */
+export const AGENT_LIMIT = 3;
+
 export interface ActionLogEntry {
   readonly id: number;
   /** Epoch ms when the action finished. */
   readonly ts: number;
   /** 'files': an upload, rename, new folder or delete from the file explorer. 'users': an account change. */
-  readonly target: ActionTarget | 'files' | 'users' | 'tmux' | 'process' | 'maintenance' | 'guardrail';
+  readonly target: ActionTarget | 'files' | 'users' | 'tmux' | 'process' | 'maintenance' | 'guardrail' | 'agent';
   readonly name: string;
   readonly action: string;
   readonly ok: boolean;
