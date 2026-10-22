@@ -52,8 +52,8 @@ export function ClaudeCodeIcon({ className, size = 18 }: IconProps): JSX.Element
   );
 }
 
-export function AgentKindIcon({ kind, size = 18 }: { kind: AgentKind; size?: number }): JSX.Element {
-  return kind === 'agy' ? <AgyIcon size={size} /> : <ClaudeCodeIcon size={size} />;
+export function AgentKindIcon({ kind, className, size = 18 }: IconProps & { kind: AgentKind }): JSX.Element {
+  return kind === 'agy' ? <AgyIcon className={className} size={size} /> : <ClaudeCodeIcon className={className} size={size} />;
 }
 
 export function NetworkIcon({ className, size = 28 }: IconProps): JSX.Element {

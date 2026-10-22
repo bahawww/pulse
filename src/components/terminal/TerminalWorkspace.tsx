@@ -216,9 +216,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
         // A tmux window opened meanwhile (attach from the agent menu) stays and stays in front.
         // A running shell already on that session becomes its shell instead of a second window;
         // views mount only after adoption, so no shell has started for it yet.
-        const kept = winsNow.current
-          .filter((w) => w.tmux)
-          .map((w) => ({ ...w, sid: w.sid ?? found.find((x) => x.tmux === w.tmux)?.sid }));
+        const tmuxWins = winsNow.current.filter((w) => w.tmux);
+        const kept = tmuxWins.map((w) => ({ ...w, sid: w.sid ?? found.find((x) => x.tmux === w.tmux)?.sid }));
         const base = Math.max(0, ...kept.map((w) => w.id));
         const adopted = found.flatMap<Win>((x, i) => {
           const id = base + i + 1;
@@ -231,7 +230,9 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
         const next = [...kept, ...adopted];
         setWins(next);
         setActive((kept[kept.length - 1] ?? next[next.length - 1]!).id);
-        flash(`Reattached ${found.length} running shell${found.length === 1 ? '' : 's'}`);
+        // Only shells that got a window: a new one, or the kept tmux window it now backs.
+        const took = adopted.length + kept.filter((w, i) => w.sid !== tmuxWins[i]!.sid).length;
+        flash(`Reattached ${took} running shell${took === 1 ? '' : 's'}`);
       })
       .catch(() => undefined)
       .finally(() => {
