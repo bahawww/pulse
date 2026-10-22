@@ -146,3 +146,27 @@ test('agy start reads the trust prompt from the pane, never the log', async () =
   await startAgent('agy', f.deps);
   assert.ok(!f.cmds.some((c) => c.includes('send-keys')));
 });
+test('a same-minute duplicate retries once with the next free name', async () => {
+  let made = 0;
+  let listed = 0;
+  const f = fakeDeps([
+    (c) => (c.includes('list-sessions') ? res(++listed > 1 ? row('agy-1905') : '') : undefined),
+    (c) => (c.includes('new-session') && ++made === 1 ? res('', 1, 'duplicate session: agy-1905') : undefined),
+  ]);
+  const r = await startAgent('agy', f.deps);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.session?.name, 'agy-1905-2');
+  const tries = f.cmds.filter((c) => c.includes('new-session'));
+  assert.equal(tries.length, 2);
+  assert.match(tries[1]!, /-s 'agy-1905-2'/);
+});
+test('a duplicate retry is refused when the fresh list is full', async () => {
+  let listed = 0;
+  const f = fakeDeps([
+    (c) => (c.includes('list-sessions') ? res(++listed > 1 ? ['agy-1905', 'agy-1', 'agy-2'].map(row).join('') : '') : undefined),
+    (c) => (c.includes('new-session') ? res('', 1, 'duplicate session: agy-1905') : undefined),
+  ]);
+  const r = await startAgent('agy', f.deps);
+  assert.equal(r.status, 409);
+  assert.equal(f.cmds.filter((c) => c.includes('new-session')).length, 1);
+});

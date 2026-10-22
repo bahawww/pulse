@@ -112,13 +112,27 @@ type Reply<T> = { status: number; body: { error?: string } & T };
 /** Starts a session, answers its trust prompt once, and waits for the takeover link. */
 export async function startAgent(kind: AgentKind, deps: AgentDeps = realDeps): Promise<Reply<{ session?: AgentSession }>> {
   const started = Date.now();
-  const listed = await listAgents(deps);
-  if (typeof listed === 'string') return { status: 503, body: { error: listed } };
-  if (listed.filter((s) => s.kind === kind).length >= AGENT_LIMIT) return { status: 409, body: { error: `${AGENT_LIMIT} running: stop one first` } };
-  const name = nextName(kind, listed.map((s) => s.name), deps.now());
+  /** A free name from a fresh list, or the refusal. */
+  const pick = async (): Promise<string | Reply<{ session?: AgentSession }>> => {
+    const listed = await listAgents(deps);
+    if (typeof listed === 'string') return { status: 503, body: { error: listed } };
+    if (listed.filter((s) => s.kind === kind).length >= AGENT_LIMIT) return { status: 409, body: { error: `${AGENT_LIMIT} running: stop one first` } };
+    return nextName(kind, listed.map((s) => s.name), deps.now());
+  };
+  const create = (name: string): Promise<RunResult> => {
+    const command = kind === 'agy' ? `~/.local/bin/agy --remote-control --log-file ${logOf(name)}` : `~/.local/bin/claude --remote-control ${shq(name)}`;
+    return deps.run(`mkdir -p ${DIR} && tmux new-session -d -s ${shq(name)} -c ~ ${command}`);
+  };
+  let name = await pick();
+  if (typeof name !== 'string') return name;
+  let made = await create(name);
+  // Another start in the same minute can take the name between the list and new-session: retry once.
+  if (made.code !== 0 && made.stderr.includes('duplicate session')) {
+    name = await pick();
+    if (typeof name !== 'string') return name;
+    made = await create(name);
+  }
   const q = paneTarget(name);
-  const command = kind === 'agy' ? `~/.local/bin/agy --remote-control --log-file ${logOf(name)}` : `~/.local/bin/claude --remote-control ${shq(name)}`;
-  const made = await deps.run(`mkdir -p ${DIR} && tmux new-session -d -s ${shq(name)} -c ~ ${command}`);
   let link: string | null = null;
   let error = made.code === 0 ? '' : made.stderr.trim() || 'cannot start session';
   if (!error) {
