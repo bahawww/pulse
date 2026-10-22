@@ -75,7 +75,7 @@ export function AgentMenu({ open, onClose, canChat, canShell, agents, onOpenChat
         <span className="agent-card-age">{formatUptime((Date.now() - s.created) / 1000)}</span>
       </div>
       {s.link ? (
-        <a className="btn btn-primary agent-card-open" href={s.link} target="_blank" rel="noopener">
+        <a className="btn btn-primary agent-card-open" href={s.link} target="_blank" rel="noopener noreferrer">
           {OPEN_LABEL[s.kind]}
         </a>
       ) : (

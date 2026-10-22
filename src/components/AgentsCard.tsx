@@ -28,7 +28,7 @@ export function AgentsCard({ canChat, canShell, chat, agents, hermesOnline, onOp
           <span className={`agents-state ${mine.length ? 'is-on' : ''}`}>{mine.length ? `${mine.length} running` : 'none'}</span>
         </button>
         {link && (
-          <a className="agents-link" href={link} target="_blank" rel="noopener">
+          <a className="agents-link" href={link} target="_blank" rel="noopener noreferrer">
             Open ↗
           </a>
         )}
