@@ -14,6 +14,9 @@ test('nextName uses HHMM, then -2, -3', () => {
   assert.equal(nextName('agy', [], at), 'agy-1905');
   assert.equal(nextName('claude', ['cc-1905'], at), 'cc-1905-2');
   assert.equal(nextName('claude', ['cc-1905', 'cc-1905-2'], at), 'cc-1905-3');
+  assert.equal(nextName('agy', ['agy-1905'], at), 'agy-1905-2');
+  // Each kind has its own prefix, so the other kind's name never clashes.
+  assert.equal(nextName('agy', ['cc-1905'], at), 'agy-1905');
 });
 test('trustKeys: agy Enter, claude Down+Enter, nothing without a prompt', () => {
   assert.deepEqual(trustKeys('agy', 'Do you trust the contents of this project?\n> Yes, I trust this folder'), ['Enter']);
@@ -169,4 +172,11 @@ test('a duplicate retry is refused when the fresh list is full', async () => {
   const r = await startAgent('agy', f.deps);
   assert.equal(r.status, 409);
   assert.equal(f.cmds.filter((c) => c.includes('new-session')).length, 1);
+});
+test('agy start and stop quote the log name', async () => {
+  const f = fakeDeps([]);
+  await startAgent('agy', f.deps);
+  assert.ok(f.cmds.find((c) => c.includes('new-session'))!.includes("--log-file ~/.cache/pulse-agents/'agy-1905.log'"));
+  await stopAgent('agy-1905', f.deps);
+  assert.ok(f.cmds.at(-1)!.includes("rm -f ~/.cache/pulse-agents/'agy-1905.log'"));
 });
