@@ -53,7 +53,8 @@ export function LogPanel() {
       .then((body: { units: string[] }) => {
         setUnits(body.units);
         // Default to this dashboard's own unit, the likeliest one to matter.
-        setUnit((current) => current || 'pulse.service');
+        // Not every login may read it (index.ts unitReadable): fall back to the first offered.
+        setUnit((current) => current || (body.units.includes('pulse.service') ? 'pulse.service' : (body.units[0] ?? '')));
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;

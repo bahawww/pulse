@@ -18,6 +18,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "start": "node dist/server/index.js",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test --test-force-exit src/server/*.test.ts",
     "test:chat": "node scripts/chat-test/run.mjs"
   },
   "dependencies": {

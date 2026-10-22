@@ -57,8 +57,7 @@ const KIND_LABEL: Readonly<Record<ResourceLimitTarget['kind'], string>> = {
   docker: 'docker',
 };
 
-const POLICIES: readonly { key: keyof Pick<MaintenanceSchedule, 'autoDropCacheOnPressure' | 'autoDockerPruneWeekly' | 'autoJournalVacuumWeekly'>; label: string; hint: string }[] = [
-  { key: 'autoDropCacheOnPressure', label: 'Drop caches under memory pressure', hint: 'when RAM in use reaches 85%' },
+const POLICIES: readonly { key: keyof Pick<MaintenanceSchedule, 'autoDockerPruneWeekly' | 'autoJournalVacuumWeekly'>; label: string; hint: string }[] = [
   { key: 'autoDockerPruneWeekly', label: 'Prune Docker cache weekly', hint: 'unused images and build cache' },
   { key: 'autoJournalVacuumWeekly', label: 'Vacuum system logs weekly', hint: 'journald down to 100 MB / 7 days' },
 ];

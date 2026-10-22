@@ -208,6 +208,7 @@ export function ActionsPanel({
                 </span>
                 <span className="action-name" title={e.message}>
                   {e.action} {e.name}
+                  {e.user && <span className="muted"> · {e.user}</span>}
                 </span>
                 <span className={`pill ${e.ok ? 'is-ok' : 'is-crit'}`}>{e.ok ? 'ok' : 'failed'}</span>
               </li>

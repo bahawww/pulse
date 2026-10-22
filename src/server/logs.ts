@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { LogEntry } from '../shared/contract.js';
+import { UNIT_NAME as UNIT_PATTERN } from './actions.js';
 
 /**
  * Read-only journal tail.
@@ -7,15 +8,13 @@ import type { LogEntry } from '../shared/contract.js';
  * journalctl is the right source for systemd units and nothing else, so it is
  * called with an explicit argv and a bounded line count. The unit name is the
  * only free-text input, and it is matched against a strict pattern before it
- * reaches execFile — plus validated again against the live unit list, so this
- * cannot become a way to read arbitrary files or run arbitrary commands.
+ * reaches execFile, so this cannot become a way to read arbitrary files or run
+ * arbitrary commands. Which units a login may read is decided in index.ts.
  *
  * Output is capped twice: by line count going in, and by bytes coming out. A
  * runaway log line is exactly the case where an unbounded read would hang the
  * request.
  */
-
-const UNIT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.@:-]{0,127}$/;
 
 const MAX_LINES = 500;
 const MAX_MESSAGE = 600;

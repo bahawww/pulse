@@ -482,6 +482,8 @@ export interface ActionLogEntry {
   readonly ok: boolean;
   readonly message: string;
   readonly durationMs: number;
+  /** The login that ran it; absent for automated runs and rows from before this column existed. */
+  readonly user?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +503,6 @@ export type MaintenanceTask = 'drop-caches' | 'docker-prune' | 'journal-vacuum' 
 export interface MaintenanceSchedule {
   readonly autoDockerPruneWeekly: boolean;
   readonly autoJournalVacuumWeekly: boolean;
-  readonly autoDropCacheOnPressure: boolean;
   readonly lastRunAt: Readonly<Record<string, number>>;
 }
 

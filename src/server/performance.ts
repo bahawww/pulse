@@ -9,6 +9,7 @@ import type {
   ResourceLimitTarget,
 } from '../shared/contract.js';
 import { collectMemory, humanBytes } from './collect/memory.js';
+import { consumeToken, issueToken } from './confirm.js';
 import { runRemote } from './files.js';
 import { shq } from './sshLocal.js';
 import { loadSetting, recordAction, recentActions, saveSetting } from './store.js';
@@ -22,8 +23,7 @@ import { publish } from './stream.js';
  *     vacuum journald, and reset failed systemd units.
  *  3. Resource guardrails: inspect and set persistent MemoryHigh, MemoryMax,
  *     and CPUQuota limits on managed systemd units (system and user slices).
- *  4. Automated maintenance scheduler: weekly Docker/journal cleanup and
- *     optional auto-cache-drop under sustained memory pressure.
+ *  4. Automated maintenance scheduler: weekly Docker/journal cleanup.
  */
 
 const PROTECTED_PROCESSES: ReadonlySet<string> = new Set([
@@ -64,38 +64,6 @@ const MANAGED_UNITS: readonly ManagedUnit[] = [
   { id: 'novnc.service', label: 'noVNC WebSocket Proxy', kind: 'systemd-system' },
   { id: 'vncserver@11.service', label: 'TigerVNC Desktop (:11)', kind: 'systemd-system' },
 ];
-
-// ---------------------------------------------------------------------------
-// Two-phase confirmation tokens
-// ---------------------------------------------------------------------------
-
-interface PendingToken {
-  readonly key: string;
-  readonly expiresAt: number;
-}
-
-const pendingTokens = new Map<string, PendingToken>();
-const CONFIRM_TTL_MS = 30_000;
-
-function issueToken(key: string): string {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  const token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  pendingTokens.set(token, { key, expiresAt: Date.now() + CONFIRM_TTL_MS });
-  if (pendingTokens.size > 60) {
-    const oldest = [...pendingTokens.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
-    if (oldest) pendingTokens.delete(oldest[0]);
-  }
-  return token;
-}
-
-function consumeToken(token: string | null, expectedKey: string): boolean {
-  if (!token) return false;
-  const entry = pendingTokens.get(token);
-  pendingTokens.delete(token);
-  if (!entry || entry.expiresAt < Date.now()) return false;
-  return entry.key === expectedKey;
-}
 
 // ---------------------------------------------------------------------------
 // Process signaling & renice
@@ -258,7 +226,9 @@ export async function performMaintenance(
   }
 
   const durationMs = Date.now() - started;
-  if (ok) {
+  // An automated run counts as done even when it failed: otherwise the next
+  // sampler tick (5 s) retries it, forever, until Docker or sudo answers again.
+  if (ok || automated) {
     const sched = getSchedule();
     saveSetting('maintenance_schedule', {
       ...sched,
@@ -406,7 +376,6 @@ export async function applyResourceLimit(input: {
 const DEFAULT_SCHEDULE: MaintenanceSchedule = {
   autoDockerPruneWeekly: true,
   autoJournalVacuumWeekly: true,
-  autoDropCacheOnPressure: true,
   lastRunAt: {},
 };
 
@@ -415,7 +384,6 @@ export function getSchedule(): MaintenanceSchedule {
   return {
     autoDockerPruneWeekly: typeof saved.autoDockerPruneWeekly === 'boolean' ? saved.autoDockerPruneWeekly : DEFAULT_SCHEDULE.autoDockerPruneWeekly,
     autoJournalVacuumWeekly: typeof saved.autoJournalVacuumWeekly === 'boolean' ? saved.autoJournalVacuumWeekly : DEFAULT_SCHEDULE.autoJournalVacuumWeekly,
-    autoDropCacheOnPressure: typeof saved.autoDropCacheOnPressure === 'boolean' ? saved.autoDropCacheOnPressure : DEFAULT_SCHEDULE.autoDropCacheOnPressure,
     lastRunAt: saved.lastRunAt && typeof saved.lastRunAt === 'object' ? saved.lastRunAt : {},
   };
 }
@@ -425,7 +393,6 @@ export function updateSchedule(patch: Partial<MaintenanceSchedule>): Maintenance
   const next: MaintenanceSchedule = {
     autoDockerPruneWeekly: typeof patch.autoDockerPruneWeekly === 'boolean' ? patch.autoDockerPruneWeekly : current.autoDockerPruneWeekly,
     autoJournalVacuumWeekly: typeof patch.autoJournalVacuumWeekly === 'boolean' ? patch.autoJournalVacuumWeekly : current.autoJournalVacuumWeekly,
-    autoDropCacheOnPressure: typeof patch.autoDropCacheOnPressure === 'boolean' ? patch.autoDropCacheOnPressure : current.autoDropCacheOnPressure,
     lastRunAt: current.lastRunAt,
   };
   saveSetting('maintenance_schedule', next);
@@ -433,22 +400,15 @@ export function updateSchedule(patch: Partial<MaintenanceSchedule>): Maintenance
 }
 
 const WEEK_MS = 7 * 24 * 3_600_000;
-const PRESSURE_COOLDOWN_MS = 30 * 60_000;
-let lastPressureDropAt = 0;
 let tickRunning = false;
 
-/** Called periodically by the server sampler to enforce automated maintenance & memory pressure relief. */
-export async function evaluateGuardrails(memPercent: number): Promise<void> {
+/** Called periodically by the server sampler to run the weekly maintenance tasks. */
+export async function evaluateGuardrails(): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
   try {
     const sched = getSchedule();
     const now = Date.now();
-
-    if (sched.autoDropCacheOnPressure && memPercent >= 85 && now - lastPressureDropAt > PRESSURE_COOLDOWN_MS) {
-      lastPressureDropAt = now;
-      await performMaintenance('drop-caches', null, true);
-    }
 
     const lastDocker = sched.lastRunAt['docker-prune'] ?? 0;
     if (sched.autoDockerPruneWeekly && now - lastDocker > WEEK_MS) {
@@ -475,6 +435,7 @@ export function registerPerformanceRoutes(
   readLimiter: RequestHandler,
   writeLimiter: RequestHandler,
   requireControl: RequestHandler,
+  requireRoot: RequestHandler,
 ): void {
   app.get('/api/performance', readLimiter, requireControl, (_req: Request, res: Response) => {
     void readResourceLimits()
@@ -492,7 +453,9 @@ export function registerPerformanceRoutes(
       .catch(() => res.status(500).json({ error: 'failed to read performance state' }));
   });
 
-  app.post('/api/performance/process', writeLimiter, requireControl, (req: Request, res: Response) => {
+  // `sudo kill` and `sudo renice` reach any process as root, so this needs the
+  // root-equivalent terminal permission, not just service control.
+  app.post('/api/performance/process', writeLimiter, requireRoot, (req: Request, res: Response) => {
     const body = req.body as { pid?: unknown; name?: unknown; signal?: unknown; confirm?: unknown };
     void performProcessAction(
       {

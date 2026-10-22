@@ -11,7 +11,7 @@ import { PASSWORD_MIN, UNIT_SERVICES, type Permission, type Service, type StatsP
 import { checkAllServices } from './probe.js';
 import { getSystemSnapshot } from './collect/index.js';
 import { record, query, getHistory, historyStats, maxSpanMs, rehydrate } from './history.js';
-import { openStore, isStoreOpen, storeError, storeCount, storePath, closeStore, recentActions } from './store.js';
+import { auditActor, openStore, isStoreOpen, storeError, storeCount, storePath, closeStore, recentActions } from './store.js';
 import { evaluate, getRules, restoreAlertEvents, snapshot, updateAlertRule } from './alerts.js';
 import { channelStatus, notify } from './notify.js';
 import { evaluateGuardrails, registerPerformanceRoutes } from './performance.js';
@@ -39,7 +39,7 @@ import {
   userOf,
   verifyLogin,
 } from './session.js';
-import { performAction, refreshAllowlist } from './actions.js';
+import { performAction, refreshAllowlist, targetsDetailed } from './actions.js';
 import { readLogs, listUnits } from './logs.js';
 import { checkReachability } from './reachability.js';
 import { getSpend } from './spend.js';
@@ -239,6 +239,13 @@ const apiLimiter = rateLimit({
 
 const OPEN_API = new Set(['/health', '/auth/login', '/auth/me']);
 app.use('/api', requireSession(OPEN_API));
+
+// Every audit row written while serving this request names its login (store.ts).
+app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+  const name = userOf(res.locals.sessionHash as string)?.name;
+  if (name) auditActor.run(name, next);
+  else next();
+});
 
 // API answers are per-session and live; no proxy or browser cache may keep one.
 app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
@@ -463,9 +470,19 @@ const logLimiter = rateLimit({
   message: { error: 'Too many log requests' },
 });
 
+/**
+ * The service user is in group adm, so journalctl reads every unit: sshd
+ * (login IPs, key fingerprints), the agents, this dashboard. Only a login that
+ * can already read every file (files:read) gets all of them; the rest see the
+ * system units behind the dashboard's own service cards.
+ */
+function unitReadable(res: Response, unit: string): boolean {
+  return permissionsOf(res).includes('files:read') || targetsDetailed().systemd.some((t) => t.scope === 'system' && t.unit === unit);
+}
+
 app.get('/api/logs/units', logLimiter, requirePerm('view:logs'), (_req: Request, res: Response) => {
   void listUnits()
-    .then((units) => res.json({ units }))
+    .then((units) => res.json({ units: units.filter((u) => unitReadable(res, u)) }))
     .catch(() => res.status(500).json({ error: 'could not list units' }));
 });
 
@@ -473,6 +490,10 @@ app.get('/api/logs', logLimiter, requirePerm('view:logs'), (req: Request, res: R
   const unit = String(req.query.unit ?? '');
   if (!unit) {
     res.status(400).json({ error: 'unit query parameter required' });
+    return;
+  }
+  if (!unitReadable(res, unit)) {
+    res.status(403).json({ error: 'your account may read only the logs of the dashboard services', code: 'permission' });
     return;
   }
 
@@ -623,7 +644,7 @@ app.get('/api/actions/log', apiLimiter, requirePerm('view:logs'), (_req: Request
   res.json({ entries: recentActions(50) });
 });
 
-registerPerformanceRoutes(app, apiLimiter, actionLimiter, requirePerm('services:control'));
+registerPerformanceRoutes(app, apiLimiter, actionLimiter, requirePerm('services:control'), requirePerm('terminal'));
 
 app.put('/api/alerts/rules', actionLimiter, requirePerm('services:control'), (req: Request, res: Response) => {
   const body = req.body as { id?: unknown; enabled?: unknown; limit?: unknown; forSamples?: unknown };
@@ -919,7 +940,7 @@ const sampler = setInterval(() => {
       // Push to open tabs: telemetry every tick, alerts only when they change.
       publishScoped('stats', (permissions) => scopeStats(payload, permissions));
       publish('alerts', snapshot(rules, channelStatus()), true);
-      void evaluateGuardrails(payload.system.memory.percent);
+      void evaluateGuardrails();
       for (const event of fired) {
         void notify(event).catch((err: unknown) =>
           console.error('[vps-dashboard] alert notify:', err),

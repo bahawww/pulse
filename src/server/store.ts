@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -173,12 +174,16 @@ export async function openStore(): Promise<boolean> {
         action      TEXT NOT NULL,
         ok          INTEGER NOT NULL,
         message     TEXT NOT NULL,
-        duration_ms INTEGER NOT NULL
+        duration_ms INTEGER NOT NULL,
+        user        TEXT
       )
     `);
+    // Databases from before the `user` column get it added; old rows stay NULL.
+    const columns = db.prepare('PRAGMA table_info(action_log)').all() as unknown as { name: string }[];
+    if (!columns.some((c) => c.name === 'user')) db.exec('ALTER TABLE action_log ADD COLUMN user TEXT');
     actionInsertStmt = db.prepare(
-      `INSERT INTO action_log (ts, target, name, action, ok, message, duration_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO action_log (ts, target, name, action, ok, message, duration_ms, user)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     // Key-value settings store for alert rule overrides and maintenance schedules.
@@ -443,6 +448,13 @@ export function loadAlertEvents(limit: number): AlertEvent[] {
 }
 
 /** Appends one executed write action to the audit log. Best-effort. */
+/**
+ * The login behind the API request being served (set in index.ts), so every
+ * audit row names who ran it without each caller passing it along. Empty for
+ * automated runs (sampler, scheduler).
+ */
+export const auditActor = new AsyncLocalStorage<string>();
+
 export function recordAction(entry: Omit<ActionLogEntry, 'id'>): void {
   if (!db || !actionInsertStmt) return;
   try {
@@ -454,6 +466,7 @@ export function recordAction(entry: Omit<ActionLogEntry, 'id'>): void {
       entry.ok ? 1 : 0,
       entry.message,
       entry.durationMs,
+      entry.user ?? auditActor.getStore() ?? null,
     );
     db.prepare('DELETE FROM action_log WHERE id NOT IN (SELECT id FROM action_log ORDER BY id DESC LIMIT ?)').run(
       MAX_ACTION_ROWS,
@@ -468,7 +481,7 @@ export function recentActions(limit: number): ActionLogEntry[] {
   if (!db) return [];
   try {
     const rows = db
-      .prepare('SELECT id, ts, target, name, action, ok, message, duration_ms FROM action_log ORDER BY id DESC LIMIT ?')
+      .prepare('SELECT id, ts, target, name, action, ok, message, duration_ms, user FROM action_log ORDER BY id DESC LIMIT ?')
       .all(limit) as unknown as {
       id: number;
       ts: number;
@@ -478,6 +491,7 @@ export function recentActions(limit: number): ActionLogEntry[] {
       ok: number;
       message: string;
       duration_ms: number;
+      user: string | null;
     }[];
     return rows.map((r) => ({
       id: r.id,
@@ -488,6 +502,7 @@ export function recentActions(limit: number): ActionLogEntry[] {
       ok: r.ok === 1,
       message: r.message,
       durationMs: r.duration_ms,
+      ...(r.user ? { user: r.user } : {}),
     }));
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { ActionRequest, ActionResult } from '../shared/contract.js';
+import { consumeToken, issueToken } from './confirm.js';
 import { recordAction } from './store.js';
 
 /**
@@ -32,7 +33,7 @@ const ACTIONS = new Set(['restart', 'stop', 'start'] as const);
 const MAX_OUTPUT = 2000;
 
 /** Valid systemd unit names. Rejects anything with shell or path characters. */
-const UNIT_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.@:-]{0,127}$/;
+export const UNIT_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.@:-]{0,127}$/;
 
 /** Docker names: letters, digits and a few separators, no leading punctuation. */
 const CONTAINER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
@@ -97,33 +98,8 @@ export function targetsDetailed(): { systemd: { id: string; unit: string; scope:
   };
 }
 
-/** Short-lived token proving the operator saw the confirmation dialog. */
-interface Pending {
-  readonly request: ActionRequest;
-  readonly expiresAt: number;
-}
-
-const pending = new Map<string, Pending>();
-
-const CONFIRM_TTL_MS = 30_000;
-
-function issueToken(request: ActionRequest): string {
-  const token = randomToken();
-  pending.set(token, { request, expiresAt: Date.now() + CONFIRM_TTL_MS });
-  // Bound the map; a client that never confirms should not accumulate tokens.
-  if (pending.size > 50) {
-    const oldest = [...pending.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
-    if (oldest) pending.delete(oldest[0]);
-  }
-  return token;
-}
-
-function randomToken(): string {
-  // crypto.randomUUID would do, but this keeps the token independent of global
-  // crypto availability in older runtimes.
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+function tokenKey(request: ActionRequest): string {
+  return `action:${request.target}:${request.name}:${request.action}`;
 }
 
 function validate(request: ActionRequest): string | null {
@@ -196,39 +172,20 @@ export async function performAction(
       message: 'confirmation required',
       stdout: '',
       durationMs: 0,
-      confirmToken: issueToken(request),
+      confirmToken: issueToken(tokenKey(request)),
     };
   }
 
-  const entry = pending.get(confirm);
-  if (!entry || entry.expiresAt < Date.now()) {
-    pending.delete(confirm);
+  // The token is bound to the exact action it was issued for: a token for
+  // `start` cannot confirm `restart`, and one for a docker container cannot
+  // confirm a systemd unit that happens to share the name.
+  if (!consumeToken(confirm, tokenKey(request))) {
     return {
       ok: false,
       target: request.target,
       name: request.name,
       action: request.action,
-      message: 'confirmation token expired or unknown — request again',
-      stdout: '',
-      durationMs: 0,
-    };
-  }
-  pending.delete(confirm);
-
-  // The token is bound to the action it was issued for, so a client cannot get a
-  // token for `start` and then confirm `restart`.
-  if (entry.request.name !== request.name ||
-      entry.request.action !== request.action ||
-      // `target` too. Without this, a token issued for a docker container could
-      // confirm a systemd unit that happens to share the name — two completely
-      // different commands behind one shared string.
-      entry.request.target !== request.target) {
-    return {
-      ok: false,
-      target: request.target,
-      name: request.name,
-      action: request.action,
-      message: 'confirmation token does not match this action',
+      message: 'confirmation token expired, unknown or for another action — request again',
       stdout: '',
       durationMs: 0,
     };

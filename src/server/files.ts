@@ -98,11 +98,6 @@ export interface RunResult {
   readonly stderr: string;
 }
 
-/** Runs a command to completion, capturing output up to maxBytes. */
-function run(cmd: string, maxBytes = 16 * 1024 * 1024): Promise<RunResult> {
-  return runRemote(cmd, maxBytes);
-}
-
 /** Runs one command as the SSH user over the loopback login (outside this sandbox), to completion. */
 export function runRemote(cmd: string, maxBytes = 16 * 1024 * 1024): Promise<RunResult> {
   return new Promise((resolve) => {
@@ -167,7 +162,7 @@ function fail(res: Response, r: RunResult, fallback: string): void {
 // ---------------------------------------------------------------------------
 
 /** Absolute, normalised, no trailing slash; null for anything else. */
-function cleanPath(input: unknown): string | null {
+export function cleanPath(input: unknown): string | null {
   if (typeof input !== 'string' || !input.startsWith('/') || input.length > 4096 || input.includes('\0')) return null;
   const p = path.posix.normalize(input);
   return p.length > 1 ? p.replace(/\/+$/, '') : p;
@@ -184,7 +179,7 @@ function cleanName(input: unknown): string | null {
  * Never deleted or renamed here: the root, top-level folders, the home folder,
  * this dashboard's own folder, and anything that contains one of them.
  */
-function isProtected(p: string): boolean {
+export function isProtected(p: string): boolean {
   if (p === '/' || path.posix.dirname(p) === '/') return true;
   return [HOME, process.cwd()].some((keep) => keep === p || keep.startsWith(`${p}/`));
 }
@@ -220,7 +215,7 @@ async function list(req: Request, res: Response): Promise<void> {
   const cmd =
     `cd ${dir ? `-- ${shq(dir)}` : ''} && pwd && printf '%s\\n' "$HOME" && ` +
     `LC_ALL=C find . -mindepth 1 -maxdepth 1 -printf '%y\\t%Y\\t%s\\t%T@\\t%m\\t%u\\t%f\\0' 2>/dev/null | head -z -n ${MAX_ENTRIES + 1}`;
-  const r = await run(cmd);
+  const r = await runRemote(cmd);
   if (r.code !== 0 && r.stdout.length === 0) {
     fail(res, r, 'cannot open folder');
     return;
@@ -258,7 +253,7 @@ async function preview(req: Request, res: Response): Promise<void> {
     return;
   }
   const q = shq(file);
-  const r = await run(
+  const r = await runRemote(
     `[ -f ${q} ] || { echo 'not a regular file' >&2; exit ${EXIT_MISSING}; }; stat -c %s -- ${q} && head -c ${PREVIEW_BYTES} -- ${q}`,
     PREVIEW_BYTES + 64,
   );
@@ -286,7 +281,7 @@ async function download(req: Request, res: Response): Promise<void> {
     return;
   }
   const q = shq(file);
-  const head = await run(`[ -f ${q} ] || { echo 'not a regular file' >&2; exit ${EXIT_MISSING}; }; [ -r ${q} ] || { echo 'Permission denied' >&2; exit 1; }; stat -c %s -- ${q}`);
+  const head = await runRemote(`[ -f ${q} ] || { echo 'not a regular file' >&2; exit ${EXIT_MISSING}; }; [ -r ${q} ] || { echo 'Permission denied' >&2; exit 1; }; stat -c %s -- ${q}`);
   if (head.code !== 0) {
     fail(res, head, 'cannot read file');
     return;
@@ -351,7 +346,7 @@ async function upload(req: Request, res: Response): Promise<void> {
     `[ -w ${qd} ] || { echo 'Permission denied' >&2; exit 1; }; true`;
 
   // Refuse before reading a byte of the body.
-  const pre = await run(check);
+  const pre = await runRemote(check);
   if (pre.code !== 0) {
     req.resume();
     fail(res, pre, 'cannot upload here');
@@ -413,7 +408,7 @@ async function mkdir(req: Request, res: Response): Promise<void> {
     return;
   }
   const target = path.posix.join(dir, name);
-  const r = await run(`mkdir -- ${shq(target)}`);
+  const r = await runRemote(`mkdir -- ${shq(target)}`);
   audit('mkdir', target, started, r);
   if (r.code === 0) res.json({ ok: true, path: target });
   else fail(res, r, 'cannot create folder');
@@ -433,7 +428,7 @@ async function rename(req: Request, res: Response): Promise<void> {
     return;
   }
   const to = path.posix.join(path.posix.dirname(from), name);
-  const r = await run(
+  const r = await runRemote(
     `[ -e ${shq(to)} ] && { echo 'a file with that name already exists' >&2; exit ${EXIT_EXISTS}; }; mv -- ${shq(from)} ${shq(to)}`,
   );
   audit('rename', `${from} -> ${name}`, started, r);
@@ -452,7 +447,7 @@ async function remove(req: Request, res: Response): Promise<void> {
     res.status(403).json({ error: 'this folder cannot be deleted here' });
     return;
   }
-  const r = await run(`[ -e ${shq(target)} ] || [ -L ${shq(target)} ] || { echo 'No such file' >&2; exit ${EXIT_MISSING}; }; rm -rf -- ${shq(target)}`);
+  const r = await runRemote(`[ -e ${shq(target)} ] || [ -L ${shq(target)} ] || { echo 'No such file' >&2; exit ${EXIT_MISSING}; }; rm -rf -- ${shq(target)}`);
   audit('delete', target, started, r);
   if (r.code === 0) res.json({ ok: true });
   else fail(res, r, 'cannot delete');

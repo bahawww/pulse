@@ -445,7 +445,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
               <Section title="Workload" hint="what is running and how much it uses">
                 <div className="grid">
                   <div className="span-7">
-                    <Charts.ProcessHistory processes={system.processes} samples={samples} canAct={canAct} onNotify={notify} onRefresh={refresh} />
+                    <Charts.ProcessHistory processes={system.processes} samples={samples} canAct={canShell} onNotify={notify} onRefresh={refresh} />
                   </div>
                   <div className="span-5">
                     <Charts.ContainerHistory containers={system.docker.filter((c) => !isHiddenContainer(c.name))} samples={samples} />
