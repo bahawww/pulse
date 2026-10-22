@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import type { AgentKind, AgentSession } from '../shared/contract';
 import type { ChatSignal } from './ChatFab';
+import { AgentKindIcon } from './icons';
 
 interface AgentsCardProps {
   readonly canChat: boolean;
@@ -24,7 +25,10 @@ export function AgentsCard({ canChat, canShell, chat, agents, hermesOnline, onOp
     return (
       <li className="agents-row" key={kind}>
         <button type="button" className="agents-main" onClick={onOpenMenu}>
-          <span className="agents-name">{label}</span>
+          <span className="agents-name">
+            <AgentKindIcon kind={kind} size={16} />
+            {label}
+          </span>
           <span className={`agents-state ${mine.length ? 'is-on' : ''}`}>{mine.length ? `${mine.length} running` : 'none'}</span>
         </button>
         {link && (

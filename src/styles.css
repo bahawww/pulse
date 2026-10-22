@@ -5304,6 +5304,9 @@ button.agents-main:hover {
 }
 
 .agents-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 550;
 }
 

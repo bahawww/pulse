@@ -2,7 +2,8 @@ import { type JSX, useEffect, useState } from 'react';
 import { AGENT_LIMIT, type AgentKind, type AgentSession } from '../shared/contract';
 import type { useAgents } from '../hooks/useAgents';
 import { copyToClipboard, formatUptime } from '../lib/urls';
-import { BotIcon, ChatIcon, CopyIcon, PlusIcon, TerminalIcon } from './icons';
+import { useNow } from '../hooks/useNow';
+import { AgentKindIcon, ChatIcon, CopyIcon, PlusIcon, TerminalIcon } from './icons';
 
 interface AgentMenuProps {
   readonly open: boolean;
@@ -18,6 +19,12 @@ interface AgentMenuProps {
 const LABEL: Record<AgentKind, string> = { agy: 'agy', claude: 'Claude Code' };
 const OPEN_LABEL: Record<AgentKind, string> = { agy: 'Open in agy web ↗', claude: 'Open in Claude ↗' };
 const KINDS: readonly AgentKind[] = ['agy', 'claude'];
+
+/** Session age; it ticks only while mounted, i.e. while the menu is open. */
+function Age({ since }: { since: number }): JSX.Element {
+  const now = useNow(30_000);
+  return <span className="agent-card-age">{formatUptime((now - since) / 1000)}</span>;
+}
 
 /**
  * The round button's menu: the OpenCode chat, new agy / Claude Code sessions,
@@ -81,9 +88,9 @@ export function AgentMenu({ open, onClose, canChat, canShell, agents, onOpenChat
     return (
       <li key={s.name} className="agent-card" aria-busy={busy || undefined}>
         <div className="agent-card-head">
-          <BotIcon size={18} />
+          <AgentKindIcon kind={s.kind} size={18} />
           <strong className="agent-card-name">{s.name}</strong>
-          <span className="agent-card-age">{formatUptime((Date.now() - s.created) / 1000)}</span>
+          <Age since={s.created} />
         </div>
         {s.link ? (
           <a className="btn btn-primary agent-card-open" href={s.link} target="_blank" rel="noopener noreferrer">

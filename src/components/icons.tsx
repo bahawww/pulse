@@ -1,5 +1,5 @@
 import type { JSX, SVGProps } from 'react';
-import type { ServiceIcon } from '../shared/contract';
+import type { AgentKind, ServiceIcon } from '../shared/contract';
 
 interface IconProps {
   readonly className?: string;
@@ -30,6 +30,30 @@ export function BotIcon({ className, size = 28 }: IconProps): JSX.Element {
       <path d="M9 17h6" />
     </svg>
   );
+}
+
+/** agy (Antigravity): a lift, two chevrons up. Generic glyph, not the product's logo. */
+export function AgyIcon({ className, size = 18 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <polyline points="17 11 12 6 7 11" />
+      <polyline points="17 18 12 13 7 18" />
+    </svg>
+  );
+}
+
+/** Claude Code: code braces. Generic glyph, not the product's logo. */
+export function ClaudeCodeIcon({ className, size = 18 }: IconProps): JSX.Element {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1" />
+      <path d="M16 21h1a2 2 0 0 0 2-2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
+    </svg>
+  );
+}
+
+export function AgentKindIcon({ kind, size = 18 }: { kind: AgentKind; size?: number }): JSX.Element {
+  return kind === 'agy' ? <AgyIcon size={size} /> : <ClaudeCodeIcon size={size} />;
 }
 
 export function NetworkIcon({ className, size = 28 }: IconProps): JSX.Element {
