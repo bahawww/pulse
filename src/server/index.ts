@@ -44,6 +44,7 @@ import { readLogs, listUnits } from './logs.js';
 import { checkReachability } from './reachability.js';
 import { getSpend } from './spend.js';
 import { closeTerminals, detachedShells, handleUpgrade } from './terminal.js';
+import { getAgents, postAgent, postStopAgent } from './agents.js';
 import { getSessions, killSession, renameSession } from './tmux.js';
 import { CSRF_HEADER, csrfToken, csrfValid } from './csrf.js';
 import { onServicesChange, rescan, serviceList, setHidden, startDiscovery } from './discover.js';
@@ -593,6 +594,9 @@ const wrapAsync = (fn: (req: Request, res: Response) => Promise<void>) => (req: 
 app.get('/api/tmux', apiLimiter, requirePerm('terminal'), wrapAsync(getSessions));
 app.post('/api/tmux/kill', actionLimiter, requirePerm('terminal'), wrapAsync(killSession));
 app.post('/api/tmux/rename', actionLimiter, requirePerm('terminal'), wrapAsync(renameSession));
+app.get('/api/agents/sessions', apiLimiter, requirePerm('terminal'), wrapAsync(getAgents));
+app.post('/api/agents/sessions', actionLimiter, requirePerm('terminal'), wrapAsync(postAgent));
+app.post('/api/agents/sessions/stop', actionLimiter, requirePerm('terminal'), wrapAsync(postStopAgent));
 
 // Shells a new tab or a relaunched phone app can reattach (terminal.ts).
 app.get('/api/terminal/sessions', apiLimiter, requirePerm('terminal'), (_req: Request, res: Response) => {

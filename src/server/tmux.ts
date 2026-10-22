@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { runRemote } from './files.js';
 import { shq } from './sshLocal.js';
+import { agentKindOf } from './agents.js';
 import { recordAction } from './store.js';
 
 /**
@@ -66,11 +67,20 @@ export async function killSession(req: Request, res: Response): Promise<void> {
   else res.status(404).json({ error: r.stderr.trim() || 'no such session' });
 }
 
+/** Agent sessions are found by their prefix, so a rename into or out of it would lose them. */
+export function renameRefused(from: string, to: string): boolean {
+  return agentKindOf(from) !== null || agentKindOf(to) !== null;
+}
+
 export async function renameSession(req: Request, res: Response): Promise<void> {
   const started = Date.now();
   const body = req.body as { name?: unknown; to?: unknown };
   if (typeof body.name !== 'string' || typeof body.to !== 'string' || !TMUX_RE.test(body.name) || !TMUX_RE.test(body.to)) {
     res.status(400).json({ error: 'names: 1-40 of A-Z a-z 0-9 _ -' });
+    return;
+  }
+  if (renameRefused(body.name, body.to)) {
+    res.status(400).json({ error: 'agent sessions keep their name' });
     return;
   }
   const r = await runRemote(`tmux rename-session -t ${shq(`=${body.name}`)} ${shq(body.to)}`, 64 * 1024);
