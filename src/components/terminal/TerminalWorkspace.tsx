@@ -200,6 +200,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
   // fresh shell, pick up the ones this login left running (closed tab, app
   // killed in the background, server restart), so multitasking loses nothing.
   const [adopting, setAdopting] = useState(() => !hasStoredWins());
+  const winsNow = useRef(wins);
+  winsNow.current = wins;
   useEffect(() => {
     if (!adopting) return;
     let cancelled = false;
@@ -211,14 +213,24 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
         if (cancelled) return;
         const found = (body.shells ?? []).filter((x): x is { sid: string; target?: unknown; tmux?: unknown } => typeof x.sid === 'string');
         if (found.length === 0) return;
-        const next: Win[] = found.map((x, i) => {
+        // A tmux window opened meanwhile (attach from the agent menu) stays and stays in front.
+        // A running shell already on that session becomes its shell instead of a second window;
+        // views mount only after adoption, so no shell has started for it yet.
+        const kept = winsNow.current
+          .filter((w) => w.tmux)
+          .map((w) => ({ ...w, sid: w.sid ?? found.find((x) => x.tmux === w.tmux)?.sid }));
+        const base = Math.max(0, ...kept.map((w) => w.id));
+        const adopted = found.flatMap<Win>((x, i) => {
+          const id = base + i + 1;
           const target = checkTarget(x.target);
           const tmux = typeof x.tmux === 'string' && TMUX_RE.test(x.tmux) ? x.tmux : undefined;
-          if (target) return { id: i + 1, sid: x.sid, target };
-          return tmux ? { id: i + 1, sid: x.sid, tmux, name: tmux } : { id: i + 1, sid: x.sid };
+          if (target) return [{ id, sid: x.sid, target }];
+          if (tmux && kept.some((w) => w.tmux === tmux)) return [];
+          return [tmux ? { id, sid: x.sid, tmux, name: tmux } : { id, sid: x.sid }];
         });
+        const next = [...kept, ...adopted];
         setWins(next);
-        setActive(next[next.length - 1]!.id);
+        setActive((kept[kept.length - 1] ?? next[next.length - 1]!).id);
         flash(`Reattached ${found.length} running shell${found.length === 1 ? '' : 's'}`);
       })
       .catch(() => undefined)
