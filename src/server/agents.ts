@@ -7,6 +7,7 @@ import { AGENT_LIMIT, type AgentKind, type AgentSession } from '../shared/contra
 import { runRemote, type RunResult } from './files.js';
 import { shq } from './sshLocal.js';
 import { recordAction } from './store.js';
+import { knownState } from './agentWatch.js';
 
 /** Allowed agent session names; the charset keeps them safe inside a tmux/shell argument. */
 export const AGENT_NAME = /^(agy|cc)-[A-Za-z0-9_-]{1,36}$/;
@@ -102,7 +103,8 @@ export async function listAgents(deps: AgentDeps = realDeps): Promise<AgentSessi
     let link = (kind === 'agy' ? findLink(kind, tails.get(name) ?? '') : null) ?? (saved ? findLink(kind, saved) : null);
     // Claude prints its link on screen only; read the pane when it was never stored.
     if (!link && kind === 'claude') link = findLink(kind, text(await deps.run(`tmux capture-pane -p -J -t ${paneTarget(name)}`)));
-    out.push({ kind, name, link, created: Number(created) * 1000 || 0, activity: Number(activity) * 1000 || 0 });
+    const st = knownState(name);
+    out.push({ kind, name, link, created: Number(created) * 1000 || 0, activity: Number(activity) * 1000 || 0, ...(st ? { state: st.state, ask: st.ask } : {}) });
   }
   return out;
 }

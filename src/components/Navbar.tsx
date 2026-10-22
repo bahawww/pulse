@@ -6,6 +6,7 @@ import { HOST_OPTIONS, type HostMode } from '../lib/urls';
 import { TERMINAL_GROUP, VIEW_GROUPS, VIEWS, type ViewId } from '../lib/views';
 import { CheckIcon, MoonIcon, SearchIcon, SunIcon, TerminalIcon } from './icons';
 import { NotificationBell } from './NotificationBell';
+import { SharedClipboard } from './SharedClipboard';
 import { ScopeBar } from './TabBar';
 import { postJson } from '../lib/csrf';
 import { PASSWORD_MIN } from '../shared/contract';
@@ -200,6 +201,7 @@ export function Navbar({
             )}
           </div>
 
+          <SharedClipboard onNotify={onNotify} />
           <NotificationBell alerts={alerts} onNotify={onNotify} canEdit={user.permissions.includes('services:control')} />
 
           <button

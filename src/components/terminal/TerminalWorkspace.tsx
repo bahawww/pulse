@@ -18,6 +18,7 @@ import {
   parseQuick,
   readConns,
   readPrefs,
+  readBarEntries,
   readSnippets,
   readStoredSize,
   readView,
@@ -31,6 +32,7 @@ import {
   storeConns,
   storePrefs,
   storeSize,
+  storeBarEntries,
   storeSnippets,
   storeView,
   storeWins,
@@ -44,14 +46,20 @@ import {
   type Prefs,
   type SearchOpts,
   type Snippet,
+  type BarEntry,
+  barKeys,
+  defaultBarEntries,
   type Target,
   type ViewState,
   type Win,
 } from './model';
-import { Icon, KeyButton, Popover, ShortcutSheet, SnippetsPanel, ThemePanel } from './panels';
+import { Icon, KeyButton, KeysPanel, Popover, ShortcutSheet, SnippetsPanel, ThemePanel } from './panels';
 import { CommandPalette, type Command } from './palette';
 import { ConnectPanel, protoBadge } from './remote';
 import { TmuxPanel } from './tmux';
+import { RunbooksPanel, stepInput, type RunState } from './runbooks';
+import { postJson } from '../../lib/csrf';
+import { disablePush, enablePush, NOTIFY_WHEN_DONE, pushState, type PushState } from '../../lib/push';
 import { autoDir, equalize, ids, insert, layout, neighbor, nudge, preset, PRESETS, remove, resizeAt, swap, sync, type Dir, type Preset, type Rect, type Side } from './split';
 import { LINK_LABEL, TerminalView, type Port, type SearchResult, type WinStatus } from './TerminalView';
 import { SCHEMES } from '../../lib/termThemes';
@@ -59,7 +67,7 @@ import '@xterm/xterm/css/xterm.css';
 import '../../terminal.css';
 import { formatClock, formatDay } from '../../shared/time';
 
-type Panel = 'none' | 'themes' | 'snippets' | 'more' | 'tabs' | 'connect' | 'layout' | 'tmux';
+type Panel = 'none' | 'themes' | 'snippets' | 'more' | 'tabs' | 'connect' | 'layout' | 'tmux' | 'keys' | 'runbooks';
 
 const PRESET_NAME: Record<Preset, string> = { grid: 'Grid', columns: 'Columns', rows: 'Rows', main: 'Main and stack' };
 
@@ -123,6 +131,11 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
   const [chosenSize, setChosenSize] = useState<number | null>(readStoredSize);
   const [prefs, setPrefsState] = useState<Prefs>(readPrefs);
   const [snippets, setSnippetsState] = useState<readonly Snippet[]>(readSnippets);
+  const [barEntries, setBarEntries] = useState<readonly BarEntry[]>(readBarEntries);
+  const changeBar = (list: readonly BarEntry[] | null) => {
+    storeBarEntries(list);
+    setBarEntries(list ?? defaultBarEntries());
+  };
   const [panel, setPanel] = useState<Panel>('none');
   const [sheet, setSheet] = useState(false);
   const [broadcast, setBroadcast] = useState(false);
@@ -487,6 +500,83 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
 
   const onCopied = useCallback(() => flash('Copied'), [flash]);
 
+  // ---- notices: Web Push for when this page is away, "Notify when done" for a running command
+  const [push, setPush] = useState<PushState>('off');
+  useEffect(() => {
+    void pushState().then(setPush).catch(() => setPush('unsupported'));
+  }, []);
+  const togglePush = () => {
+    setPanel('none');
+    const go = push === 'on' ? disablePush() : enablePush();
+    void go
+      .then((st) => {
+        setPush(st);
+        flash(
+          st === 'on'
+            ? 'Notifications on for this device'
+            : st === 'denied'
+              ? 'Notifications are blocked in this browser’s site settings'
+              : st === 'unsupported'
+                ? 'Needs HTTPS; on iPhone, add Pulse to the Home Screen first'
+                : 'Notifications off',
+        );
+      })
+      .catch(() => flash('Could not turn notifications on'));
+  };
+  // ---- runbooks: one run at a time, its steps typed into the window it started in
+  const [run, setRun] = useState<RunState | null>(null);
+  const runRef = useRef(run);
+  runRef.current = run;
+  const stepStarted = useRef(0);
+  const logStep = (r: RunState, index: number, code: number) =>
+    void postJson('/api/runbooks/step', {
+      runbook: r.book.name,
+      step: index + 1,
+      total: r.book.steps.length,
+      command: r.book.steps[index]?.command ?? '',
+      code,
+      ms: code === -1 ? 0 : Date.now() - stepStarted.current,
+    }).catch(() => undefined);
+  const startRun = (book: RunState['book']) => setRun({ book, win: active, results: book.steps.map(() => 'todo') });
+  const runStep = (index: number) => {
+    const r = runRef.current;
+    const step = r?.book.steps[index];
+    if (!r || !step) return;
+    stepStarted.current = Date.now();
+    setRun({ ...r, results: r.results.map((x, i) => (i === index ? 'running' : x)) });
+    ports.current.get(r.win)?.send(stepInput(step.command));
+  };
+  const skipStep = (index: number) => {
+    const r = runRef.current;
+    if (!r) return;
+    setRun({ ...r, results: r.results.map((x, i) => (i === index ? 'skipped' : x)) });
+    logStep(r, index, -1);
+  };
+  const onStep = useCallback((id: number, code: number) => {
+    const r = runRef.current;
+    const index = r ? r.results.indexOf('running') : -1;
+    if (!r || r.win !== id || index < 0) return;
+    setRun({ ...r, results: r.results.map((x, i) => (i === index ? code : x)) });
+    logStep(r, index, code);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const notifyWhenDone = () => {
+    setPanel('none');
+    onInput(active, NOTIFY_WHEN_DONE);
+    flash(push === 'on' ? 'You get a notification when it finishes' : 'Armed. Turn on notifications to get it with the app closed');
+    focusActive();
+  };
+  const winsRef = useRef(wins);
+  winsRef.current = wins;
+  const onNotice = useCallback(
+    (id: number, text: string) => {
+      const w = winsRef.current.find((x) => x.id === id);
+      flash(w ? `${tabLabel(w)}: ${text}` : text);
+    },
+    [flash],
+  );
+
   const rename = (id: number, name: string) => {
     const clean = name.trim().slice(0, 40);
     setWins((ws) => ws.map((w) => (w.id === id ? { ...w, name: clean || undefined } : w)));
@@ -787,6 +877,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
     );
     item('Connect', 'panel', 'Connect to a router or server…', () => setPanel('connect'), 'Alt+O', <Icon.router size={14} />);
     item('Session', 'tmux', 'tmux sessions: continue on another device…', () => setPanel('tmux'), undefined, <Icon.layers size={14} />);
+    item('Shell', 'runbooks', 'Runbooks: run a procedure step by step…', () => setPanel('runbooks'), undefined, <Icon.checklist size={14} />);
     for (const k of conns) item('Connect', k.id, k.name || targetLabel(k), () => connectTo(k, k.name), undefined, <Icon.router size={14} />, `${k.proto} ${targetLabel(k)}${k.legacy ? ' · legacy' : ''}`);
     for (const sn of snippets) item('Snippet', sn.id, sn.label || sn.command, () => onInput(active, `${sn.command}
 `), undefined, <Icon.bolt size={14} />, sn.command);
@@ -794,6 +885,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
     item('Shell', 'clear', 'Clear screen and scrollback', () => ports.current.get(active)?.clear(), undefined, <Icon.eraser size={14} />);
     item('Shell', 'restart', activeWin?.target ? 'Reconnect' : 'Restart shell', () => ports.current.get(active)?.restart(), undefined, <Icon.restart size={14} />);
     item('Shell', 'copy', 'Copy all output', copyAll, undefined, <Icon.copy size={14} />);
+    if (!activeWin?.target) item('Shell', 'notify-done', 'Notify when the running command is done', notifyWhenDone, undefined, <Icon.bell size={14} />);
+    item('Shell', 'push', push === 'on' ? 'Turn off notifications on this device' : 'Turn on notifications on this device', togglePush, undefined, <Icon.bell size={14} />);
     item('Shell', 'save', 'Save output as .txt', saveAll, undefined, <Icon.download size={14} />);
     item('View', 'bigger', 'Bigger text', () => resizeText(1), 'Ctrl+=', <Icon.text size={14} />);
     item('View', 'smaller', 'Smaller text', () => resizeText(-1), 'Ctrl+-', <Icon.text size={14} />);
@@ -1005,6 +1098,17 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
           <div className="tw-pop-wrap">
             {toolButton('snip', 'Snippets', 'Snippets (Alt+S)', <Icon.bolt />, () => togglePanel('snippets'), panel === 'snippets', 'snippets')}
             {panel === 'snippets' && <SnippetsPanel list={snippets} onChange={setSnippets} onUse={useSnippet} onClose={closePanel} />}
+            {!compact && toolButton('runbooks', 'Runbooks', 'Runbooks: procedures run step by step', <Icon.checklist />, () => togglePanel('runbooks'), panel === 'runbooks', 'runbooks')}
+            {panel === 'runbooks' && (
+              <RunbooksPanel
+                run={run}
+                onStart={startRun}
+                onStep={runStep}
+                onSkip={skipStep}
+                onStop={() => setRun(null)}
+                onClose={closePanel}
+              />
+            )}
           </div>
           <div className="tw-pop-wrap">
             {toolButton('connect', 'Connect', 'Connect to a router or server: SSH, Telnet (Alt+O)', <Icon.router />, () => togglePanel('connect'), panel === 'connect', 'connect')}
@@ -1088,6 +1192,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
           </div>
           <div className="tw-pop-wrap">
             {toolButton('more', 'More', 'More', <Icon.more />, () => togglePanel('more'), panel === 'more', 'more')}
+            {panel === 'keys' && <KeysPanel entries={barEntries} onChange={changeBar} onClose={closePanel} />}
             {panel === 'more' && (
               <Popover id="more" label="More" onClose={closePanel} className="tw-pop-menu">
                 <div className="tw-menu-list" role="menu">
@@ -1131,6 +1236,18 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
                     }}
                   >
                     <Icon.restart /> {activeWin?.target ? 'Reconnect' : 'Restart shell'}
+                  </button>
+                  <hr />
+                  <button type="button" role="menuitem" onClick={() => setPanel('runbooks')}>
+                    <Icon.checklist /> Runbooks
+                  </button>
+                  {!activeWin?.target && (
+                    <button type="button" role="menuitem" onClick={notifyWhenDone}>
+                      <Icon.bell /> Notify when done
+                    </button>
+                  )}
+                  <button type="button" role="menuitemcheckbox" aria-checked={push === 'on'} onClick={togglePush}>
+                    <Icon.bell /> Notifications on this device {push === 'on' ? '· on' : push === 'denied' ? '· blocked' : ''}
                   </button>
                   {compact && (
                     <>
@@ -1317,6 +1434,7 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
             modsRef={modsRef}
             onModsUsed={modsUsed}
             shown={shown}
+            visible={open}
             focused={open && !cmd && w.id === active}
             current={w.id === active}
             onFocus={() => activate(w.id)}
@@ -1331,6 +1449,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
             onInput={onInput}
             onConfirmPaste={confirmPaste}
             onCopied={onCopied}
+            onNotice={onNotice}
+            onStep={onStep}
             takeEarly={takeEarly}
           />
           );
@@ -1367,6 +1487,11 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
         {splitOn && (
           <button type="button" className="tw-foot-chip" onClick={() => (zoomed ? toggleZoom() : setMode('tabs'))} title={zoomed ? 'Unzoom (Alt+Z)' : 'Back to tabs (Alt+Enter)'}>
             {zoomed ? `Zoomed · 1 of ${wins.length}` : `Split · ${wins.length} windows`}
+          </button>
+        )}
+        {run && (
+          <button type="button" className="tw-foot-chip" data-pop="runbooks" onClick={() => togglePanel('runbooks')} title="Show the runbook">
+            {run.book.name} · {run.results.filter((x) => x !== 'todo' && x !== 'running').length}/{run.book.steps.length}
           </button>
         )}
         <span className="tw-foot-gap" />
@@ -1420,18 +1545,16 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
           )}
           {/* Top row scrolls sideways: control combos, symbols, paging, paste. */}
           <div className="tw-keys-extra">
-            <KeyButton label="^C" name="Control C, interrupt" onPress={() => onInput(active, '\x03')} />
-            <KeyButton label="^D" name="Control D, end of input" onPress={() => onInput(active, '\x04')} />
-            <KeyButton label="^L" name="Control L, clear" onPress={() => onInput(active, '\x0c')} />
-            <KeyButton label="^R" name="Control R, history search" onPress={() => onInput(active, '\x12')} />
-            {['/', '-', '|', '~', '`', '\\', '_', '$', '*', '&'].map((ch) => (
-              <KeyButton key={ch} label={ch} onPress={() => press({ k: 'text', value: ch })} />
-            ))}
-            <KeyButton label="Home" onPress={() => press({ k: 'csi', final: 'H' })} />
-            <KeyButton label="End" onPress={() => press({ k: 'csi', final: 'F' })} />
-            <KeyButton label="PgUp" repeat onPress={() => press({ k: 'tilde', n: 5 })} />
-            <KeyButton label="PgDn" repeat onPress={() => press({ k: 'tilde', n: 6 })} />
-            {typeof navigator.clipboard?.readText === 'function' && <KeyButton label="Paste" wide onPress={pasteFromClipboard} />}
+            {barKeys(barEntries).map((k) => {
+              const a = k.act;
+              if ('special' in a && a.special === 'paste' && typeof navigator.clipboard?.readText !== 'function') return null;
+              const run =
+                'raw' in a ? () => onInput(active, a.raw) : 'key' in a ? () => press(a.key) : a.special === 'paste' ? pasteFromClipboard : notifyWhenDone;
+              return <KeyButton key={k.id} label={k.label} name={k.name} repeat={k.repeat} wide={'special' in a} onPress={run} />;
+            })}
+            <button type="button" className="tw-snip-key tw-keys-edit" aria-label="Edit the key bar" data-pop="keys" onClick={() => togglePanel('keys')}>
+              <Icon.edit size={14} />
+            </button>
           </div>
           {/* Bottom row never scrolls: the keys a phone keyboard lacks, arrows together. */}
           <div className="tw-keys-main">

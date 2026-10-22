@@ -1,6 +1,6 @@
 import { type JSX, type ReactNode, type SVGProps, useEffect, useRef, useState } from 'react';
 import { SCHEMES, SITE_SCHEME } from '../../lib/termThemes';
-import { newId, resolveScheme, SCROLLBACK_CHOICES, SHORTCUTS, type ModState, type Prefs, type Snippet } from './model';
+import { BAR_KEYS, barKeys, MAX_BAR_KEYS, newId, resolveScheme, SCROLLBACK_CHOICES, SHORTCUTS, type BarEntry, type ModState, type Prefs, type Snippet } from './model';
 
 // ------------------------------------------------------------------ icons (terminal-only, same stroke style as icons.tsx)
 
@@ -70,6 +70,32 @@ export const Icon = {
   down: ({ size = 16 }) => (
     <svg {...svg(size)}>
       <path d="m6 9 6 6 6-6" />
+    </svg>
+  ),
+  up: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <path d="m6 15 6-6 6 6" />
+    </svg>
+  ),
+  checklist: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <path d="m3 6 1.5 1.5L7 5" />
+      <path d="m3 12 1.5 1.5L7 11" />
+      <path d="m3 18 1.5 1.5L7 17" />
+      <path d="M11 6h10M11 12h10M11 18h10" />
+    </svg>
+  ),
+  bell: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </svg>
+  ),
+  share: ({ size = 16 }) => (
+    <svg {...svg(size)}>
+      <path d="M12 3v12" />
+      <path d="m8 7 4-4 4 4" />
+      <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
     </svg>
   ),
   layers: ({ size = 16 }) => (
@@ -443,6 +469,104 @@ export function SnippetsPanel({ list, onChange, onUse, onClose }: SnippetsProps)
       <p className="tw-pop-foot">
         <kbd>Enter</kbd> run · <kbd>Shift+Enter</kbd> insert · <kbd>↑↓</kbd> choose
       </p>
+    </Popover>
+  );
+}
+
+// ------------------------------------------------------------------ key bar editor
+
+interface KeysPanelProps {
+  readonly entries: readonly BarEntry[];
+  /** null: back to the default row. */
+  readonly onChange: (list: readonly BarEntry[] | null) => void;
+  readonly onClose: () => void;
+}
+
+const entryId = (e: BarEntry): string => (typeof e === 'string' ? e : e.id);
+
+/** The phone key bar's scrolling row: which keys, in what order, and keys of your own. */
+export function KeysPanel({ entries, onChange, onClose }: KeysPanelProps): JSX.Element {
+  const [label, setLabel] = useState('');
+  const [send, setSend] = useState('');
+  const shown = barKeys(entries);
+  const have = new Set(entries.map(entryId));
+  const addable = BAR_KEYS.filter((k) => !have.has(k.id));
+  const full = entries.length >= MAX_BAR_KEYS;
+
+  const move = (i: number, by: -1 | 1) => {
+    const j = i + by;
+    if (j < 0 || j >= entries.length) return;
+    const next = [...entries];
+    [next[i], next[j]] = [next[j]!, next[i]!];
+    onChange(next);
+  };
+
+  return (
+    <Popover id="keys" label="Key bar" onClose={onClose} className="tw-pop-snip tw-pop-keys">
+      <div className="tw-pop-head">Key bar</div>
+      <ul className="tw-keyed" aria-label="Keys on the bar">
+        {shown.map((k, i) => (
+          <li key={k.id}>
+            <kbd className="tw-keyed-cap">{k.label}</kbd>
+            <span className="tw-keyed-name">{k.name ?? ''}</span>
+            <span className="tw-snip-tools">
+              <button type="button" className="tw-icon-btn is-sm" aria-label={`Move ${k.label} earlier`} disabled={i === 0} onClick={() => move(i, -1)}>
+                <Icon.up size={14} />
+              </button>
+              <button type="button" className="tw-icon-btn is-sm" aria-label={`Move ${k.label} later`} disabled={i === shown.length - 1} onClick={() => move(i, 1)}>
+                <Icon.down size={14} />
+              </button>
+              <button type="button" className="tw-icon-btn is-sm" aria-label={`Remove ${k.label}`} onClick={() => onChange(entries.filter((e) => entryId(e) !== k.id))}>
+                <Icon.trash />
+              </button>
+            </span>
+          </li>
+        ))}
+        {shown.length === 0 && <li className="tw-snip-empty">No keys. Add some below.</li>}
+      </ul>
+      {addable.length > 0 && (
+        <>
+          <div className="tw-pop-head">Add a key</div>
+          <div className="tw-keyed-add">
+            {addable.map((k) => (
+              <button key={k.id} type="button" className="tw-snip-key" title={k.name} disabled={full} onClick={() => onChange([...entries, k.id])}>
+                {k.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      <form
+        className="tw-snip-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!send || full) return;
+          onChange([...entries, { id: `c-${newId()}`, label: label.trim().slice(0, 12), send }]);
+          setLabel('');
+          setSend('');
+        }}
+      >
+        <div className="tw-pop-head">Your own key</div>
+        <label>
+          <span>Label</span>
+          <input value={label} maxLength={12} placeholder="gs" onChange={(e) => setLabel(e.currentTarget.value)} />
+        </label>
+        <label>
+          <span>Sends</span>
+          <input value={send} maxLength={200} spellCheck={false} autoCapitalize="off" autoCorrect="off" placeholder="git status\r" onChange={(e) => setSend(e.currentTarget.value)} />
+        </label>
+        <p className="tw-pop-foot">
+          <kbd>^X</kbd> Ctrl+X · <kbd>\e</kbd> Esc · <kbd>\r</kbd> Enter · <kbd>\t</kbd> Tab
+        </p>
+        <div className="tw-snip-actions">
+          <button type="button" className="btn btn-sm" onClick={() => onChange(null)}>
+            Reset to default
+          </button>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={!send || full}>
+            Add key
+          </button>
+        </div>
+      </form>
     </Popover>
   );
 }

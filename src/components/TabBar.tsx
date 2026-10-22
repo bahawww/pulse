@@ -1,7 +1,7 @@
 import { type JSX, type MouseEvent, type RefObject, useLayoutEffect, useRef } from 'react';
 import { prefersReducedMotion } from '../lib/motion';
 import { SPRINGS, type SpringCurve, springCurve, springKeyframes } from '../lib/spring';
-import { TERMINAL_GROUP, VIEW_GROUPS, type ViewId, groupTarget, noteView } from '../lib/views';
+import { TERMINAL_GROUP, VIEW_GROUPS, type ViewId, groupIcon, groupTarget, noteView } from '../lib/views';
 import { ViewIcon } from './icons';
 
 /**
@@ -177,7 +177,7 @@ export function TabBar({ active, terminalRunning = false }: TabBarProps): JSX.El
               onClick={(e) => scrollTopIfCurrent(e, on && target === active)}
             >
               <span className="tabbar-icon">
-                <ViewIcon view={first.id} size={22} />
+                <ViewIcon view={groupIcon(group)} size={22} />
                 {terminalRunning && group.title === TERMINAL_GROUP && <span className="tabbar-dot" aria-hidden="true" />}
               </span>
               <span className="tabbar-label">{group.title}</span>

@@ -6,6 +6,7 @@ import { BellIcon } from './icons';
 import type { AlertEvent, AlertState } from '../shared/contract';
 import { BoneRows, Loading } from './Skeleton';
 import { AskAgentButton } from './AskAgentButton';
+import { VIEWS, type ViewId } from '../lib/views';
 
 /**
  * Alerts bell. The badge counts only what is firing now; resolved events stay
@@ -36,6 +37,18 @@ export function NotificationBell({ alerts, onNotify, canEdit = false }: Notifica
   const [open, setOpen] = useState(false);
   const [savingRule, setSavingRule] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // #alerts (a tapped alert notification) opens the bell over the first view.
+  useEffect(() => {
+    const check = () => {
+      if (window.location.hash !== '#alerts') return;
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${VIEWS[0]?.id ?? 'overview'}`);
+      setOpen(true);
+    };
+    check();
+    window.addEventListener('hashchange', check);
+    return () => window.removeEventListener('hashchange', check);
+  }, []);
 
   async function patchRule(id: string, patch: { enabled?: boolean; limit?: number; forSamples?: number }) {
     setSavingRule(id);
@@ -142,7 +155,7 @@ export function NotificationBell({ alerts, onNotify, canEdit = false }: Notifica
                 ) : (
                   <ul className="alert-list">
                     {firing.map((event) => (
-                      <AlertRow key={event.id} event={event} firing onAsk={() => setOpen(false)} />
+                      <AlertRow key={event.id} event={event} firing onAsk={() => setOpen(false)} onFix={() => setOpen(false)} />
                     ))}
                   </ul>
                 )}
@@ -235,15 +248,15 @@ function DesktopControl({ alerts }: { readonly alerts: AlertsHandle }): JSX.Elem
     case 'granted':
       return (
         <p className="banner" role="status">
-          Web alerts on. New alerts show here, as a toast, and as a desktop notification while this tab is open.
+          Notifications on. New alerts show here, as a toast, and as a system notification on this device, also with Pulse closed where the browser supports push.
         </p>
       );
     case 'default':
       return (
         <div className="banner" role="status" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span>New alerts show here and as a toast while this tab is open. Desktop notifications are off.</span>
+          <span>New alerts show here and as a toast while this tab is open. Notifications are off.</span>
           <button type="button" className="btn btn-sm btn-primary" onClick={alerts.requestDesktop} style={{ alignSelf: 'flex-start' }}>
-            Enable desktop notifications
+            Turn on notifications
           </button>
         </div>
       );
@@ -281,7 +294,18 @@ function describeThresholds(rule: AlertRule): string {
   return `${parts.length > 0 ? parts.join(' · ') : 'state only'} for ${t.forSamples} samples`;
 }
 
-function AlertRow({ event, firing, onAsk }: { readonly event: AlertEvent; readonly firing: boolean; readonly onAsk?: () => void }): JSX.Element {
+/** Where to act on each metric: the view that shows the cause, and what the button says. */
+const FIX: Readonly<Record<string, { readonly view: ViewId; readonly label: string }>> = {
+  disk: { view: 'logs-and-control', label: 'Free disk space' },
+  inode: { view: 'logs-and-control', label: 'Free disk space' },
+  ram: { view: 'workload', label: 'See what uses memory' },
+  cpu: { view: 'workload', label: 'See busy processes' },
+  latency: { view: 'capacity', label: 'See slow services' },
+};
+
+function AlertRow({ event, firing, onAsk, onFix }: { readonly event: AlertEvent; readonly firing: boolean; readonly onAsk?: () => void; readonly onFix?: () => void }): JSX.Element {
+  const fix = FIX[event.metric];
+  const canFix = fix && VIEWS.some((v) => v.id === fix.view);
   return (
     <li className={`alert-row is-${event.severity}${firing ? '' : ' is-resolved'}`}>
       <span className="alert-dot" aria-hidden="true" />
@@ -292,6 +316,11 @@ function AlertRow({ event, firing, onAsk }: { readonly event: AlertEvent; readon
             ? `firing for ${formatAgo(Date.now() - event.since)}`
             : `held ${formatAgo(Date.now() - event.since)} · resolved ${formatAgo(Date.now() - (event.resolvedAt ?? event.since))}`}
         </p>
+        {firing && canFix && (
+          <a className="btn btn-sm btn-primary alert-fix" href={`#${fix.view}`} onClick={onFix}>
+            {fix.label}
+          </a>
+        )}
         {firing && (
           <AskAgentButton
             prompt={`This alert is firing: "${event.message}". Explain what it means here, the most likely cause, and what to check first.`}

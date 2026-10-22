@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import type { AgentKind, AgentSession } from '../shared/contract';
 import type { ChatSignal } from './ChatFab';
-import { AgentKindIcon, BotIcon, ChatIcon } from './icons';
+import { AgentKindIcon, ArrowUpRightIcon, BotIcon, ChatIcon } from './icons';
 
 interface AgentsCardProps {
   readonly canChat: boolean;
@@ -22,6 +22,8 @@ export function AgentsCard({ canChat, canShell, chat, agents, hermesOnline, onOp
   const sessionRow = (kind: AgentKind, label: string): JSX.Element => {
     const mine = agents.filter((s) => s.kind === kind);
     const link = mine.length === 1 ? mine[0]?.link : null;
+    const waiting = mine.filter((s) => s.state === 'waiting').length;
+    const working = mine.filter((s) => s.state === 'working').length;
     return (
       <li className="agents-row" key={kind}>
         <button type="button" className="agents-main" onClick={onOpenMenu}>
@@ -29,11 +31,14 @@ export function AgentsCard({ canChat, canShell, chat, agents, hermesOnline, onOp
             <AgentKindIcon kind={kind} size={16} />
             {label}
           </span>
-          <span className={`agents-state ${mine.length ? 'is-on' : ''}`}>{mine.length ? `${mine.length} running` : 'none'}</span>
+          <span className={`agents-state ${waiting ? 'is-ask' : mine.length ? 'is-on' : ''}`}>
+            {!mine.length ? 'none' : waiting ? `${waiting} needs answer` : working ? `${working} working` : `${mine.length} idle`}
+          </span>
         </button>
         {link && (
-          <a className="agents-link" href={link} target="_blank" rel="noopener noreferrer">
-            Open ↗
+          <a className="btn btn-sm agents-link" href={link} target="_blank" rel="noopener noreferrer" aria-label={`Open ${label} in a new tab`}>
+            Open
+            <ArrowUpRightIcon size={12} />
           </a>
         )}
       </li>

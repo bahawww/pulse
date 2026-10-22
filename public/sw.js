@@ -64,13 +64,41 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
-// A chat alert was tapped: bring the app forward, or open it on the chat.
+// A push from the server (push.ts): a terminal notice while the app is in the
+// background or closed. The payload is { title, body, tag, url }.
+self.addEventListener('push', (event) => {
+  let msg = {};
+  try {
+    msg = event.data ? event.data.json() : {};
+  } catch {
+    /* not JSON: show the generic line */
+  }
+  event.waitUntil(
+    self.registration.showNotification(msg.title || 'Pulse', {
+      body: msg.body || '',
+      tag: msg.tag || 'pulse',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data: { url: typeof msg.url === 'string' && msg.url.startsWith('/') ? msg.url : '/' },
+    }),
+  );
+});
+
+// An alert was tapped: bring the app forward on what it was about (the chat by
+// default, the terminal for a push), or open it there.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/#chat';
+  const hash = url.includes('#') ? url.slice(url.indexOf('#')) : '';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const c of list) if ('focus' in c) return c.focus();
-      return self.clients.openWindow('/#chat');
+      for (const c of list) {
+        if ('focus' in c) {
+          if (hash) c.postMessage({ type: 'open', hash });
+          return c.focus();
+        }
+      }
+      return self.clients.openWindow(url);
     }),
   );
 });

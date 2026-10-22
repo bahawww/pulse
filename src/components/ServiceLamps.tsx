@@ -1,7 +1,6 @@
-import { type CSSProperties, type JSX } from 'react';
+import { type JSX } from 'react';
 import type { Service, StatsPayload } from '../shared/contract';
 import { buildServiceUrl, type HostMode } from '../lib/urls';
-import { serviceColor } from '../lib/serviceColor';
 import { Bone, Loading } from './Skeleton';
 import { ServiceIconGlyph } from './icons';
 
@@ -68,7 +67,6 @@ export function ServiceLamps({ data, hostMode, onNotify }: ServiceLampsProps): J
             <button
               type="button"
               className={`lamp-row ${online ? '' : 'is-down'}`}
-              style={{ '--c': serviceColor(svc.id) } as CSSProperties}
               onClick={() => {
                 window.open(buildServiceUrl(svc, hostMode), '_blank', 'noopener,noreferrer');
                 onNotify(`Opened ${svc.name}`);

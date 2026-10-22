@@ -29,8 +29,9 @@ const ALL_VIEW_GROUPS = [
   {
     title: 'Operations',
     items: [
-      { id: 'logs-and-control', label: 'Logs and control', key: 'l' },
+      // Files first: the Operations tab on a phone opens it.
       { id: 'files', label: 'Files', key: 'f' },
+      { id: 'logs-and-control', label: 'Logs and control', key: 'l' },
       { id: 'users', label: 'Users', key: 'u' },
     ],
   },
@@ -120,6 +121,13 @@ export function noteView(id: ViewId): void {
 export function groupTarget(group: ViewGroup): ViewId {
   const seen = lastSeen.get(group.title);
   return seen && group.items.some((i) => i.id === seen) ? seen : (group.items[0]?.id ?? 'overview');
+}
+
+/** The view whose icon stands for a group (tab bar, rail); Operations keeps its sliders, not Files' folder. */
+const GROUP_ICON: Readonly<Record<string, ViewId>> = { Operations: 'logs-and-control' };
+
+export function groupIcon(group: ViewGroup): ViewId {
+  return GROUP_ICON[group.title] ?? group.items[0]?.id ?? 'overview';
 }
 
 /** "G O" style label for a view's shortcut. */

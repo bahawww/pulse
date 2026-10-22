@@ -38,6 +38,7 @@ import {
   sessionHash,
   setCookie,
   userOf,
+  liveUserNames,
   verifyLogin,
 } from './session.js';
 import { performAction, refreshAllowlist, targetsDetailed } from './actions.js';
@@ -46,7 +47,11 @@ import { checkReachability } from './reachability.js';
 import { getSpend } from './spend.js';
 import { closeTerminals, detachedShells, handleUpgrade } from './terminal.js';
 import { getAgents, postAgent, postStopAgent } from './agents.js';
+import { startAgentWatch, stopAgentWatch } from './agentWatch.js';
+import { getRunbooks, postStep, putRunbooks } from './runbooks.js';
+import { deleteClip, getClips, postClip } from './clipboard.js';
 import { getSessions, killSession, renameSession } from './tmux.js';
+import { hasSubscriptions, parseSubscription, publicKey, pushTo, subscribe, unsubscribe } from './push.js';
 import { CSRF_HEADER, csrfToken, csrfValid } from './csrf.js';
 import { onServicesChange, rescan, serviceList, setHidden, startDiscovery } from './discover.js';
 import { registerFileRoutes, UPLOAD_PATH } from './files.js';
@@ -604,6 +609,42 @@ app.get('/api/terminal/sessions', apiLimiter, requirePerm('terminal'), (_req: Re
   res.json({ shells: detachedShells(res.locals.sessionHash as string) });
 });
 
+// Shared clipboard (clipboard.ts): any login; each account sees only its own clips.
+app.get('/api/clipboard', apiLimiter, getClips);
+app.post('/api/clipboard', actionLimiter, postClip);
+app.delete('/api/clipboard', actionLimiter, deleteClip);
+
+// Runbooks (runbooks.ts): procedures run step by step in the terminal; steps go to the action log.
+app.get('/api/runbooks', apiLimiter, requirePerm('terminal'), getRunbooks);
+app.put('/api/runbooks', actionLimiter, requirePerm('terminal'), putRunbooks);
+app.post('/api/runbooks/step', actionLimiter, requirePerm('terminal'), postStep);
+
+// Web Push (push.ts): this browser's subscription, per login name. Any login: alerts reach everyone;
+// terminal and agent notices only go to their owners and superadmins.
+const pushUser = (res: Response): string => userOf(res.locals.sessionHash as string)?.name ?? '';
+app.get('/api/push/key', apiLimiter, (_req: Request, res: Response) => {
+  res.json({ key: publicKey(), any: hasSubscriptions(pushUser(res)) });
+});
+app.post('/api/push/subscribe', actionLimiter, (req: Request, res: Response) => {
+  const sub = parseSubscription(req.body);
+  const user = pushUser(res);
+  if (typeof sub === 'string' || !user) {
+    res.status(400).json({ error: typeof sub === 'string' ? sub : 'no user' });
+    return;
+  }
+  subscribe(user, sub);
+  res.json({ ok: true });
+});
+app.post('/api/push/unsubscribe', actionLimiter, (req: Request, res: Response) => {
+  const endpoint = (req.body as { endpoint?: unknown } | null)?.endpoint;
+  if (typeof endpoint !== 'string' || endpoint.length > 1024) {
+    res.status(400).json({ error: 'bad endpoint' });
+    return;
+  }
+  unsubscribe(pushUser(res), endpoint);
+  res.json({ ok: true });
+});
+
 // Accounts (userRoutes.ts). Admin-only; the rows live in MySQL.
 // Agent chat (chat.ts): admin-only, like the terminal. Writes start agent
 // work, so they get their own limit.
@@ -774,6 +815,7 @@ app.use((err: NodeJS.ErrnoException & { status?: unknown }, req: Request, res: R
 const server = app.listen(PORT, HOST, () => {
   console.log(`[vps-dashboard] listening on http://${HOST}:${PORT} (client: ${CLIENT_DIR})`);
   startDiscovery(PORT);
+  startAgentWatch();
 
   if (!passwordConfigured()) {
     console.warn(
@@ -950,6 +992,14 @@ const sampler = setInterval(() => {
         void notify(event).catch((err: unknown) =>
           console.error('[vps-dashboard] alert notify:', err),
         );
+        // Phones too: every signed-in login with a push subscription. The tap opens the bell.
+        const push = {
+          title: `${event.severity === 'critical' ? 'Critical' : event.severity === 'warning' ? 'Warning' : 'Info'}: ${event.metric}`,
+          body: event.message,
+          tag: `alert-${event.ruleId}-${event.metric}`,
+          url: '/#alerts',
+        };
+        for (const user of liveUserNames()) if (hasSubscriptions(user)) void pushTo(user, push);
       }
     })
     .catch((err: unknown) => console.error('[vps-dashboard] sampler:', err));
@@ -974,6 +1024,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     // both reconnect by themselves once the server is back.
     closeStreams();
     closeChat();
+    stopAgentWatch();
     closeTerminals();
     server.close(() => process.exit(0));
     // A download or upload in flight gets a moment, then everything is cut.

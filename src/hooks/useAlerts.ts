@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { enablePush, pushState } from '../lib/push';
 import type { AlertEvent, AlertState } from '../shared/contract';
 import { usePolled, type PolledState } from './usePolled';
 
@@ -91,6 +92,15 @@ export function useAlerts(onNotify: (message: string) => void): AlertsHandle {
     }
     void Notification.requestPermission().then(() => setDesktop(readPermission()));
   }, []);
+
+  // Notifications allowed in this browser: also subscribe it to Web Push, so alerts
+  // reach it with the tab closed (lib/push.ts). Quietly skipped where push is missing.
+  useEffect(() => {
+    if (desktop !== 'granted') return;
+    void pushState()
+      .then((st) => (st === 'off' ? enablePush() : st))
+      .catch(() => undefined);
+  }, [desktop]);
 
   return { state, firing, desktop, requestDesktop };
 }

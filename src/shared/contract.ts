@@ -482,7 +482,13 @@ export interface AgentSession {
   readonly created: number;
   /** Epoch ms of the last pane activity. */
   readonly activity: number;
+  /** From the pane: working, waiting for an answer, or idle. Absent until the watcher has read it. */
+  readonly state?: AgentState;
+  /** The question it waits on, when waiting. */
+  readonly ask?: string | null;
 }
+
+export type AgentState = 'working' | 'waiting' | 'idle';
 
 /** Most agent sessions that may run at once. */
 export const AGENT_LIMIT = 3;
@@ -493,7 +499,7 @@ export interface ActionLogEntry {
   /** Epoch ms when the action finished. */
   readonly ts: number;
   /** 'files': an upload, rename, new folder or delete from the file explorer. 'users': an account change. */
-  readonly target: ActionTarget | 'files' | 'users' | 'tmux' | 'process' | 'maintenance' | 'guardrail' | 'agent';
+  readonly target: ActionTarget | 'files' | 'users' | 'tmux' | 'process' | 'maintenance' | 'guardrail' | 'agent' | 'runbook';
   readonly name: string;
   readonly action: string;
   readonly ok: boolean;
@@ -954,4 +960,32 @@ export function chatEventSession(e: ChatEvent): string | null {
     default:
       return null;
   }
+}
+
+/** A named procedure run step by step in the terminal (server: runbooks.ts). */
+export interface RunbookStep {
+  readonly label: string;
+  readonly command: string;
+}
+
+export interface Runbook {
+  readonly id: string;
+  readonly name: string;
+  readonly steps: readonly RunbookStep[];
+}
+
+export interface RunbooksBody {
+  readonly runbooks: readonly Runbook[];
+  /** Recent steps run, newest first, from the action log. */
+  readonly runs: readonly ActionLogEntry[];
+}
+
+/** One entry of a login's shared clipboard (server: clipboard.ts). */
+export interface Clip {
+  readonly id: string;
+  readonly text: string;
+  /** Where it was sent from: "iPhone", "Windows"… */
+  readonly device: string;
+  /** Epoch ms. */
+  readonly ts: number;
 }

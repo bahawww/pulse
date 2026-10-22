@@ -1,5 +1,5 @@
 import { type CSSProperties, type JSX, type RefObject, useLayoutEffect, useRef, useState } from 'react';
-import { VIEW_GROUPS, type ViewId, groupTarget, noteView, shortcutLabel } from '../lib/views';
+import { VIEW_GROUPS, type ViewId, groupIcon, groupTarget, noteView, shortcutLabel } from '../lib/views';
 import { PanelLeftIcon, ViewIcon } from './icons';
 import { BrandMark } from './Navbar';
 
@@ -155,7 +155,7 @@ export function Rail({ active, onExpand }: RailProps): JSX.Element {
               title={group.items.length > 1 ? `${group.title}: ${views}` : `${first.label} (${shortcutLabel(first)})`}
               aria-current={on ? 'page' : undefined}
             >
-              <ViewIcon view={first.id} />
+              <ViewIcon view={groupIcon(group)} />
             </a>
           );
         })}

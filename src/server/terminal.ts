@@ -9,6 +9,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { csrfValid, WS_PROTOCOL, wsToken } from './csrf.js';
 import { isValid, onSessionEnd, peerAddress, sessionHash, userOf } from './session.js';
 import { TMUX_RE } from './tmux.js';
+import { hasSubscriptions, pushTo } from './push.js';
+import { clean, createScanner, type Notice } from './termNotify.js';
 import { DATA_DIR, HOME, LOOPBACK_DEST, MODE, SSH_KEY, SSH_USER, loopbackOptions, shq, writeKnownHosts } from './sshLocal.js';
 
 /**
@@ -151,6 +153,13 @@ interface Shell {
   cols: number;
   rows: number;
   exited: boolean;
+  /** A browser shows this shell right now (its page is visible). Notices then stay in the page. */
+  seen: boolean;
+  /** The window's name in the browser, for the notification title. */
+  name: string;
+  scan: (chunk: string) => Notice[];
+  /** When the last push of each kind went out, for the rate limit. */
+  pushed: Record<Notice['kind'], number>;
 }
 
 const shells = new Map<string, Shell>();
@@ -450,6 +459,25 @@ function remember(s: Shell, d: string): void {
   while (s.replaySize > REPLAY_BYTES && s.replay.length > 1) s.replaySize -= s.replay.shift()?.length ?? 0;
 }
 
+/** At most one push per shell this often: bells repeat (a shell's tab completion, a chatty tool), notices less so. */
+const PUSH_GAP_MS: Record<Notice['kind'], number> = { bell: 60_000, notify: 3_000 };
+
+/** Bells and notify sequences from a shell nobody is looking at go to its owner's devices. */
+function notice(s: Shell, d: string): void {
+  const found = s.scan(d);
+  if (!found.length || s.seen) return;
+  const user = userOf(s.login)?.name;
+  if (!user || !hasSubscriptions(user)) return;
+  const now = Date.now();
+  for (const n of found) {
+    if (now - s.pushed[n.kind] < PUSH_GAP_MS[n.kind]) continue;
+    s.pushed[n.kind] = now;
+    const where = s.name || (s.target ? targetLabel(s.target) : 'Terminal');
+    const body = n.kind === 'bell' ? 'Bell: something wants your attention' : [n.title, n.body].filter(Boolean).join(': ') || 'Done';
+    void pushTo(user, { title: where, body, tag: `term-${s.id.slice(0, 12)}`, url: '/#terminal' });
+  }
+}
+
 function touch(s: Shell): void {
   if (s.idle) clearTimeout(s.idle);
   // A persistent shell may run a long job with no typing; only the detach limit ends it.
@@ -516,11 +544,16 @@ function create(login: string, cols: number, rows: number, target: Target | null
     cols,
     rows,
     exited: false,
+    seen: false,
+    name: '',
+    scan: createScanner(),
+    pushed: { bell: 0, notify: 0 },
   };
   shells.set(s.id, s);
   if (persist) setOwner(id, login);
   touch(s);
   p.onData((d) => {
+    notice(s, d);
     remember(s, d);
     s.pending += d;
     schedule(s);
@@ -574,6 +607,12 @@ export function detachedShells(login: string): DetachedShell[] {
  * browser reconnects on its own. Shells are not killed: login shells live on in
  * dtach and are reattached after the restart.
  */
+/** A visible page shows tmux session `name` in a terminal window right now. */
+export function tmuxSeen(name: string): boolean {
+  for (const s of shells.values()) if (s.tmux === name && s.seen) return true;
+  return false;
+}
+
 export function closeTerminals(): void {
   for (const ws of wss.clients) ws.close(1012, 'server restarting');
 }
@@ -635,6 +674,7 @@ function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: nu
     s = made;
   }
   s.ws = ws;
+  s.seen = false;
   alive.set(ws, true);
   ws.on('pong', () => alive.set(ws, true));
   // A new view starts with an empty xterm and a drained socket.
@@ -675,14 +715,14 @@ function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: nu
       if (!s.exited) s.pty.write(buf.toString('utf8'));
       return;
     }
-    let msg: { type?: string; data?: unknown; cols?: unknown; rows?: unknown; ts?: unknown };
+    let msg: { type?: string; data?: unknown; cols?: unknown; rows?: unknown; ts?: unknown; visible?: unknown; name?: unknown };
     try {
       msg = JSON.parse(raw.toString());
     } catch {
       return;
     }
     // Pings and flow control keep the link fresh but do not count as activity.
-    if (msg.type !== 'ping' && msg.type !== 'pause' && msg.type !== 'resume') touch(s);
+    if (msg.type !== 'ping' && msg.type !== 'pause' && msg.type !== 'resume' && msg.type !== 'seen') touch(s);
     if (msg.type === 'input' && typeof msg.data === 'string') {
       s.pty.write(msg.data);
     } else if (msg.type === 'resize') {
@@ -706,12 +746,16 @@ function attach(ws: WebSocket, login: string, found: Shell | undefined, cols: nu
       emit(s, { t: 'pong', ts: msg.ts });
     } else if (msg.type === 'kill') {
       kill(s, 'closed by user');
+    } else if (msg.type === 'seen') {
+      s.seen = msg.visible === true;
+      if (typeof msg.name === 'string') s.name = clean(msg.name, 60);
     }
   });
 
   const gone = (): void => {
     if (s.ws !== ws) return;
     s.ws = null;
+    s.seen = false;
     // Nobody is drawing: keep the shell running and let the replay ring absorb output.
     s.paused = false;
     s.held = false;

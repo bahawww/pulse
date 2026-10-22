@@ -594,6 +594,148 @@ export function earlyKey(key: string): string | null {
   return null;
 }
 
+// ------------------------------------------------------------------ key bar (phones)
+
+/** What a key-bar key does: raw bytes, a key that takes the armed Ctrl/Alt, or an action. */
+export type BarAction = { readonly raw: string } | { readonly key: KeyDef } | { readonly special: 'paste' | 'notify' };
+
+export interface BarKey {
+  readonly id: string;
+  readonly label: string;
+  /** Spoken name, when the label is a symbol. */
+  readonly name?: string;
+  /** Repeats while held. */
+  readonly repeat?: boolean;
+  readonly act: BarAction;
+}
+
+/** A key the user made: `send` uses the notation of decodeSend. */
+export interface CustomKey {
+  readonly id: string;
+  readonly label: string;
+  readonly send: string;
+}
+
+const ctrl = (ch: string, name: string): BarKey => ({ id: `ctrl-${ch.toLowerCase()}`, label: `^${ch}`, name: `Control ${ch}, ${name}`, act: { raw: String.fromCharCode(ch.charCodeAt(0) & 0x1f) } });
+const sym = (ch: string): BarKey => ({ id: `t:${ch}`, label: ch, act: { key: { k: 'text', value: ch } } });
+const fkey = (n: number, seq: string): BarKey => ({ id: `f${n}`, label: `F${n}`, act: { raw: seq } });
+
+/** Every built-in key, the default row first in its order, then the ones that can be added. */
+export const BAR_KEYS: readonly BarKey[] = [
+  ctrl('C', 'interrupt'),
+  ctrl('D', 'end of input'),
+  ctrl('L', 'clear'),
+  ctrl('R', 'history search'),
+  ...['/', '-', '|', '~', '`', '\\', '_', '$', '*', '&'].map(sym),
+  { id: 'home', label: 'Home', act: { key: { k: 'csi', final: 'H' } } },
+  { id: 'end', label: 'End', act: { key: { k: 'csi', final: 'F' } } },
+  { id: 'pgup', label: 'PgUp', repeat: true, act: { key: { k: 'tilde', n: 5 } } },
+  { id: 'pgdn', label: 'PgDn', repeat: true, act: { key: { k: 'tilde', n: 6 } } },
+  { id: 'paste', label: 'Paste', act: { special: 'paste' } },
+  { id: 'notify', label: 'Notify', name: 'Notify when the running command is done', act: { special: 'notify' } },
+  // Not on the default row.
+  ctrl('Z', 'suspend'),
+  ctrl('A', 'start of line'),
+  ctrl('E', 'end of line'),
+  ctrl('U', 'delete to start'),
+  ctrl('W', 'delete word'),
+  ctrl('K', 'delete to end'),
+  ...[':', ';', '=', '#', '@', '!', '%', '+', '<', '>', '"', "'", '(', ')', '[', ']', '{', '}'].map(sym),
+  { id: 'del', label: 'Del', repeat: true, act: { key: { k: 'tilde', n: 3 } } },
+  fkey(1, '\x1bOP'),
+  fkey(2, '\x1bOQ'),
+  fkey(3, '\x1bOR'),
+  fkey(4, '\x1bOS'),
+  ...[15, 17, 18, 19, 20, 21, 23, 24].map((code, i) => fkey(i + 5, `\x1b[${code}~`)),
+];
+
+const DEFAULT_ROW: readonly string[] = BAR_KEYS.slice(0, BAR_KEYS.findIndex((k) => k.id === 'notify') + 1).map((k) => k.id);
+
+/**
+ * A custom key's text as bytes: `^X` is Control+X (also ^[ ^\ ^] ^^ ^_ ^? ^@),
+ * `\e` Esc, `\n` `\r` `\t`, `\xHH` one byte, `\\` and `\^` the characters.
+ * Anything else is typed as is, so `git status\r` types and runs it.
+ */
+export function decodeSend(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i]!;
+    const n = text[i + 1];
+    if (c === '^' && n !== undefined) {
+      const u = n.toUpperCase();
+      if (/[A-Z[\\\]^_@]/.test(u)) {
+        out += String.fromCharCode(u.charCodeAt(0) & 0x1f);
+        i += 1;
+        continue;
+      }
+      if (n === '?') {
+        out += '\x7f';
+        i += 1;
+        continue;
+      }
+    }
+    if (c === '\\' && n !== undefined) {
+      const map: Record<string, string> = { e: '\x1b', n: '\n', r: '\r', t: '\t', '\\': '\\', '^': '^' };
+      if (n in map) {
+        out += map[n];
+        i += 1;
+        continue;
+      }
+      const hex = /^x([0-9a-fA-F]{2})/.exec(text.slice(i + 1));
+      if (hex) {
+        out += String.fromCharCode(parseInt(hex[1]!, 16));
+        i += 3;
+        continue;
+      }
+    }
+    out += c;
+  }
+  return out;
+}
+
+const KEYS_KEY = 'vps_term_keys';
+/** Most keys a row holds; past that it is a second keyboard. */
+export const MAX_BAR_KEYS = 60;
+
+/** The row as saved: a built-in key's id, or a custom key. */
+export type BarEntry = string | CustomKey;
+
+export function readBarEntries(): readonly BarEntry[] {
+  try {
+    const raw = localStorage.getItem(KEYS_KEY);
+    if (raw === null) return DEFAULT_ROW;
+    const list = JSON.parse(raw) as unknown;
+    if (!Array.isArray(list)) return DEFAULT_ROW;
+    return list
+      .filter(
+        (e): e is BarEntry =>
+          (typeof e === 'string' && BAR_KEYS.some((k) => k.id === e)) ||
+          (typeof e === 'object' && e !== null && typeof e.id === 'string' && typeof e.label === 'string' && typeof e.send === 'string' && e.send !== ''),
+      )
+      .slice(0, MAX_BAR_KEYS);
+  } catch {
+    return DEFAULT_ROW;
+  }
+}
+
+/** null goes back to the default row. */
+export function storeBarEntries(list: readonly BarEntry[] | null): void {
+  store(KEYS_KEY, list === null ? null : JSON.stringify(list));
+}
+
+export function defaultBarEntries(): readonly BarEntry[] {
+  return DEFAULT_ROW;
+}
+
+/** Saved entries as keys to draw. */
+export function barKeys(entries: readonly BarEntry[]): readonly BarKey[] {
+  return entries.flatMap((e) => {
+    if (typeof e !== 'string') return [{ id: e.id, label: e.label || e.send, name: e.send, act: { raw: decodeSend(e.send) } }];
+    const k = BAR_KEYS.find((x) => x.id === e);
+    return k ? [k] : [];
+  });
+}
+
 // ------------------------------------------------------------------ titles
 
 /** The shell's own title ("user@host: ~/dir") shortened to the directory part. */

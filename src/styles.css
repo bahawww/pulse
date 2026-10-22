@@ -39,6 +39,7 @@
   --ok-soft: rgba(31, 240, 138, 0.16);
   --warn: #ffc400;
   --warn-soft: rgba(255, 196, 0, 0.16);
+  --warn-text: #ffd24d;
   --serious: #ff7a1a;
   --serious-soft: rgba(255, 122, 26, 0.16);
   --crit: #ff3b4e;
@@ -114,6 +115,7 @@
   --ok-soft: rgba(31, 143, 90, 0.12);
   --warn: #a8700a;
   --warn-soft: rgba(168, 112, 10, 0.14);
+  --warn-text: #7a5000;
   --serious: #c2561f;
   --serious-soft: rgba(194, 86, 31, 0.13);
   --crit: #d92d20;
@@ -218,7 +220,7 @@ kbd {
   border-radius: 5px;
   background: var(--surface-2);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -344,7 +346,7 @@ kbd {
   border-radius: 8px;
   background: var(--crit);
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 16px;
   text-align: center;
@@ -538,7 +540,7 @@ kbd {
 
 .pill.is-warn {
   background: var(--warn-soft);
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .pill.is-crit {
@@ -558,7 +560,7 @@ kbd {
   border-radius: 6px;
   background: var(--surface-3);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -737,11 +739,9 @@ kbd {
   padding: 6px 8px;
   border-bottom: 1px solid var(--line);
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.04em;
   text-align: left;
-  text-transform: uppercase;
 }
 
 .table td {
@@ -814,10 +814,10 @@ kbd {
   align-items: center;
   gap: 16px;
   font-family: var(--font-serif);
-  font-size: clamp(32px, 4.6vw, 52px);
-  font-weight: 400;
-  letter-spacing: -0.03em;
-  line-height: 1.08;
+  font-size: clamp(24px, 2.3vw, 32px);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
 }
 
 /* The lamp: one steady light that answers "is it healthy" before any word is read. */
@@ -957,7 +957,7 @@ kbd {
   left: 10px;
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   transform: translateY(-50%);
@@ -1007,7 +1007,7 @@ kbd {
 .trace-tip span {
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .trace-line {
@@ -1172,13 +1172,12 @@ kbd {
 .tab.is-active {
   background: var(--surface-3);
   color: var(--text);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .tab-count {
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .svc-grid {
@@ -1232,11 +1231,7 @@ kbd {
   display: grid;
   flex: none;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--surface-3);
-  color: var(--svc, var(--accent));
+  color: var(--text-2);
 }
 
 .svc-name {
@@ -1278,6 +1273,7 @@ kbd {
 }
 
 .svc-addr span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1395,7 +1391,7 @@ kbd {
 
 .range-note {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   margin-left: 8px;
   align-self: center;
 }
@@ -1459,7 +1455,7 @@ kbd {
 
 .stat-sub {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
 }
 
@@ -1538,7 +1534,7 @@ kbd {
   left: 6px;
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   pointer-events: none;
 }
 
@@ -1549,7 +1545,7 @@ kbd {
   gap: 8px;
   min-height: 20px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .spark-btn {
@@ -1561,7 +1557,7 @@ kbd {
   border-radius: 6px;
   background: var(--surface-2);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -1597,7 +1593,7 @@ kbd {
 .chart-tip-time {
   margin-bottom: 6px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .chart-tip-row {
@@ -1706,7 +1702,7 @@ kbd {
   gap: 4px;
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .core-bar {
@@ -1778,7 +1774,7 @@ kbd {
 .iface-foot {
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .mem-bars {
@@ -1832,7 +1828,7 @@ kbd {
 
 .fs-meta {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1915,7 +1911,7 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
 }
 
@@ -2142,9 +2138,7 @@ kbd {
 
 .action-kind {
   color: var(--text-3);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: 12px;
 }
 
 .action-name {
@@ -2203,7 +2197,7 @@ kbd {
   max-height: 140px;
   overflow: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-2);
   white-space: pre-wrap;
 }
@@ -2274,7 +2268,7 @@ kbd {
 
 .alert-meta {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
 }
 
@@ -2302,7 +2296,7 @@ kbd {
 .rules-thresh {
   color: var(--text-3);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* ---- Command palette ---- */
@@ -2376,10 +2370,8 @@ kbd {
 .palette-cat {
   padding: 10px 10px 4px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .palette-item {
@@ -2406,7 +2398,7 @@ kbd {
   height: 30px;
   border-radius: 9px;
   background: var(--surface-3);
-  color: var(--svc, var(--text-2));
+  color: var(--text-2);
 }
 
 .palette-item-text {
@@ -2846,10 +2838,8 @@ kbd {
 .side-title {
   margin: 0 0 4px 10px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .side-link {
@@ -3658,6 +3648,18 @@ html[data-chat-fab] .tw-resume {
   font-size: 14px;
 }
 
+.agent-card-state {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.agent-card-state.is-waiting {
+  color: var(--warn-text);
+  font-weight: 500;
+}
+
 .agent-card-wait {
   margin: 0;
   color: var(--text-3);
@@ -3809,12 +3811,7 @@ html[data-chat-fab] .tw-resume {
 .lamp-chip {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  color: var(--c, var(--text-2));
-  background: color-mix(in srgb, var(--c, var(--text-2)) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c, var(--text-2)) 22%, transparent);
+  color: var(--text-2);
 }
 
 .lamp-state {
@@ -3851,9 +3848,7 @@ html[data-chat-fab] .tw-resume {
 }
 
 .lamp-row.is-down .lamp-chip {
-  color: var(--text-3);
-  background: var(--surface-3);
-  box-shadow: none;
+  color: var(--crit-text);
 }
 
 /* Small print in the instrument strip wraps instead of being cut by the panel edge. */
@@ -3883,7 +3878,7 @@ html[data-chat-fab] .tw-resume {
   background: var(--surface-2);
   color: var(--text-2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1;
 }
@@ -4023,7 +4018,7 @@ html[data-go] .side-kbd {
   background: var(--surface-2);
   color: var(--text-2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -4356,7 +4351,7 @@ html[data-go] .side-kbd {
   .trace-axis span,
   .spark-axis-label,
   .core {
-    font-size: 11px;
+    font-size: 12px;
   }
 }
 
@@ -4540,7 +4535,7 @@ html[data-go] .side-kbd {
     padding: 12px 18px 14px;
     border-top: 1px solid var(--line);
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: 12px;
   }
 
   .side-foot kbd {
@@ -5005,7 +5000,7 @@ html[data-go] .side-kbd {
 
 .perm-note {
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 16px;
 }
 
@@ -5016,11 +5011,9 @@ html[data-go] .side-kbd {
   padding: 0 6px;
   border-radius: 6px;
   background: var(--warn-soft);
-  color: var(--warn);
-  font-size: 10.5px;
+  color: var(--warn-text);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
 }
 
 .perm-changed {
@@ -5126,7 +5119,7 @@ html[data-go] .side-kbd {
 
 .maint-hint {
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 16px;
 }
 
@@ -5137,10 +5130,8 @@ html[data-go] .side-kbd {
 .maint-section {
   margin: 0 0 8px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 /* Service limits: a grid, not a table, so the menus never sit in a scroll box
@@ -5169,10 +5160,8 @@ html[data-go] .side-kbd {
   padding-bottom: 8px;
   border-top: 0;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .guard .num {
@@ -5205,7 +5194,7 @@ html[data-go] .side-kbd {
 .guard-sub {
   overflow: hidden;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5253,7 +5242,7 @@ html[data-go] .side-kbd {
   .guard-cell::before {
     content: attr(data-label);
     color: var(--text-3);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .guard-cell .select-trigger {
@@ -5316,24 +5305,107 @@ button.agents-main:hover {
 }
 
 .agents-state.is-on {
-  color: var(--ok);
+  color: var(--ok-text);
 }
 
 .agents-state.is-ask {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .agents-state.is-off {
-  color: var(--crit);
+  color: var(--crit-text);
 }
 
 .agents-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 18px 0 6px;
+  flex: none;
+  gap: 4px;
+  margin-right: 14px;
+  height: 30px;
+  padding: 0 10px 0 12px;
   font-size: 13px;
-  font-weight: 550;
-  color: var(--accent);
-  white-space: nowrap;
+}
+
+/* The firing alert's way out: the view that shows the cause, beside "Explain". */
+.alert-fix {
+  margin: 8px 8px 0 0;
+}
+
+/* ---- Shared clipboard (SharedClipboard.tsx): send box, then the clips, newest first */
+.clip-form {
+  display: grid;
+  gap: 8px;
+  padding: 0 4px 10px;
+}
+
+.clip-form textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: 14px/1.45 var(--font-mono);
+  resize: vertical;
+}
+
+.clip-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.clip-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clip-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--line);
+}
+
+.clip-text {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 13px/1.45 var(--font-mono);
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  cursor: copy;
+}
+
+.clip-meta {
+  grid-column: 1;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.clip-tools {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.clip-empty {
+  display: block !important;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.clip-clear {
+  margin: 6px 4px 0;
 }

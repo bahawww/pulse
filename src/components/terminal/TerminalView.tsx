@@ -99,6 +99,8 @@ interface ViewProps {
   readonly modsRef: MutableRefObject<Mods>;
   readonly onModsUsed: () => void;
   readonly shown: boolean;
+  /** The terminal overlay is open (not hidden behind the dashboard). */
+  readonly visible: boolean;
   readonly focused: boolean;
   readonly current: boolean;
   /** Split view with more than one window on screen: each gets its own title strip. */
@@ -130,6 +132,10 @@ interface ViewProps {
   /** A multi-line paste that needs a yes first. */
   readonly onConfirmPaste: (text: string, go: () => void) => void;
   readonly onCopied: () => void;
+  /** A program asked for attention (OSC 777 notify or OSC 9): shown in the page. */
+  readonly onNotice: (id: number, text: string) => void;
+  /** A runbook step finished in this shell with this exit code (OSC 777 pulse-step). */
+  readonly onStep: (id: number, code: number) => void;
   /** Keys typed before this shell could take focus; empties the queue. */
   readonly takeEarly: () => string;
 }
@@ -137,6 +143,55 @@ interface ViewProps {
 interface Menu {
   readonly x: number;
   readonly y: number;
+}
+
+interface Cell {
+  readonly col: number;
+  readonly row: number;
+}
+
+/** Where the selection's corners sit in the stage, for the handles and the action bar. */
+interface SelView {
+  readonly a: { readonly x: number; readonly y: number; readonly on: boolean };
+  readonly b: { readonly x: number; readonly y: number; readonly on: boolean };
+  readonly h: number;
+  /** "Output" can select the last command's output. */
+  readonly output: boolean;
+}
+
+interface SelApi {
+  readonly grab: (which: 'start' | 'end') => void;
+  readonly drag: (x: number, y: number) => void;
+  readonly copy: () => void;
+  readonly lines: () => void;
+  readonly all: () => void;
+  readonly output: () => void;
+  readonly share: () => void;
+  readonly exit: () => void;
+}
+
+/** How far a selection handle's knob hangs off the text it holds, px. */
+const HANDLE_REACH = 14;
+
+/**
+ * Rows of the last finished command's output: between the previous prompt line
+ * and the prompt the cursor sits on. A prompt is recognised by its `user@host:`
+ * start (bash's default), so other prompts and remote shells give null.
+ */
+export function lastOutput(t: Pick<Terminal, 'buffer'>): { from: number; to: number } | null {
+  const buf = t.buffer.active;
+  const here = buf.baseY + buf.cursorY;
+  const prompt = /^[\w.-]+@[\w.-]+:/.exec(buf.getLine(here)?.translateToString(true) ?? '')?.[0];
+  if (!prompt) return null;
+  for (let r = here - 1; r >= 0; r -= 1) {
+    const line = buf.getLine(r);
+    if (!line || line.isWrapped || !line.translateToString(true).startsWith(prompt)) continue;
+    let from = r + 1;
+    // The command itself may have wrapped onto more rows.
+    while (from < here && buf.getLine(from)?.isWrapped) from += 1;
+    return from <= here - 1 ? { from, to: here - 1 } : null;
+  }
+  return null;
 }
 
 const INITIAL: WinStatus = { link: 'connecting', mode: '', pid: null, latency: null, size: '', renderer: '', since: null };
@@ -175,6 +230,11 @@ export function TerminalView(props: ViewProps): JSX.Element {
   const [marks, setMarks] = useState<{ all: readonly CellRange[]; current: CellRange | null }>({ all: [], current: null });
   const [menu, setMenu] = useState<Menu | null>(null);
   const [bell, setBell] = useState(0);
+  // Tells the server whether anyone sees this shell; set by the mount effect.
+  const sendSeen = useRef<() => void>(() => undefined);
+  // Phone selection mode: handles and an action bar over a long-pressed selection.
+  const [sel, setSel] = useState<SelView | null>(null);
+  const selApi = useRef<SelApi | null>(null);
 
   useEffect(() => {
     const container = host.current;
@@ -222,6 +282,25 @@ export function TerminalView(props: ViewProps): JSX.Element {
       t.loadAddon(serialize);
       // OSC 52: programs on the server (vim, tmux) can put text on this browser's clipboard.
       t.loadAddon(new ClipboardAddon());
+      // OSC 777 notify;title;body and OSC 9 text: a program wants attention. In the page
+      // that is a toast and the window's bell; with the page away, the server pushes it.
+      const onNotice = (text: string) => {
+        setBell((n) => n + 1);
+        if (!live.current.current) live.current.onActivity(id);
+        live.current.onNotice(id, text);
+        return true;
+      };
+      t.parser.registerOscHandler(777, (data) => {
+        if (data.startsWith('pulse-step;')) {
+          const code = Number(data.slice(11));
+          if (Number.isInteger(code)) live.current.onStep(id, code);
+          return true;
+        }
+        if (!data.startsWith('notify;')) return false;
+        const [title = '', ...body] = data.slice(7).split(';');
+        return onNotice([title, body.join(';')].filter(Boolean).join(': ') || 'Done');
+      });
+      t.parser.registerOscHandler(9, (data) => (/^\d+(;|$)/.test(data) ? false : onNotice(data)));
       t.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
       t.open(el);
       term.current = t;
@@ -501,6 +580,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
           }
           if (msg.t === 'hello' && msg.sid) {
             connected = true;
+            sendSeen.current();
             helloSeen = true;
             binary = msg.bin === true;
             retries = 0;
@@ -630,7 +710,9 @@ export function TerminalView(props: ViewProps): JSX.Element {
         report({ link: 'reconnecting' });
         connect();
       };
+      sendSeen.current = () => send({ type: 'seen', visible: !document.hidden && live.current.visible, name: live.current.title });
       const onVisible = () => {
+        sendSeen.current();
         if (!document.hidden) revive();
       };
       document.addEventListener('visibilitychange', onVisible);
@@ -717,6 +799,44 @@ export function TerminalView(props: ViewProps): JSX.Element {
         const box = screen?.getBoundingClientRect();
         return box && t.cols > 0 && t.rows > 0 ? { box, w: box.width / t.cols, h: box.height / t.rows } : null;
       };
+      // ---- selection mode (phones). A long press selects the word under the finger
+      // (the line, on a blank) and shows two handles to widen it and a bar of actions.
+      // Rows are buffer rows (scrollback included), end inclusive.
+      let range: { start: Cell; end: Cell } | null = null;
+      let output: { from: number; to: number } | null = null;
+      const cellAt = (x: number, y: number): Cell | null => {
+        const c = cell();
+        if (!c) return null;
+        let row = Math.floor((y - c.box.top) / c.h);
+        // Dragged past the top or bottom: scroll a line and stay on the edge row.
+        if (row < 0) {
+          t.scrollLines(-1);
+          row = 0;
+        } else if (row >= t.rows) {
+          t.scrollLines(1);
+          row = t.rows - 1;
+        }
+        const col = Math.min(t.cols - 1, Math.max(0, Math.floor((x - c.box.left) / c.w)));
+        return { col, row: row + t.buffer.active.viewportY };
+      };
+      const before = (a: Cell, b: Cell) => a.row < b.row || (a.row === b.row && a.col <= b.col);
+      /** Draws `range`: xterm's selection, then the handles and the bar where it sits now. */
+      const showSel = (reselect = true) => {
+        const c = cell();
+        const stage = el.parentElement?.getBoundingClientRect();
+        if (!range || !c || !stage) return;
+        const { start, end } = range;
+        if (reselect) t.select(start.col, start.row, (end.row - start.row) * t.cols + end.col - start.col + 1);
+        const vy = t.buffer.active.viewportY;
+        const at = (col: number, row: number) => ({ x: c.box.left - stage.left + col * c.w, y: c.box.top - stage.top + (row - vy) * c.h, on: row >= vy && row < vy + t.rows });
+        setSel({ a: at(start.col, start.row), b: at(end.col + 1, end.row + 1), h: c.h, output: output !== null });
+      };
+      const exitSel = () => {
+        if (!range) return;
+        range = null;
+        t.clearSelection();
+        setSel(null);
+      };
       const selectAt = (x: number, y: number) => {
         const c = cell();
         if (!c) return;
@@ -730,15 +850,66 @@ export function TerminalView(props: ViewProps): JSX.Element {
         if (isWord(line[col])) {
           while (start > 0 && isWord(line[start - 1])) start -= 1;
           while (end < line.length - 1 && isWord(line[end + 1])) end += 1;
-          t.select(start, row, end - start + 1);
         } else {
-          t.selectLines(row, row);
+          start = 0;
+          end = t.cols - 1;
         }
-        // Copied on touchend: the clipboard needs a user gesture, and a timer is not one.
-        if (t.hasSelection()) navigator.vibrate?.(12);
+        range = { start: { col: start, row }, end: { col: end, row } };
+        output = lastOutput(t);
+        showSel();
+        navigator.vibrate?.(12);
+      };
+      const scrollSub = t.onScroll(() => range && showSel(false));
+      let dragging: 'start' | 'end' | null = null;
+      selApi.current = {
+        grab: (which) => {
+          dragging = which;
+        },
+        drag: (x, y) => {
+          const c = cell();
+          if (!range || !dragging || !c) return;
+          // The finger sits on the knob, which hangs above the start and below the end.
+          const p = cellAt(x, dragging === 'start' ? y + HANDLE_REACH + c.h / 2 : y - HANDLE_REACH - c.h / 2);
+          if (!p) return;
+          if (dragging === 'start') range = before(p, range.end) ? { start: p, end: range.end } : ((dragging = 'end'), { start: range.end, end: p });
+          else range = before(range.start, p) ? { start: range.start, end: p } : ((dragging = 'start'), { start: p, end: range.start });
+          showSel();
+        },
+        copy: () => {
+          void copyToClipboard(t.getSelection()).then((ok) => ok && live.current.onCopied());
+          exitSel();
+        },
+        lines: () => {
+          if (!range) return;
+          range = { start: { col: 0, row: range.start.row }, end: { col: t.cols - 1, row: range.end.row } };
+          showSel();
+        },
+        all: () => {
+          const last = t.buffer.active.length - 1;
+          range = { start: { col: 0, row: 0 }, end: { col: t.cols - 1, row: last } };
+          showSel();
+        },
+        output: () => {
+          if (!output) return;
+          range = { start: { col: 0, row: output.from }, end: { col: t.cols - 1, row: output.to } };
+          showSel();
+          t.scrollToLine(output.from);
+        },
+        share: () => {
+          const text = t.getSelection();
+          exitSel();
+          void navigator.share?.({ text }).catch(() => undefined);
+        },
+        exit: exitSel,
       };
       const onTouchStart = (e: TouchEvent) => {
         if (g?.kind === 'one') clearTimeout(g.longTimer);
+        // A new touch on the text while selecting: a tap ends the mode (see touchend).
+        if (range && e.touches.length === 1) {
+          const p = e.touches[0]!;
+          g = { kind: 'one', x0: p.clientX, y0: p.clientY, t0: Date.now(), lastY: p.clientY, moved: false, arrows: false, longTimer: 0, selected: true };
+          return;
+        }
         if (e.touches.length === 2) {
           g = { kind: 'pinch', base: spread(e) };
           return;
@@ -752,7 +923,7 @@ export function TerminalView(props: ViewProps): JSX.Element {
         const longTimer = window.setTimeout(() => {
           if (g?.kind === 'one' && !g.moved) {
             selectAt(g.x0, g.y0);
-            g.selected = t.hasSelection();
+            g.selected = range !== null;
           }
         }, LONG_PRESS_MS);
         g = { kind: 'one', x0: p.clientX, y0: p.clientY, t0: Date.now(), lastY: p.clientY, moved: false, arrows: alt, longTimer, selected: false };
@@ -791,7 +962,8 @@ export function TerminalView(props: ViewProps): JSX.Element {
           if (g.selected) {
             // Keep the browser from turning the lift into a click that clears the selection.
             if (e.cancelable) e.preventDefault();
-            void copyToClipboard(t.getSelection()).then((ok) => ok && live.current.onCopied());
+            // A tap (no drag, not the long press that started the mode) leaves selection mode.
+            if (!g.moved && g.longTimer === 0) exitSel();
             g = null;
             return;
           }
@@ -849,6 +1021,8 @@ export function TerminalView(props: ViewProps): JSX.Element {
         results.dispose();
         titleSub.dispose();
         bellSub.dispose();
+        scrollSub.dispose();
+        selApi.current = null;
         observer.disconnect();
         data.dispose();
         resize.dispose();
@@ -909,6 +1083,8 @@ export function TerminalView(props: ViewProps): JSX.Element {
     if (!t) return;
     t.options.theme = xtermTheme(scheme);
   }, [scheme, xt]);
+
+  useEffect(() => sendSeen.current(), [props.visible, title]);
 
   useEffect(() => {
     if (!bell || !win.current) return;
@@ -982,6 +1158,59 @@ export function TerminalView(props: ViewProps): JSX.Element {
         <div ref={host} className="tw-term" />
         {xt && <ScrollRail term={xt} marks={marks.all} current={marks.current} />}
         {xt && <JumpPill term={xt} />}
+        {sel && (
+          <>
+            {(['start', 'end'] as const).map((which) => {
+              const at = which === 'start' ? sel.a : sel.b;
+              if (!at.on) return null;
+              return (
+                <span
+                  key={which}
+                  className={`tw-sel-handle is-${which}`}
+                  style={{ left: at.x, top: at.y, '--sel-line': `${sel.h}px` } as CSSProperties}
+                  aria-hidden="true"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    selApi.current?.grab(which);
+                  }}
+                  onPointerMove={(e) => e.currentTarget.hasPointerCapture(e.pointerId) && selApi.current?.drag(e.clientX, e.clientY)}
+                />
+              );
+            })}
+            <div
+              className="tw-sel-bar"
+              role="toolbar"
+              aria-label="Selection"
+              // Above the selection when there is room, else under it.
+              style={{ top: sel.a.on && sel.a.y > 64 ? sel.a.y - 54 : Math.min((host.current?.clientHeight ?? 200) - 48, (sel.b.on ? sel.b.y : 0) + 22) }}
+              onPointerDown={(e) => e.preventDefault()}
+            >
+              <button type="button" onClick={() => selApi.current?.copy()}>
+                Copy
+              </button>
+              <button type="button" onClick={() => selApi.current?.lines()}>
+                Lines
+              </button>
+              {sel.output && (
+                <button type="button" onClick={() => selApi.current?.output()}>
+                  Output
+                </button>
+              )}
+              <button type="button" onClick={() => selApi.current?.all()}>
+                All
+              </button>
+              {typeof navigator.share === 'function' && (
+                <button type="button" aria-label="Share" onClick={() => selApi.current?.share()}>
+                  <Icon.share size={15} />
+                </button>
+              )}
+              <button type="button" aria-label="Done selecting" onClick={() => selApi.current?.exit()}>
+                <Icon.close size={15} />
+              </button>
+            </div>
+          </>
+        )}
       </div>
       {menu && (
         <div

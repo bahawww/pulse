@@ -7,7 +7,6 @@ import { transition } from '../lib/motion';
 import { Bone, BoneLines, Loading } from './Skeleton';
 import { MoreMenu } from './MoreMenu';
 import { ArrowUpRightIcon, CopyIcon, EyeIcon, EyeOffIcon, LinkIcon, RefreshIcon, ServiceIconGlyph } from './icons';
-import { SERVICE_COLOR } from '../lib/serviceColor';
 
 interface ServicesGridProps {
   readonly data: StatsPayload | null;
@@ -209,7 +208,6 @@ function ServiceCard({
   const url = buildServiceUrl(service, hostMode);
   const subdomain = usesSubdomain(service, hostMode);
   const { online, latency } = service.status;
-  const color = SERVICE_COLOR[service.id] ?? 'var(--accent)';
 
   const copy = async () => {
     const ok = await copyToClipboard(url);
@@ -219,7 +217,7 @@ function ServiceCard({
   return (
     <article
       className="svc"
-      style={{ '--i': index, '--svc': color, '--vt-name': `svc-${service.id}` } as CSSProperties}
+      style={{ '--i': index, '--vt-name': `svc-${service.id}` } as CSSProperties}
       data-service-id={service.id}
     >
       <div className="svc-head">

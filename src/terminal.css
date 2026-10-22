@@ -2098,3 +2098,250 @@
     background: var(--surface);
   }
 }
+
+/* ---- Key bar editor (KeysPanel): the row's keys in order, keys to add, your own key */
+.tw-keyed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  margin: 6px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.tw-keyed li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 2px 2px 2px 4px;
+  border-radius: 10px;
+}
+
+.tw-keyed .tw-snip-tools {
+  opacity: 1;
+}
+
+.tw-keyed-cap {
+  min-width: 44px;
+  text-align: center;
+}
+
+.tw-keyed-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tw-keyed-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+
+.tw-keyed-add .tw-snip-key {
+  height: 34px;
+  min-width: 40px;
+}
+
+/* The pencil at the end of the scrolling key row. */
+.tw-keys-edit {
+  display: inline-grid;
+  place-items: center;
+  height: auto;
+  min-width: 40px;
+  color: var(--text-2);
+}
+
+/* ---- Selection mode (phones): two handles on the selection's corners, a bar of actions.
+   The start knob hangs above the first character, the end knob below the last;
+   each has a 44px touch target around a 14px dot. */
+.tw-sel-handle {
+  position: absolute;
+  z-index: 6;
+  width: 44px;
+  height: calc(var(--sel-line, 16px) + 30px);
+  margin-left: -22px;
+  touch-action: none;
+}
+
+.tw-sel-handle.is-start {
+  margin-top: -30px;
+}
+
+.tw-sel-handle.is-end {
+  margin-top: calc(-1 * var(--sel-line, 16px));
+}
+
+/* The stem along the text, and the knob at its far end. */
+.tw-sel-handle::before,
+.tw-sel-handle::after {
+  content: '';
+  position: absolute;
+  left: 21px;
+  /* System selection blue: the site accent is near-black/white and vanishes on some schemes. */
+  background: #0a84ff;
+}
+
+.tw-sel-handle::before {
+  width: 2px;
+  height: var(--sel-line, 16px);
+}
+
+.tw-sel-handle::after {
+  left: 15px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
+.tw-sel-handle.is-start::before {
+  bottom: 0;
+}
+
+.tw-sel-handle.is-start::after {
+  bottom: var(--sel-line, 16px);
+  margin-bottom: 2px;
+}
+
+.tw-sel-handle.is-end::before {
+  top: 0;
+}
+
+.tw-sel-handle.is-end::after {
+  top: var(--sel-line, 16px);
+  margin-top: 2px;
+}
+
+.tw-sel-bar {
+  position: absolute;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  gap: 2px;
+  max-width: calc(100% - 16px);
+  padding: 4px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+  animation: tw-pop-in 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+}
+
+.tw-sel-bar button {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 44px;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: 500 14px var(--font-ui);
+}
+
+.tw-sel-bar button:active {
+  background: var(--surface-3);
+}
+
+/* ---- Runbooks: steps of a run, each with its state; recent steps from the action log */
+.tw-run-steps {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 12px;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.tw-run-steps li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.tw-run-steps li.is-next {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.tw-run-steps .tw-run-label {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.tw-run-steps code {
+  grid-column: 1;
+  color: var(--text-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.tw-run-state {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tw-run-steps li.is-ok .tw-run-state {
+  color: var(--ok-text);
+}
+
+.tw-run-steps li.is-bad .tw-run-state {
+  color: var(--crit-text);
+  font-weight: 500;
+}
+
+.tw-run-steps li.is-skipped {
+  opacity: 0.6;
+}
+
+.tw-run-tools {
+  opacity: 1;
+}
+
+.tw-run-history {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.tw-run-history li {
+  display: grid;
+  gap: 1px;
+}
+
+.tw-run-msg {
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tw-run-history li.is-bad .tw-run-msg {
+  color: var(--crit-text);
+}
+
+.tw-run-when {
+  color: var(--text-3);
+}
+
+.tw-snip-top > .tw-pop-head {
+  flex: 1;
+}

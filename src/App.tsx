@@ -219,6 +219,28 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     window.addEventListener('hashchange', check);
     return () => window.removeEventListener('hashchange', check);
   }, [canChat, openChat]);
+  // #terminal (a tapped terminal notification) opens the terminal over the first view.
+  // The service worker asks an already open page by message instead of reloading it.
+  useEffect(() => {
+    if (!canShell) return undefined;
+    const check = () => {
+      if (window.location.hash !== '#terminal') return;
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${VIEWS[0]?.id ?? 'overview'}`);
+      fetchTerminal();
+      setTerminal('open');
+    };
+    const onMessage = (e: MessageEvent) => {
+      const hash = (e.data as { type?: string; hash?: string } | null)?.hash;
+      if ((e.data as { type?: string } | null)?.type === 'open' && (hash === '#terminal' || hash === '#chat' || hash === '#alerts')) window.location.hash = hash;
+    };
+    check();
+    window.addEventListener('hashchange', check);
+    navigator.serviceWorker?.addEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('hashchange', check);
+      navigator.serviceWorker?.removeEventListener('message', onMessage);
+    };
+  }, [canShell, fetchTerminal]);
   const onChatSignal = useCallback((next: ChatSignal) => {
     setChatSignal((prev) => (prev.busy === next.busy && prev.asking === next.asking ? prev : next));
   }, []);
@@ -428,7 +450,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                   />
                 </ErrorBoundary>
 
-                <Section title="Services" hint="click to open">
+                <Section title="Services" hint="click to open" heading="h2">
                   <ServiceLamps data={data} hostMode={hostMode} onNotify={notify} />
                 </Section>
               </>
@@ -707,11 +729,22 @@ const VIEW_SKELETONS: Partial<
   },
 };
 
-function Section({ title, hint, children }: { readonly title: string; readonly hint: string; readonly children: ReactNode }): JSX.Element {
+/** A view's title is its page's h1; a section under the Overview hero passes heading="h2". */
+function Section({
+  title,
+  hint,
+  heading: Heading = 'h1',
+  children,
+}: {
+  readonly title: string;
+  readonly hint: string;
+  readonly heading?: 'h1' | 'h2';
+  readonly children: ReactNode;
+}): JSX.Element {
   return (
     <section className="section" aria-label={title}>
       <div className="section-head">
-        <h2 className="section-title">{title}</h2>
+        <Heading className="section-title">{title}</Heading>
         <span className="section-hint">{hint}</span>
       </div>
       <ErrorBoundary label={title}>{children}</ErrorBoundary>

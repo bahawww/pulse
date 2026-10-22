@@ -92,6 +92,11 @@ export function AgentMenu({ open, onClose, canChat, canShell, agents, onOpenChat
           <strong className="agent-card-name">{s.name}</strong>
           <Age since={s.created} />
         </div>
+        {s.state && (
+          <p className={`agent-card-state is-${s.state}`}>
+            {s.state === 'waiting' ? `Needs your answer: ${s.ask ?? 'permission'}` : s.state === 'working' ? 'Working' : 'Idle, waiting for you'}
+          </p>
+        )}
         {s.link ? (
           <a className="btn btn-primary agent-card-open" href={s.link} target="_blank" rel="noopener noreferrer">
             {OPEN_LABEL[s.kind]}

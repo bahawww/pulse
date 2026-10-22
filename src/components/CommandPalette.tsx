@@ -1,10 +1,9 @@
-import { type CSSProperties, type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type JSX, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { prefersReducedMotion } from '../lib/motion';
 import type { StatsPayload } from '../shared/contract';
 import { buildServiceUrl, copyToClipboard, usesSubdomain, type HostMode } from '../lib/urls';
 import { VIEWS, shortcutLabel } from '../lib/views';
 import { ChatIcon, CopyIcon, RefreshIcon, SearchIcon, ServiceIconGlyph, TerminalIcon, ViewIcon } from './icons';
-import { SERVICE_COLOR } from '../lib/serviceColor';
 
 interface PaletteProps {
   readonly open: boolean;
@@ -29,7 +28,6 @@ interface PaletteItem {
   readonly title: string;
   readonly description: string;
   readonly hint: string;
-  readonly color?: string;
   readonly icon: ReactNode;
   readonly keywords: string;
   readonly run: () => void;
@@ -98,7 +96,6 @@ export function CommandPalette({
         // The ellipsis only when something was cut ("on port 8088.… :8088" read as broken).
         description: usesSubdomain(svc, hostMode) ? url : `${svc.description.length > 80 ? `${svc.description.slice(0, 80)}…` : svc.description} :${svc.port}`,
         hint: svc.status.online ? 'online' : 'offline',
-        color: SERVICE_COLOR[svc.id],
         icon: <ServiceIconGlyph icon={svc.icon} size={16} />,
         keywords: `${svc.name} ${svc.port} ${svc.category} open launch ${svc.id}`.toLowerCase(),
         run: () => {
@@ -116,7 +113,6 @@ export function CommandPalette({
         title: `Copy ${svc.name} URL`,
         description: url,
         hint: 'copy',
-        color: SERVICE_COLOR[svc.id],
         icon: <CopyIcon size={15} />,
         keywords: `copy url link ${svc.name} ${svc.port}`.toLowerCase(),
         run: () => {
@@ -289,7 +285,6 @@ export function CommandPalette({
                     role="option"
                     aria-selected={index === active}
                     className={`palette-item${index === active ? ' is-active' : ''}`}
-                    style={item.color ? ({ '--svc': item.color } as CSSProperties) : undefined}
                     onMouseEnter={() => setActive(index)}
                     onClick={() => dismiss(item.run)}
                   >

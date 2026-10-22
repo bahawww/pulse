@@ -23,7 +23,7 @@
   --tab-pill: rgba(255, 255, 255, 0.11);
   --seg-track: rgba(118, 118, 128, 0.24);
   --seg-pill: #2c2c2e;
-  --seg-pill-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 3px 8px rgba(0, 0, 0, 0.35);
+  --seg-pill-shadow: none;
   --sheet-fill: rgba(24, 24, 27, 0.94);
   --sheet-backdrop: rgba(0, 0, 0, 0.5);
   /* Where the tab bar floats, and how much page it covers. */
@@ -39,7 +39,7 @@
   --tab-pill: rgba(0, 0, 0, 0.06);
   --seg-track: rgba(118, 118, 128, 0.12);
   --seg-pill: #ffffff;
-  --seg-pill-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+  --seg-pill-shadow: none;
   --sheet-fill: rgba(255, 255, 255, 0.94);
   --sheet-backdrop: rgba(0, 0, 0, 0.22);
 }
@@ -333,7 +333,7 @@ textarea {
     max-width: 100%;
     padding: 0 2px;
     overflow: hidden;
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.01em;
     line-height: 1.1;
@@ -409,8 +409,8 @@ textarea {
   }
 
   .section-title {
-    font-size: 30px;
-    font-weight: 700;
+    font-size: 22px;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.1;
   }
@@ -674,6 +674,13 @@ textarea {
   .select-pop.is-up {
     z-index: 120;
   }
+
+  /* The top bar is its own stacking context, so its sheets (bell, clipboard) cannot
+     rise above the chat button by z-index; the button steps aside instead. */
+  html:has(.topbar .pop-backdrop) .chat-fab {
+    opacity: 0;
+    pointer-events: none;
+  }
 }
 
 @media (max-width: 640px) {
@@ -687,5 +694,49 @@ textarea {
     flex: 1 1 auto;
     height: 44px;
     font-size: 14px;
+  }
+}
+
+/* Phone: each service is one two-line row (icon, name over port, latency at
+   the right), so all of them fit in about two screens instead of five. */
+@media (max-width: 640px) {
+  .lamps {
+    grid-template-columns: 1fr;
+  }
+
+  .lamp-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'chip name state'
+      'chip port state';
+    align-items: center;
+    column-gap: 14px;
+    row-gap: 1px;
+    min-height: 56px;
+    padding: 10px 16px;
+  }
+
+  .lamp-top {
+    display: contents;
+  }
+
+  .lamp-chip {
+    grid-area: chip;
+  }
+
+  .lamp-state {
+    grid-area: state;
+  }
+
+  .lamp-name {
+    grid-area: name;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lamp-port {
+    grid-area: port;
   }
 }

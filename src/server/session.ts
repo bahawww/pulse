@@ -183,6 +183,18 @@ export function userOf(hash: string): SessionUser | null {
 }
 
 /** What each account's sessions were given at login, per account id. Break-glass logins have no account. */
+/** Login names with a live session: who may hear about alerts. */
+export function liveUserNames(): string[] {
+  return [...new Set([...sessions.values()].map((rec) => rec.user))];
+}
+
+/** Login names of superadmins with a live session (env admin included): who hears about agents. */
+export function superadminNames(): string[] {
+  const out = new Set<string>();
+  for (const rec of sessions.values()) if (rec.role === 'superadmin') out.add(rec.user);
+  return [...out];
+}
+
 export function sessionAccounts(): Map<number, SessionUser[]> {
   const out = new Map<number, SessionUser[]>();
   for (const rec of sessions.values()) {

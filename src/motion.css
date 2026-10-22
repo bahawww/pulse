@@ -335,13 +335,7 @@ html.theme-switching *::after {
   box-shadow: none;
 }
 
-/* ---------- 3. Pointer: tilt and spotlight (src/lib/pointer.ts) ----------- */
-
-@property --spot {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 0%;
-}
+/* ---------- 3. Pointer: tilt (src/lib/pointer.ts) ----------- */
 
 /* Service and login cards lean toward the cursor, then spring upright. */
 .svc,
@@ -374,7 +368,7 @@ html.theme-switching *::after {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(360px circle at var(--px, 50%) var(--py, 50%), color-mix(in srgb, var(--text) 9%, transparent), transparent 62%);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
   opacity: 0;
   transition: opacity var(--dur-slow) var(--ease);
 }
@@ -393,33 +387,11 @@ html.theme-switching *::after {
   }
 }
 
-/* KPI tiles, overview rows and cards: a soft light follows the cursor. */
-.kpi,
-.lamp-row,
-.card {
-  background-image: radial-gradient(
-    420px circle at var(--px, 50%) var(--py, 50%),
-    color-mix(in srgb, var(--text) var(--spot), transparent),
-    transparent 60%
-  );
-  transition: --spot var(--dur-slow) var(--ease);
-}
-
 /* lamp-row is also a pressable control (section 1): keep both transitions. */
 .lamp-row {
   transition:
     background-color var(--dur-fast) var(--ease),
-    transform var(--spring-bouncy-dur) var(--spring-bouncy),
-    --spot var(--dur-slow) var(--ease);
-}
-
-.kpi.is-lit,
-.lamp-row.is-lit {
-  --spot: 6%;
-}
-
-.card.is-lit {
-  --spot: 3.5%;
+    transform var(--spring-bouncy-dur) var(--spring-bouncy);
 }
 
 /* ---------- 4. Page swaps (View Transitions, kind "view") ----------------- */
