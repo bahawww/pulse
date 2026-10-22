@@ -7,6 +7,7 @@ import { useStats } from './hooks/useStats';
 import { useHistory } from './hooks/useHistory';
 import { useTheme } from './hooks/useTheme';
 import { useAlerts } from './hooks/useAlerts';
+import { useAgents } from './hooks/useAgents';
 import { useSidebar } from './hooks/useSidebar';
 import { useView } from './hooks/useView';
 import type { AuthUser } from './hooks/useAuth';
@@ -30,6 +31,7 @@ import { Loading, SkeletonCard } from './components/Skeleton';
 import { Rail, Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
 import { ChatFab, type ChatSignal } from './components/ChatFab';
+import { AgentMenu } from './components/AgentMenu';
 import { VIEWS } from './lib/views';
 import { SpendPanel } from './components/SpendPanel';
 import { TelemetryGrid } from './components/TelemetryGrid';
@@ -143,7 +145,14 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     },
     [fetchTerminal],
   );
-  void openTmux; // the agent menu (next change) is its first caller
+  // The round button's agent menu. Home's agents card opens it too.
+  const [agentMenu, setAgentMenu] = useState(false);
+  const openAgentMenu = useCallback(() => {
+    setPaletteOpen(false);
+    setAgentMenu(true);
+  }, []);
+  const closeAgentMenu = useCallback(() => setAgentMenu(false), []);
+  const agents = useAgents(canShell);
   // Same for the chart views (uPlot): the overview never needs them.
   const [Charts, setCharts] = useState<ChartsModule | null>(null);
   const fetchCharts = useCallback(() => {
@@ -564,7 +573,19 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       <TabBar active={view} terminalRunning={terminal === 'hidden'} />
 
       {/* Hidden only once the chat is really there, so a tap never shows nothing. */}
-      {canChat && <ChatFab signal={chatSignal} hidden={chatState === 'open' && !!Chat} onOpen={openChat} onWarm={Chat ? undefined : fetchChat} />}
+      {(canChat || canShell) && (
+        <ChatFab signal={chatSignal} hidden={chatState === 'open' && !!Chat} onOpen={openAgentMenu} onWarm={canChat && !Chat ? fetchChat : undefined} />
+      )}
+      <AgentMenu
+        open={agentMenu}
+        onClose={closeAgentMenu}
+        canChat={canChat}
+        canShell={canShell}
+        agents={agents}
+        onOpenChat={openChat}
+        onOpenTerminal={openTmux}
+        onNotify={notify}
+      />
 
       {canChat && chatState !== 'never' && Chat && (
         <ErrorBoundary label="the chat">

@@ -675,3 +675,17 @@ textarea {
     z-index: 120;
   }
 }
+
+@media (max-width: 640px) {
+  /* Agent menu: thumb-sized buttons, the link the biggest. */
+  .agent-card-open {
+    height: 48px;
+    font-size: 15px;
+  }
+
+  .agent-card-actions .btn {
+    flex: 1 1 auto;
+    height: 44px;
+    font-size: 14px;
+  }
+}
