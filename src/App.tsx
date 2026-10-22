@@ -133,6 +133,17 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       .then((m) => setWorkspace(() => m.TerminalWorkspace))
       .catch(() => undefined);
   }, []);
+  // A tmux session to attach from outside the terminal (the agent menu); n changes on every ask.
+  const [attach, setAttach] = useState<{ readonly tmux: string; readonly n: number } | null>(null);
+  const openTmux = useCallback(
+    (tmux: string) => {
+      setAttach((a) => ({ tmux, n: (a?.n ?? 0) + 1 }));
+      fetchTerminal();
+      setTerminal('open');
+    },
+    [fetchTerminal],
+  );
+  void openTmux; // the agent menu (next change) is its first caller
   // Same for the chart views (uPlot): the overview never needs them.
   const [Charts, setCharts] = useState<ChartsModule | null>(null);
   const fetchCharts = useCallback(() => {
@@ -580,7 +591,11 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
           <Workspace
             open={terminal === 'open'}
             onHide={() => setTerminal('hidden')}
-            onEmpty={() => setTerminal('never')}
+            onEmpty={() => {
+              setTerminal('never');
+              setAttach(null); // a later plain open must not re-attach the old session
+            }}
+            attach={attach ?? undefined}
           />
         </ErrorBoundary>
       )}

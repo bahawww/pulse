@@ -87,6 +87,8 @@ interface WorkspaceProps {
   readonly open: boolean;
   readonly onHide: () => void;
   readonly onEmpty: () => void;
+  /** A tmux session another view asked to attach; a new `n` asks again. */
+  readonly attach?: { readonly tmux: string; readonly n: number };
 }
 
 /** Footer hints, least important first: narrow screens drop them from the left (terminal.css). */
@@ -100,7 +102,7 @@ const FOOTER_KEYS = SHORTCUTS.flatMap((g) => g.items.filter((s) => s.footer)).so
  * shells. Each window is a TerminalView bound to its own server shell; this
  * component owns the chrome around them (bar, panels, status, key bar).
  */
-export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JSX.Element {
+export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspaceProps): JSX.Element {
   const root = useRef<HTMLDivElement>(null);
   const [wins, setWins] = useState<readonly Win[]>(readWins);
   const [active, setActive] = useState(() => wins[0]?.id ?? 1);
@@ -411,6 +413,11 @@ export function TerminalWorkspace({ open, onHide, onEmpty }: WorkspaceProps): JS
     },
     [wins, activate, add],
   );
+  // Keyed on n alone: the same name asked twice goes to its window again, a re-render does nothing.
+  useEffect(() => {
+    if (attach) attachTmux(attach.tmux);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attach?.n]);
   const tmuxHere = useMemo(() => new Set(wins.flatMap((w) => (w.tmux ? [w.tmux] : []))), [wins]);
 
   const close = useCallback(
