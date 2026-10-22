@@ -598,9 +598,7 @@ function Thread({ chat, onFill, onNotify }: { readonly chat: Chat; readonly onFi
               <ChatIcon size={22} />
             </span>
             <h3>What should the agent do?</h3>
-            <p>
-              OpenCode works in <code>{chat.current?.directory || chat.directory || '~'}</code>. It asks before it runs a command or changes a file.
-            </p>
+            <p>It asks before it runs a command or changes a file.</p>
           </div>
         )}
         {empty && chat.loadingThread && <p className="chat-muted chat-loading">Loading conversation…</p>}
@@ -1130,7 +1128,7 @@ function Composer({ chat, disabled, active, onNotify, onSessions, onRename, onUs
         onBlur={() => setHidden(triggerAt)}
         onFocus={() => setHidden(null)}
         onKeyDown={onKey}
-        placeholder={disabled ? 'OpenCode is unavailable' : 'Message OpenCode · / commands · @ files and agents'}
+        placeholder={disabled ? 'OpenCode is unavailable' : 'Message OpenCode · / or @'}
         aria-label="Message"
         aria-autocomplete="list"
         aria-expanded={listOpen}
