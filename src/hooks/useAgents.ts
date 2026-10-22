@@ -54,7 +54,7 @@ export function useAgents(enabled: boolean) {
   );
 
   const sessions = data?.sessions ?? NONE;
-  /** Why the last list failed (e.g. HTTP 503 without tmux), else null. */
+  /** Why the last list failed (e.g. "tmux is not installed"), else null. */
   const listError = error?.message ?? null;
   return useMemo(() => ({ sessions, listError, refresh, start, stop }), [sessions, listError, refresh, start, stop]);
 }

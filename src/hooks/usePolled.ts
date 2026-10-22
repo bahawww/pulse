@@ -79,7 +79,11 @@ export function usePolled<T>(
           headers: { Accept: 'application/json' },
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          // The server explains most failures in `{ error }` (e.g. "tmux is not installed").
+          const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+          throw new Error(typeof body?.error === 'string' && body.error ? body.error : `HTTP ${res.status}`);
+        }
         const body = (await res.json()) as T;
         if (requestId.current !== id) return; // a newer request superseded this
         setData(body);
