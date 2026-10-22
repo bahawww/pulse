@@ -14,7 +14,7 @@ import type { IncomingMessage } from 'node:http';
 // and HOME keeps terminal.ts away from the real persistent shells (~/.cache/pulse-dtach).
 process.env.DASHBOARD_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-test-'));
 process.env.HOME = process.env.DASHBOARD_DATA_DIR;
-const { sameOrigin, requirePerm } = await import('./session.js');
+const { sameOrigin, requirePerm, requireSuperadmin, createSession } = await import('./session.js');
 const { csrfToken, csrfValid, wsToken } = await import('./csrf.js');
 const { cleanPath, isProtected } = await import('./files.js');
 const { parseTarget } = await import('./terminal.js');
@@ -85,4 +85,19 @@ test('confirm tokens work once, and only for their own key', () => {
   assert.equal(consumeToken(u, 'k'), true);
   assert.equal(consumeToken(u, 'k'), false);
   assert.equal(consumeToken(null, 'k'), false);
+});
+
+test('agent sessions: only the superadmin passes', () => {
+  const login = (role: 'admin' | 'superadmin') =>
+    createSession({ headers: {}, socket: {} } as never, { id: null, name: role, role, permissions: ['terminal'], breakGlass: false }).hash;
+  const run = (sessionHash?: string) => {
+    let status = 0;
+    let passed = false;
+    const res = { locals: { sessionHash }, status: (s: number) => ((status = s), { json: () => undefined }) };
+    requireSuperadmin(req({}) as never, res as never, () => (passed = true));
+    return { status, passed };
+  };
+  assert.deepEqual(run(), { status: 401, passed: false });
+  assert.deepEqual(run(login('admin')), { status: 403, passed: false });
+  assert.deepEqual(run(login('superadmin')), { status: 0, passed: true });
 });

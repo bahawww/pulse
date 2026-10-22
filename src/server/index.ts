@@ -32,6 +32,7 @@ import {
   renewSession,
   requirePerm,
   requireSession,
+  requireSuperadmin,
   sameOrigin,
   sessionAccounts,
   sessionHash,
@@ -594,9 +595,9 @@ const wrapAsync = (fn: (req: Request, res: Response) => Promise<void>) => (req: 
 app.get('/api/tmux', apiLimiter, requirePerm('terminal'), wrapAsync(getSessions));
 app.post('/api/tmux/kill', actionLimiter, requirePerm('terminal'), wrapAsync(killSession));
 app.post('/api/tmux/rename', actionLimiter, requirePerm('terminal'), wrapAsync(renameSession));
-app.get('/api/agents/sessions', apiLimiter, requirePerm('terminal'), wrapAsync(getAgents));
-app.post('/api/agents/sessions', actionLimiter, requirePerm('terminal'), wrapAsync(postAgent));
-app.post('/api/agents/sessions/stop', actionLimiter, requirePerm('terminal'), wrapAsync(postStopAgent));
+app.get('/api/agents/sessions', apiLimiter, requireSuperadmin, wrapAsync(getAgents));
+app.post('/api/agents/sessions', actionLimiter, requireSuperadmin, wrapAsync(postAgent));
+app.post('/api/agents/sessions/stop', actionLimiter, requireSuperadmin, wrapAsync(postStopAgent));
 
 // Shells a new tab or a relaunched phone app can reattach (terminal.ts).
 app.get('/api/terminal/sessions', apiLimiter, requirePerm('terminal'), (_req: Request, res: Response) => {

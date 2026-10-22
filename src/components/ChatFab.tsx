@@ -13,8 +13,10 @@ interface ChatFabProps {
   readonly signal: ChatSignal;
   /** The chat is open over it. Kept mounted so the tab bar keeps its place. */
   readonly hidden?: boolean;
-  /** Opens the agent menu. */
+  /** Opens the agent menu, or the chat itself when `menu` is false. */
   readonly onOpen: () => void;
+  /** True when the tap opens the agent menu (superadmin); false opens the chat in one tap. */
+  readonly menu?: boolean;
   /** Starts fetching the chat's code on intent (hover, a finger landing). */
   readonly onWarm?: () => void;
 }
@@ -27,20 +29,21 @@ interface ChatFabProps {
  * for an answer. html[data-chat-fab] lets the
  * tab bar and the terminal's resume button make room (mobile.css, styles.css).
  */
-export function ChatFab({ signal, hidden = false, onOpen, onWarm }: ChatFabProps): JSX.Element {
+export function ChatFab({ signal, hidden = false, onOpen, menu = true, onWarm }: ChatFabProps): JSX.Element {
   useLayoutEffect(() => {
     document.documentElement.dataset.chatFab = '';
     return () => void delete document.documentElement.dataset.chatFab;
   }, []);
 
-  const label = signal.asking ? 'Agents: OpenCode is waiting for your answer' : signal.busy ? 'Agents: OpenCode is working' : 'Agents';
+  const prefix = menu ? 'Agents: ' : 'Chat: ';
+  const label = signal.asking ? `${prefix}OpenCode is waiting for your answer` : signal.busy ? `${prefix}OpenCode is working` : menu ? 'Agents' : 'Open chat';
   return (
     <button
       type="button"
       className={`chat-fab${signal.busy ? ' is-busy' : ''}${signal.asking ? ' is-asking' : ''}${hidden ? ' is-hidden' : ''}`}
       tabIndex={hidden ? -1 : undefined}
       aria-hidden={hidden || undefined}
-      aria-haspopup="dialog"
+      aria-haspopup={menu ? 'dialog' : undefined}
       onClick={onOpen}
       onPointerDown={onWarm}
       onMouseEnter={onWarm}

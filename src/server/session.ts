@@ -298,6 +298,24 @@ export function requireSession(open: ReadonlySet<string>) {
 }
 
 /**
+ * Gate for routes only the superadmin may use (agent sessions: their remote
+ * links hand over a shell with sudo). Mount after requireSession.
+ */
+export function requireSuperadmin(req: Request, res: Response, next: NextFunction): void {
+  const hash = (res.locals.sessionHash as string | undefined) ?? sessionHash(req);
+  const user = hash ? userOf(hash) : null;
+  if (!user) {
+    res.status(401).json({ error: 'login required' });
+    return;
+  }
+  if (user.role !== 'superadmin') {
+    res.status(403).json({ error: 'only the superadmin may start agent sessions', code: 'permission' });
+    return;
+  }
+  next();
+}
+
+/**
  * Gate for routes that need a permission. Mount after requireSession, which
  * leaves the session hash in res.locals.
  */

@@ -89,6 +89,8 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
   // The server enforces these too; hiding the controls only saves a 403.
   const canAct = can(user, 'services:control');
   const canShell = can(user, 'terminal');
+  // Agent sessions (agy, Claude Code) are the superadmin's alone; the server checks it too.
+  const canAgents = user?.role === 'superadmin';
   const canLogs = can(user, 'view:logs');
   const canChat = can(user, 'chat');
 
@@ -153,7 +155,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
     setAgentMenu(true);
   }, []);
   const closeAgentMenu = useCallback(() => setAgentMenu(false), []);
-  const agents = useAgents(canShell);
+  const agents = useAgents(canAgents);
   // Same for the chart views (uPlot): the overview never needs them.
   const [Charts, setCharts] = useState<ChartsModule | null>(null);
   const fetchCharts = useCallback(() => {
@@ -417,7 +419,7 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
                 <ErrorBoundary label="agents">
                   <AgentsCard
                     canChat={canChat}
-                    canShell={canShell}
+                    canShell={canAgents}
                     chat={chatSignal}
                     agents={agents.sessions}
                     hermesOnline={data?.services.find((s) => s.id === 'hermes')?.status.online ?? null}
@@ -586,14 +588,14 @@ export default function App({ user, onLogout, install }: AppProps): JSX.Element 
       <TabBar active={view} terminalRunning={terminal === 'hidden'} />
 
       {/* Hidden only once the chat is really there, so a tap never shows nothing. */}
-      {(canChat || canShell) && (
-        <ChatFab signal={chatSignal} hidden={chatState === 'open' && !!Chat} onOpen={openAgentMenu} onWarm={canChat && !Chat ? fetchChat : undefined} />
+      {(canChat || canAgents) && (
+        <ChatFab signal={chatSignal} hidden={chatState === 'open' && !!Chat} onOpen={canAgents ? openAgentMenu : openChat} menu={canAgents} onWarm={canChat && !Chat ? fetchChat : undefined} />
       )}
       <AgentMenu
         open={agentMenu}
         onClose={closeAgentMenu}
         canChat={canChat}
-        canShell={canShell}
+        canShell={canAgents}
         agents={agents}
         onOpenChat={openChat}
         onOpenTerminal={openTmux}
