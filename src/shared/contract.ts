@@ -470,7 +470,6 @@ export interface ActionResult {
   readonly durationMs: number;
 }
 
-/** One row of the write-action audit log. Only executed actions are recorded. */
 /** Which CLI an agent session runs: Antigravity (`agy`) or Claude Code. */
 export type AgentKind = 'agy' | 'claude';
 
@@ -488,6 +487,7 @@ export interface AgentSession {
 /** Most agent sessions that may run at once. */
 export const AGENT_LIMIT = 3;
 
+/** One row of the write-action audit log. Only executed actions are recorded. */
 export interface ActionLogEntry {
   readonly id: number;
   /** Epoch ms when the action finished. */
