@@ -16,7 +16,7 @@ process.env.DASHBOARD_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-te
 process.env.HOME = process.env.DASHBOARD_DATA_DIR;
 const { sameOrigin, requirePerm, requireSuperadmin, createSession } = await import('./session.js');
 const { csrfToken, csrfValid, wsToken } = await import('./csrf.js');
-const { cleanPath, isProtected } = await import('./files.js');
+const { cleanPath, isProtected, transferRefusal } = await import('./files.js');
 const { parseTarget } = await import('./terminal.js');
 const { performProcessAction } = await import('./performance.js');
 const { issueToken, consumeToken } = await import('./confirm.js');
@@ -58,6 +58,16 @@ test('file paths: absolute only, and the important folders stay protected', () =
   assert.equal(cleanPath('/home/x/../../etc/'), '/etc');
   for (const p of ['/', '/etc', '/home', os.homedir(), process.cwd()]) assert.equal(isProtected(p), true, p);
   assert.equal(isProtected(path.join(os.homedir(), 'some-file.txt')), false);
+});
+
+test('move and copy: protected folders stay, nothing goes inside itself', () => {
+  const home = os.homedir();
+  assert.equal(transferRefusal(home, '/var/empty', false)?.status, 403);
+  assert.equal(transferRefusal(home, '/var/empty', true), null);
+  assert.equal(transferRefusal('/tmp/a', '/tmp/a/b', true)?.status, 400);
+  assert.equal(transferRefusal('/tmp/a', '/tmp/a', false)?.status, 400);
+  assert.equal(transferRefusal('/tmp/a', '/tmp', false)?.status, 409);
+  assert.equal(transferRefusal('/tmp/a', '/tmp/ab', false), null);
 });
 
 test('terminal targets cannot smuggle ssh options', () => {

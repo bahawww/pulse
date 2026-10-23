@@ -1,12 +1,17 @@
-import { type DragEvent, type FormEvent, type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, type FormEvent, type JSX, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { FileEntry, FileListing, FilePreview } from '../shared/contract';
 import { formatDay, formatClock } from '../shared/time';
 import { formatBytes } from '../lib/format';
 import { ensureCsrf, postJson, setCsrf } from '../lib/csrf';
 import { ConfirmDialog } from './ConfirmDialog';
+import { copyText } from './chat/clip';
+import { MoreMenu, type MoreItem } from './MoreMenu';
 import { Bone, Loading } from './Skeleton';
 import {
   ArrowUpIcon,
+  ArrowUpRightIcon,
+  CheckIcon,
   DownloadIcon,
   FileIcon,
   FolderIcon,
@@ -22,8 +27,11 @@ import {
 } from './icons';
 
 /**
- * File explorer for the VPS: browse folders, preview text and images, download,
- * upload (button or drag and drop), new folder, rename, delete.
+ * File explorer for the VPS: browse folders, preview text and images, open an
+ * HTML file as a page, download, upload (button or drag and drop), new folder,
+ * rename, delete, and move or copy one or many items (pick them, open the
+ * destination, paste). Per-file actions live in a "..." menu, a bottom sheet on
+ * phones, where the preview also takes the whole screen.
  *
  * Everything runs on the server as the SSH login user (src/server/files.ts),
  * so it can reach exactly what a shell could, without sudo.
@@ -54,6 +62,25 @@ const BARE_LIST = 'tw:m-0 tw:list-none tw:p-0';
 const PATH_KEY = 'pulse_files_path';
 const HIDDEN_KEY = 'pulse_files_hidden';
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i;
+const PAGE_EXT = /\.html?$/i;
+const PHONE = '(max-width: 640px)';
+/** Holding a row this long starts picking (phones have no shift-click). */
+const LONG_PRESS_MS = 450;
+
+function usePhone(): boolean {
+  const [phone, setPhone] = useState(() => window.matchMedia(PHONE).matches);
+  useEffect(() => {
+    const q = window.matchMedia(PHONE);
+    const on = () => setPhone(q.matches);
+    q.addEventListener('change', on);
+    return () => q.removeEventListener('change', on);
+  }, []);
+  return phone;
+}
+
+function baseName(p: string): string {
+  return p.slice(p.lastIndexOf('/') + 1);
+}
 
 function readStored(key: string): string | null {
   try {
@@ -151,7 +178,14 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
   const [renaming, setRenaming] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingPath, setEditingPath] = useState(false);
-  const [toDelete, setToDelete] = useState<FileEntry | null>(null);
+  const [toDelete, setToDelete] = useState<readonly FileEntry[]>([]);
+  // Picking several rows, and a move or copy waiting for its destination folder.
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
+  const [pending, setPending] = useState<{ readonly copy: boolean; readonly paths: readonly string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const phone = usePhone();
+  const press = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number; fired: boolean; ended?: number } | null>(null);
   const [conflict, setConflict] = useState<File[]>([]);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -178,6 +212,8 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
       setFilter('');
       setRenaming(null);
       setCreating(false);
+      setPicking(false);
+      setPicked(new Set());
       store(PATH_KEY, next.path);
     } catch (err) {
       if (id !== requestId.current) return;
@@ -222,6 +258,19 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
       live = false;
     };
   }, [selected, dir]);
+
+  // Phones: Back closes the full-screen preview instead of leaving the view.
+  const sheetOpen = phone && selected !== null && !isFolder(selected);
+  useEffect(() => {
+    if (!sheetOpen) return undefined;
+    history.pushState({ filesPreview: true }, '');
+    const onPop = () => setSelected(null);
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if ((history.state as { filesPreview?: boolean } | null)?.filesPreview) history.back();
+    };
+  }, [sheetOpen]);
 
   const entries = useMemo(() => {
     const all = listing?.entries ?? [];
@@ -308,22 +357,150 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
     }
   };
 
-  const remove = async () => {
-    const entry = toDelete;
-    setToDelete(null);
-    if (!dir || !entry) return;
-    try {
-      await postOrThrow('/api/files/delete', { path: join(dir, entry.name) });
-      onNotify(`Deleted ${entry.name}`);
-      if (selected?.name === entry.name) setSelected(null);
-      refresh();
-    } catch (err) {
-      onNotify(`Could not delete: ${err instanceof Error ? err.message : 'failed'}`);
+  /** One request per item, so one refusal does not stop the rest; the failures are named. */
+  const each = async (paths: readonly string[], run: (p: string) => Promise<void>): Promise<{ ok: number; failed: string[] }> => {
+    setBusy(true);
+    let ok = 0;
+    const failed: string[] = [];
+    for (const p of paths) {
+      try {
+        await run(p);
+        ok += 1;
+      } catch (err) {
+        failed.push(`${baseName(p)}: ${err instanceof Error ? err.message : 'failed'}`);
+      }
     }
+    setBusy(false);
+    return { ok, failed };
+  };
+
+  const summary = (verb: string, r: { ok: number; failed: string[] }): string =>
+    r.failed.length === 0 ? `${verb} ${r.ok === 1 ? '1 item' : `${r.ok} items`}` : `${verb} ${r.ok}, ${r.failed.length} failed. ${r.failed[0] ?? ''}`;
+
+  const remove = async () => {
+    const list = toDelete;
+    setToDelete([]);
+    if (!dir || list.length === 0) return;
+    const r = await each(
+      list.map((e) => join(dir, e.name)),
+      (p) => postOrThrow('/api/files/delete', { path: p }),
+    );
+    onNotify(list.length === 1 && r.ok === 1 ? `Deleted ${list[0]?.name ?? ''}` : summary('Deleted', r));
+    if (selected && list.some((e) => e.name === selected.name)) setSelected(null);
+    setPicking(false);
+    setPicked(new Set());
+    refresh();
+  };
+
+  const stopPicking = () => {
+    setPicking(false);
+    setPicked(new Set());
+  };
+
+  const togglePick = (name: string) =>
+    setPicked((s) => {
+      const next = new Set(s);
+      if (!next.delete(name)) next.add(name);
+      return next;
+    });
+
+  const startPicking = (name: string) => {
+    setSelected(null);
+    setPicking(true);
+    setPicked(new Set([name]));
+  };
+
+  /** Remembers what to move or copy; it lands in whatever folder is open when Paste is tapped. */
+  const startTransfer = (copy: boolean, names: readonly string[]) => {
+    if (!dir || names.length === 0) return;
+    setPending({ copy, paths: names.map((n) => join(dir, n)) });
+    stopPicking();
+    setSelected(null);
+  };
+
+  const paste = async () => {
+    const job = pending;
+    if (!job || !dir) return;
+    const r = await each(job.paths, (p) => postOrThrow('/api/files/move', { path: p, dest: dir, copy: job.copy }));
+    setPending(null);
+    onNotify(summary(job.copy ? 'Copied' : 'Moved', r));
+    refresh();
+  };
+
+  // Long press on a row starts picking; the click that follows the press is swallowed.
+  const pressStart = (e: PointerEvent, name: string) => {
+    press.current = null;
+    if (!canWrite || picking || e.pointerType === 'mouse') return;
+    const x = e.clientX;
+    const y = e.clientY;
+    const timer = setTimeout(() => {
+      if (press.current) press.current.fired = true;
+      navigator.vibrate?.(10);
+      startPicking(name);
+    }, LONG_PRESS_MS);
+    press.current = { timer, x, y, fired: false };
+  };
+  const pressMove = (e: PointerEvent) => {
+    const p = press.current;
+    if (p && !p.fired && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) {
+      clearTimeout(p.timer);
+      press.current = null;
+    }
+  };
+  const pressEnd = () => {
+    const p = press.current;
+    if (!p) return;
+    if (p.fired) p.ended = Date.now();
+    else {
+      clearTimeout(p.timer);
+      press.current = null;
+    }
+  };
+  /** True for the click the browser may send right after a long press (some do not send one). */
+  const swallowClick = (): boolean => {
+    const p = press.current;
+    press.current = null;
+    return p?.fired === true && Date.now() - (p.ended ?? Date.now()) < 600;
   };
 
   const downloadUrl = (name: string, inline = false) =>
     dir ? `/api/files/download?path=${encodeURIComponent(join(dir, name))}${inline ? '&inline=1' : ''}` : '#';
+  /** An HTML file as a page in its own tab, sandboxed by the server (files.ts PAGE_CSP). */
+  const openPage = (name: string) => {
+    if (dir) window.open(`/api/files/download?path=${encodeURIComponent(join(dir, name))}&view=1`, '_blank', 'noopener');
+  };
+  const saveFile = (name: string) => {
+    const a = document.createElement('a');
+    a.href = downloadUrl(name);
+    a.download = name;
+    a.click();
+  };
+
+  const actionsFor = (e: FileEntry): MoreItem[] => {
+    const folder = isFolder(e);
+    const items: MoreItem[] = [];
+    if (!folder && PAGE_EXT.test(e.name)) items.push({ label: 'Open in browser', onSelect: () => openPage(e.name) });
+    if (!folder) items.push({ label: 'Preview', onSelect: () => setSelected(e) }, { label: 'Download', onSelect: () => saveFile(e.name) });
+    items.push({
+      label: 'Copy path',
+      onSelect: () => {
+        if (dir) void copyText(join(dir, e.name)).then((ok) => onNotify(ok ? 'Path copied' : 'Could not copy'));
+      },
+    });
+    if (canWrite) {
+      items.push(
+        { label: 'Rename', onSelect: () => setRenaming(e.name) },
+        { label: 'Move to…', onSelect: () => startTransfer(false, [e.name]) },
+        { label: 'Copy to…', onSelect: () => startTransfer(true, [e.name]) },
+        { label: 'Select', onSelect: () => startPicking(e.name) },
+        { label: 'Delete', tone: 'danger', onSelect: () => setToDelete([e]) },
+      );
+    }
+    return items;
+  };
+
+  const pickedEntries = entries.filter((e) => picked.has(e.name));
+  const pendingHere = pending !== null && dir !== null && pending.paths.every((p) => parent(p) === dir);
 
   // ---- breadcrumbs
   const crumbs = useMemo(() => {
@@ -419,14 +596,39 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
         )}
       </div>
 
-      <div className="tw:flex tw:items-center tw:gap-2">
+      {picking ? (
+        <div className="files-pickbar tw:flex tw:flex-wrap tw:items-center tw:gap-2" role="toolbar" aria-label="Selected items">
+          <span className="tw:mr-auto tw:text-[13px] tw:text-fg">{picked.size} selected</span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => setPicked(picked.size === entries.length ? new Set() : new Set(entries.map((e) => e.name)))}
+          >
+            {picked.size === entries.length && entries.length > 0 ? 'None' : 'All'}
+          </button>
+          <button type="button" className="btn btn-sm" disabled={picked.size === 0} onClick={() => startTransfer(false, [...picked])}>
+            Move
+          </button>
+          <button type="button" className="btn btn-sm" disabled={picked.size === 0} onClick={() => startTransfer(true, [...picked])}>
+            Copy
+          </button>
+          <button type="button" className="btn btn-sm btn-danger-ghost" disabled={picked.size === 0} onClick={() => setToDelete(pickedEntries)}>
+            <TrashIcon size={13} />
+            Delete
+          </button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={stopPicking}>
+            Done
+          </button>
+        </div>
+      ) : (
+      <div className="tw:flex tw:flex-wrap tw:items-center tw:gap-2">
         <input
           type="search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter this folder"
           aria-label="Filter this folder"
-          className="tw:min-w-0 tw:flex-1 tw:appearance-none tw:rounded-md tw:border tw:border-line tw:bg-transparent tw:px-3 tw:py-1.5 tw:text-[13px] tw:text-fg tw:outline-none tw:placeholder:text-fg-3 tw:focus:border-line-strong"
+          className="tw:min-w-48 tw:flex-1 tw:appearance-none tw:rounded-md tw:border tw:border-line tw:bg-transparent tw:px-3 tw:py-1.5 tw:text-[13px] tw:text-fg tw:outline-none tw:placeholder:text-fg-3 tw:focus:border-line-strong"
         />
         {hiddenCount > 0 && (
           <button type="button" className="btn btn-ghost btn-sm" onClick={toggleHidden} aria-pressed={showHidden}>
@@ -434,7 +636,29 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
             {showHidden ? 'Hide' : 'Show'} {hiddenCount} hidden
           </button>
         )}
+        {canWrite && entries.length > 0 && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPicking(true)}>
+            <CheckIcon size={13} />
+            Select
+          </button>
+        )}
       </div>
+      )}
+
+      {pending && (
+        <div className="files-paste tw:flex tw:flex-wrap tw:items-center tw:gap-2 tw:rounded-lg tw:border tw:border-line-strong tw:bg-surface-2 tw:px-3 tw:py-2" role="status">
+          <span className="tw:mr-auto tw:min-w-0 tw:text-[13px] tw:text-fg">
+            {pending.copy ? 'Copy' : 'Move'} {pending.paths.length === 1 ? baseName(pending.paths[0] ?? '') : `${pending.paths.length} items`}
+            <span className="tw:block tw:text-[12px] tw:text-fg-2">{pendingHere ? 'Open the folder it should go to.' : `Into ${dir ?? ''}`}</span>
+          </span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPending(null)} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void paste()} disabled={busy || pendingHere || !dir}>
+            {busy ? 'Working…' : pending.copy ? 'Copy here' : 'Move here'}
+          </button>
+        </div>
+      )}
 
       {uploads.length > 0 && (
         <ul className={`files-uploads ${BARE_LIST} tw:flex tw:flex-col tw:gap-1.5`} aria-label="Uploads">
@@ -536,10 +760,22 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
                   {entries.map((e) => {
                     const folder = isFolder(e);
                     const active = selected?.name === e.name;
+                    const isPicked = picking && picked.has(e.name);
                     return (
                       <li
                         key={e.name}
-                        className={`tw:group tw:grid tw:grid-cols-[minmax(0,1fr)_88px_150px_104px] tw:items-center tw:gap-3 tw:border-b tw:border-line tw:px-3 tw:py-2 tw:text-[13px] tw:transition-colors tw:duration-150 tw:last:border-b-0 tw:hover:bg-surface-3 tw:max-sm:grid-cols-[minmax(0,1fr)_104px] ${active ? 'tw:bg-accent-soft' : ''}`}
+                        onPointerDown={(ev) => pressStart(ev, e.name)}
+                        onPointerMove={pressMove}
+                        onPointerUp={pressEnd}
+                        onPointerCancel={pressEnd}
+                        onContextMenu={(ev) => press.current?.fired && ev.preventDefault()}
+                        onClickCapture={(ev) => {
+                          if (swallowClick()) {
+                            ev.stopPropagation();
+                            ev.preventDefault();
+                          }
+                        }}
+                        className={`tw:group tw:select-none tw:grid tw:grid-cols-[minmax(0,1fr)_88px_150px_104px] tw:items-center tw:gap-3 tw:border-b tw:border-line tw:px-3 tw:py-2 tw:text-[13px] tw:transition-colors tw:duration-150 tw:last:border-b-0 tw:hover:bg-surface-3 tw:max-sm:grid-cols-[minmax(0,1fr)_104px] ${active || isPicked ? 'tw:bg-accent-soft' : ''}`}
                       >
                         {renaming === e.name ? (
                           <form
@@ -563,7 +799,12 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
                         ) : (
                           <button
                             type="button"
-                            onClick={() => (folder && dir ? void open(join(dir, e.name)) : setSelected(active ? null : e))}
+                            onClick={() => {
+                              if (picking) togglePick(e.name);
+                              else if (folder && dir) void open(join(dir, e.name));
+                              else setSelected(active ? null : e);
+                            }}
+                            aria-pressed={picking ? isPicked : undefined}
                             className={`${BARE_BUTTON} tw:flex tw:min-w-0 tw:cursor-pointer tw:items-center tw:gap-2.5 tw:text-left`}
                             title={e.kind === 'link' ? `${e.name} (link)` : e.name}
                           >
@@ -584,23 +825,39 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
                         <span className="tw:font-mono tw:text-[12px] tw:text-fg-2 tw:max-sm:hidden" title={`${e.mode} ${e.owner}`}>
                           {stamp(e.mtime)}
                         </span>
-                        <span className="tw:flex tw:justify-end tw:gap-1 tw:opacity-0 tw:transition-opacity tw:group-hover:opacity-100 tw:group-focus-within:opacity-100 tw:[@media(hover:none)]:opacity-100">
-                          {!folder && (
-                            <a className="btn btn-icon btn-sm" href={downloadUrl(e.name)} download aria-label={`Download ${e.name}`} title="Download">
-                              <DownloadIcon size={13} />
-                            </a>
-                          )}
-                          {canWrite && (
-                            <button type="button" className="btn btn-icon btn-sm" onClick={() => setRenaming(e.name)} aria-label={`Rename ${e.name}`} title="Rename">
-                              <PencilIcon size={13} />
-                            </button>
-                          )}
-                          {canWrite && (
-                            <button type="button" className="btn btn-icon btn-sm" onClick={() => setToDelete(e)} aria-label={`Delete ${e.name}`} title="Delete">
-                              <TrashIcon size={13} />
-                            </button>
-                          )}
-                        </span>
+                        {picking ? (
+                          <span className="tw:flex tw:justify-end">
+                            <span className={`files-check${isPicked ? ' is-on' : ''}`} aria-hidden="true">
+                              {isPicked && <CheckIcon size={12} />}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="tw:flex tw:items-center tw:justify-end tw:gap-1">
+                            {!folder && (
+                              <a
+                                className="btn btn-icon btn-sm tw:opacity-0 tw:transition-opacity tw:group-hover:opacity-100 tw:group-focus-within:opacity-100 tw:max-sm:hidden"
+                                href={downloadUrl(e.name)}
+                                download
+                                aria-label={`Download ${e.name}`}
+                                title="Download"
+                              >
+                                <DownloadIcon size={13} />
+                              </a>
+                            )}
+                            {canWrite && (
+                              <button
+                                type="button"
+                                className="btn btn-icon btn-sm tw:opacity-0 tw:transition-opacity tw:group-hover:opacity-100 tw:group-focus-within:opacity-100 tw:max-sm:hidden"
+                                onClick={() => setRenaming(e.name)}
+                                aria-label={`Rename ${e.name}`}
+                                title="Rename"
+                              >
+                                <PencilIcon size={13} />
+                              </button>
+                            )}
+                            <MoreMenu label={`More for ${e.name}`} items={actionsFor(e)} />
+                          </span>
+                        )}
                       </li>
                     );
                   })}
@@ -613,7 +870,8 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
           )}
         </div>
 
-        {selected && !isFolder(selected) && dir && (
+        {selected && !isFolder(selected) && dir && (() => {
+          const aside = (
           <aside className="files-preview tw:flex tw:min-w-0 tw:flex-col tw:gap-3 tw:rounded-lg tw:border tw:border-line tw:bg-surface-2 tw:p-4" aria-label={`Preview of ${selected.name}`}>
             <div className="tw:flex tw:items-start tw:justify-between tw:gap-3">
               <div className="tw:min-w-0">
@@ -644,26 +902,39 @@ export function FilesPanel({ onNotify, canWrite }: FilesPanelProps): JSX.Element
               )}
             </div>
             {preview?.truncated && <p className="tw:text-[11px] tw:text-fg-2">Showing the first 256 KB.</p>}
-            <a className="btn btn-primary btn-sm tw:self-start" href={downloadUrl(selected.name)} download>
-              <DownloadIcon size={13} />
-              Download
-            </a>
+            <div className="tw:flex tw:flex-wrap tw:gap-2">
+              <a className="btn btn-primary btn-sm" href={downloadUrl(selected.name)} download>
+                <DownloadIcon size={13} />
+                Download
+              </a>
+              {PAGE_EXT.test(selected.name) && (
+                <button type="button" className="btn btn-sm" onClick={() => openPage(selected.name)}>
+                  <ArrowUpRightIcon size={13} />
+                  Open in browser
+                </button>
+              )}
+            </div>
           </aside>
-        )}
+          );
+          // Phones: the whole screen, above the tab bar and chat button (a portal, since .page is transformed).
+          return phone ? createPortal(<div className="files-sheet" role="dialog" aria-modal="true" aria-label={selected.name}>{aside}</div>, document.body) : aside;
+        })()}
       </div>
 
       <ConfirmDialog
-        open={toDelete !== null}
+        open={toDelete.length > 0}
         icon="delete"
-        title={`Delete ${toDelete?.name ?? ''}?`}
+        title={toDelete.length === 1 ? `Delete ${toDelete[0]?.name ?? ''}?` : `Delete ${toDelete.length} items?`}
         message={
-          toDelete && isFolder(toDelete)
-            ? 'The folder and everything inside it are removed for good. This cannot be undone.'
-            : 'The file is removed for good. This cannot be undone.'
+          toDelete.length > 1
+            ? `These ${toDelete.length} items${toDelete.some(isFolder) ? ', folders with everything inside them,' : ''} are removed for good. This cannot be undone.`
+            : toDelete[0] && isFolder(toDelete[0])
+              ? 'The folder and everything inside it are removed for good. This cannot be undone.'
+              : 'The file is removed for good. This cannot be undone.'
         }
         confirmLabel="Delete"
         onConfirm={() => void remove()}
-        onCancel={() => setToDelete(null)}
+        onCancel={() => setToDelete([])}
       />
       <ConfirmDialog
         open={conflict.length > 0}

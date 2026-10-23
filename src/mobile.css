@@ -740,3 +740,39 @@ textarea {
     grid-area: port;
   }
 }
+
+/* Files preview on a phone: the whole screen, above the tab bar and chat button
+   (FilesPanel portals it to <body>). Back or the close button leaves. */
+.files-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  animation: sheet-up var(--spring-snappy-dur) var(--spring-snappy) backwards;
+}
+
+.files-sheet .files-preview {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  animation: none;
+}
+
+.files-sheet .files-preview-body {
+  flex: 1;
+}
+
+.files-sheet .files-preview-body pre,
+.files-sheet .files-preview-body img {
+  max-height: none;
+}
+
+/* Long press picks a row: no iOS callout or text selection under the finger. */
+.files-list > li {
+  -webkit-touch-callout: none;
+}

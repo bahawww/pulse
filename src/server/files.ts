@@ -27,6 +27,8 @@ const MAX_ENTRIES = 5000;
 const PREVIEW_BYTES = 256 * 1024;
 const MAX_UPLOAD_BYTES = Number(process.env.FILES_MAX_UPLOAD_MB ?? 2048) * 1024 * 1024;
 const CMD_TIMEOUT_MS = 20_000;
+/** Moving across filesystems or copying a big folder takes far longer than a listing. */
+const TRANSFER_TIMEOUT_MS = 10 * 60_000;
 const MASTER_IDLE_MS = 5 * 60_000;
 const CONTROL_PATH = path.join(DATA_DIR, 'ssh-files.sock');
 /** sun_path is 108 bytes and ssh appends a 17-byte temp suffix while binding. */
@@ -36,6 +38,17 @@ const MUX = CONTROL_PATH.length <= 90;
 const EXIT_MISSING = 3;
 const EXIT_EXISTS = 4;
 const EXIT_INCOMPLETE = 5;
+
+/**
+ * An HTML file opened as a page (view=1), e.g. a generated report. Its scripts
+ * run, but CSP sandbox without allow-same-origin gives it an opaque origin: it
+ * cannot read this dashboard's storage or DOM, and its requests here are
+ * cross-site, so the SameSite=Strict session cookie never goes with them.
+ * shortcut: one file only, relative links (./style.css) do not load; a
+ * signed per-folder URL would be needed for multi-file sites.
+ */
+const PAGE_EXT = /^html?$/;
+const PAGE_CSP = "sandbox allow-scripts allow-popups allow-forms allow-modals allow-downloads; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'";
 
 /** Inline previews: raster images only. SVG can carry script, so it downloads. */
 const INLINE_TYPES: Readonly<Record<string, string>> = {
@@ -99,7 +112,7 @@ export interface RunResult {
 }
 
 /** Runs one command as the SSH user over the loopback login (outside this sandbox), to completion. */
-export function runRemote(cmd: string, maxBytes = 16 * 1024 * 1024): Promise<RunResult> {
+export function runRemote(cmd: string, maxBytes = 16 * 1024 * 1024, timeoutMs = CMD_TIMEOUT_MS): Promise<RunResult> {
   return new Promise((resolve) => {
     const child = spawnRemote(cmd);
     if (typeof child === 'string') {
@@ -109,7 +122,7 @@ export function runRemote(cmd: string, maxBytes = 16 * 1024 * 1024): Promise<Run
     const chunks: Buffer[] = [];
     let size = 0;
     let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), CMD_TIMEOUT_MS);
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.stdout.on('data', (c: Buffer) => {
       size += c.length;
       if (size > maxBytes) child.kill('SIGKILL');
@@ -289,7 +302,8 @@ async function download(req: Request, res: Response): Promise<void> {
   const size = Number(head.stdout.toString().trim()) || 0;
   const name = path.posix.basename(file);
   const ext = name.includes('.') ? (name.split('.').pop() ?? '').toLowerCase() : '';
-  const inline = req.query.inline === '1' ? INLINE_TYPES[ext] : undefined;
+  const page = req.query.view === '1' && PAGE_EXT.test(ext);
+  const inline = page ? 'text/html; charset=utf-8' : req.query.inline === '1' ? INLINE_TYPES[ext] : undefined;
 
   // Capped at the size just read, so a growing log never overruns Content-Length.
   const child = spawnRemote(`head -c ${size} -- ${q}`);
@@ -300,7 +314,9 @@ async function download(req: Request, res: Response): Promise<void> {
   child.stdin.end();
   res.setHeader('Content-Type', inline ?? 'application/octet-stream');
   res.setHeader('Content-Length', String(size));
-  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Content-Security-Policy', page ? PAGE_CSP : "default-src 'none'; sandbox");
+  // Browsers refuse to load a sandboxed page that also asks for COOP isolation.
+  if (page) res.removeHeader('Cross-Origin-Opener-Policy');
   const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, '_');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`);
 
@@ -453,6 +469,45 @@ async function remove(req: Request, res: Response): Promise<void> {
   else fail(res, r, 'cannot delete');
 }
 
+/**
+ * Why `from` cannot go into folder `dest`, or null when it can. A move takes
+ * the item away, so protected folders stay; a copy may read anything.
+ */
+export function transferRefusal(from: string, dest: string, copy: boolean): { status: number; error: string } | null {
+  if (!copy && isProtected(from)) return { status: 403, error: 'this folder cannot be moved here' };
+  if (dest === from || dest.startsWith(`${from}/`)) return { status: 400, error: 'a folder cannot go inside itself' };
+  if (path.posix.dirname(from) === dest) return { status: 409, error: 'it is already in that folder' };
+  return null;
+}
+
+async function transfer(req: Request, res: Response): Promise<void> {
+  const started = Date.now();
+  const body = req.body as { path?: unknown; dest?: unknown; copy?: unknown };
+  const from = cleanPath(body.path);
+  const dest = cleanPath(body.dest);
+  const copy = body.copy === true;
+  if (!from || !dest) {
+    res.status(400).json({ error: 'path and dest required' });
+    return;
+  }
+  const refused = transferRefusal(from, dest, copy);
+  if (refused) {
+    res.status(refused.status).json({ error: refused.error });
+    return;
+  }
+  const to = path.posix.join(dest, path.posix.basename(from));
+  const r = await runRemote(
+    `[ -d ${shq(dest)} ] || { echo 'No such folder' >&2; exit ${EXIT_MISSING}; }; ` +
+      `[ -e ${shq(to)} ] || [ -L ${shq(to)} ] && { echo 'a file with that name already exists there' >&2; exit ${EXIT_EXISTS}; }; ` +
+      `${copy ? 'cp -a' : 'mv'} -- ${shq(from)} ${shq(to)}`,
+    64 * 1024,
+    TRANSFER_TIMEOUT_MS,
+  );
+  audit(copy ? 'copy' : 'move', `${from} -> ${dest}`, started, r);
+  if (r.code === 0) res.json({ ok: true, path: to });
+  else fail(res, r, copy ? 'cannot copy' : 'cannot move');
+}
+
 /** Async handlers whose rejections still answer, instead of leaving the request open. */
 function wrap(fn: (req: Request, res: Response) => Promise<void>): RequestHandler {
   return (req, res) => {
@@ -470,6 +525,7 @@ export function registerFileRoutes(app: Express, read: RequestHandler, write: Re
   app.post('/api/files/mkdir', write, wrap(mkdir));
   app.post('/api/files/rename', write, wrap(rename));
   app.post('/api/files/delete', write, wrap(remove));
+  app.post('/api/files/move', write, wrap(transfer));
 }
 
 /** The upload body is the raw file, not JSON; the CSRF gate lets this one path through. */

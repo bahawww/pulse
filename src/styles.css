@@ -5409,3 +5409,19 @@ button.agents-main:hover {
 .clip-clear {
   margin: 6px 4px 0;
 }
+
+/* ---------- Files: picking ------------------------------------------------- */
+.files-check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--bg);
+}
+
+.files-check.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+}

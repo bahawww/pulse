@@ -1098,6 +1098,8 @@ export function TerminalWorkspace({ open, onHide, onEmpty, attach }: WorkspacePr
           <div className="tw-pop-wrap">
             {toolButton('snip', 'Snippets', 'Snippets (Alt+S)', <Icon.bolt />, () => togglePanel('snippets'), panel === 'snippets', 'snippets')}
             {panel === 'snippets' && <SnippetsPanel list={snippets} onChange={setSnippets} onUse={useSnippet} onClose={closePanel} />}
+          </div>
+          <div className="tw-pop-wrap">
             {!compact && toolButton('runbooks', 'Runbooks', 'Runbooks: procedures run step by step', <Icon.checklist />, () => togglePanel('runbooks'), panel === 'runbooks', 'runbooks')}
             {panel === 'runbooks' && (
               <RunbooksPanel
