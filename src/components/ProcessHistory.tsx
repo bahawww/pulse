@@ -38,7 +38,6 @@ const PROTECTED = new Set([
   'mariadbd',
   'postgres',
   'redis-server',
-  'Xtigervnc',
   '9router',
 ]);
 

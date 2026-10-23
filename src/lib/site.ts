@@ -4,7 +4,7 @@
  * source. Anything left unset hides the option that needs it.
  *
  *   VITE_BASE_DOMAIN     example.com — services resolve as https://<sub>.example.com
- *   VITE_SUBDOMAINS      service id to subdomain label, e.g. "novnc=remote,hermes=hermes".
+ *   VITE_SUBDOMAINS      service id to subdomain label, e.g. "9router=9router,hermes=hermes".
  *                        A service with no entry uses its id as the label.
  *   VITE_TAILSCALE_HOST  100.x.y.z — adds a "Tailscale" row to the link-target menu
  */

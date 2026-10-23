@@ -673,19 +673,6 @@ export const SERVICES: readonly ServiceCategoryMeta[] = [
     themeClass: 'icon-theme-opencode',
   },
   {
-    id: 'novnc',
-    name: 'noVNC Desktop',
-    keyNumber: '4',
-    description:
-      'High-performance graphical XFCE / TigerVNC desktop workspace accessible directly in your web browser.',
-    port: 6080,
-    path: '/vnc.html?autoconnect=true&resize=remote',
-    category: 'Remote Access',
-    badge: 'GUI Session',
-    icon: 'monitor',
-    themeClass: 'icon-theme-novnc',
-  },
-  {
     id: 'coolify',
     name: 'Coolify',
     keyNumber: '5',
@@ -706,12 +693,10 @@ export const SERVICES: readonly ServiceCategoryMeta[] = [
  * Coolify and the scanned services run in Docker and are controlled as
  * containers; offered as units they only failed with "unit not found".
  */
-export const UNIT_SERVICES: ReadonlySet<string> = new Set(['hermes', '9router', 'opencode', 'novnc']);
+export const UNIT_SERVICES: ReadonlySet<string> = new Set(['hermes', '9router', 'opencode']);
 
 /** Services whose Cloudflare path differs from the local port path. */
-export const SUBDOMAIN_PATHS: Readonly<Record<string, string>> = {
-  novnc: '',
-};
+export const SUBDOMAIN_PATHS: Readonly<Record<string, string>> = {};
 
 /** Containers left out of every list in the UI. Matched by name prefix. */
 const HIDDEN_CONTAINER_PREFIXES = ['beszel'] as const;
@@ -728,7 +713,6 @@ export const HOST_CATEGORY = 'Discovered';
 const CATEGORY_LABELS: Readonly<Record<string, string>> = {
   'AI Agents': 'AI Agents',
   'AI Infrastructure': 'AI Gateway',
-  'Remote Access': 'Remote GUI',
   Deployment: 'Deploy',
   [DOCKER_CATEGORY]: 'Containers',
   [HOST_CATEGORY]: 'Discovered',

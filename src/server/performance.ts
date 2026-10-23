@@ -42,7 +42,6 @@ const PROTECTED_PROCESSES: ReadonlySet<string> = new Set([
   'mariadbd',
   'postgres',
   'redis-server',
-  'Xtigervnc',
   '9router',
 ]);
 
@@ -61,8 +60,6 @@ const MANAGED_UNITS: readonly ManagedUnit[] = [
   { id: 'hermes-dashboard.service', label: 'Hermes Web Dashboard', kind: 'systemd-user' },
   { id: '9router.service', label: '9router LLM Gateway', kind: 'systemd-system' },
   { id: 'pulse.service', label: 'Pulse Dashboard', kind: 'systemd-system' },
-  { id: 'novnc.service', label: 'noVNC WebSocket Proxy', kind: 'systemd-system' },
-  { id: 'vncserver@11.service', label: 'TigerVNC Desktop (:11)', kind: 'systemd-system' },
 ];
 
 // ---------------------------------------------------------------------------

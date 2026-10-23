@@ -42,7 +42,7 @@ const CONTAINER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
  * How each dashboard service is really controlled. The dashboard calls them by
  * id ("hermes"), but the unit behind an id has another name and may live in the
  * user manager instead of the system one: the Hermes dashboard runs as hermes-dashboard.service
- * under `systemctl --user`, while 9router and noVNC are system units.
+ * under `systemctl --user`, while 9router is a system unit.
  *
  * System units are allowed by a polkit rule (see vault/access.md); without it a
  * service with no login session is refused with "Interactive authentication
@@ -60,7 +60,6 @@ const CONTROL: Readonly<Record<string, Control>> = {
   hermes: { scope: 'user', unit: 'hermes-dashboard.service' },
   opencode: { scope: 'user', unit: 'opencode-web.service' },
   '9router': { scope: 'system', unit: '9router.service' },
-  novnc: { scope: 'system', unit: 'novnc.service' },
 };
 
 /**
